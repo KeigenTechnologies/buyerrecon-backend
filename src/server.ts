@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import { initDb } from './db/client.js';
 import collectorRoutes from './collector/routes.js';
 import configRoutes from './config/routes.js';
+import probeRoutes from './probe/routes.js';
 
 const app = express();
 const PORT = parseInt(process.env.PORT ?? '3000', 10);
@@ -28,6 +29,7 @@ app.get('/health', (_req, res) => {
 
 app.use(collectorRoutes);
 app.use(configRoutes);
+app.use(probeRoutes);
 
 async function start() {
   await initDb();
