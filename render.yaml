@@ -21,5 +21,4 @@ services:
 
 databases:
   - name: buyerrecon-db
-    plan: basic_256mb
     region: frankfurt
