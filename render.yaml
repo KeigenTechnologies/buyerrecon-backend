@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: buyerrecon-backend
+    runtime: docker
+    region: frankfurt
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: COLLECTOR_VERSION
+        value: "1.0.0"
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: PROBE_ENCRYPTION_KEY
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: buyerrecon-db
+          property: connectionString
+
+databases:
+  - name: buyerrecon-db
+    plan: starter
+    region: frankfurt
