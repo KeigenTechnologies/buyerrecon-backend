@@ -1,7 +1,6 @@
 import pg from 'pg';
 import { readFileSync } from 'fs';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { join } from 'path';
 
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
@@ -10,7 +9,7 @@ const pool = new pg.Pool({
 });
 
 export async function initDb(): Promise<void> {
-  const schemaPath = join(dirname(fileURLToPath(import.meta.url)), 'schema.sql');
+  const schemaPath = join(__dirname, 'schema.sql');
   const schema = readFileSync(schemaPath, 'utf-8');
   await pool.query(schema);
 }
