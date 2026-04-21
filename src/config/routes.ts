@@ -18,10 +18,7 @@ router.get('/config/:siteId', async (req: Request, res: Response) => {
     const config272 = row ? { ...DEFAULT_CONFIG_272, ...row.config_272 } : DEFAULT_CONFIG_272;
     let config750 = row ? { ...DEFAULT_CONFIG_750, ...row.config_750 } : DEFAULT_CONFIG_750;
 
-    // D2: TTP enforcement — force disabled regardless of stored value
-    if (siteId === TTP_SITE_ID) {
-      config750 = { ...config750, enabled: false };
-    }
+    // All 5 sites config-gated equally. Enablement controlled via site_configs table.
 
     // D1: Compute bootstrap status (backend owns this, probe only consumes)
     const sessionCountResult = await pool.query(
