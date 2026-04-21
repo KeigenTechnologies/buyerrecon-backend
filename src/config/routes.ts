@@ -1,7 +1,6 @@
 import { Router, Request, Response } from 'express';
 import pool from '../db/client.js';
 import { DEFAULT_CONFIG_272, DEFAULT_CONFIG_750 } from './defaults.js';
-import { TTP_SITE_ID } from '../constants.js';
 
 const router = Router();
 
