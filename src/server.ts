@@ -18,7 +18,9 @@ app.use(cors({
     if (!origin || allowedOrigins.includes(origin)) callback(null, true);
     else callback(null, false);
   },
-  methods: ['GET', 'POST'],
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'content-type'],
+  credentials: true,
   maxAge: 86400,
 }));
 app.use(express.json({ limit: '100kb' }));
