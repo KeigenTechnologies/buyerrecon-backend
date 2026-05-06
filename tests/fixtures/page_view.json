@@ -1,0 +1,22 @@
+{
+  "event_schema_version": "thin.v2.0",
+  "event_contract_version": "event-contract-v0.1",
+  "consent_signal": "granted",
+  "site_id": "buyerrecon_com",
+  "hostname": "buyerrecon.com",
+  "path": "/en/",
+  "anon_session_id": "ses_test_001",
+  "anon_browser_id": "brw_test_001",
+  "client_timestamp_ms": 1778064054834,
+  "ga4_present": true,
+  "ga4_measurement_id_present": true,
+  "adapter_id": "test_adapter",
+  "adapter_version": "1.0.0",
+  "event_type": "page_view",
+  "client_event_id": "evt_pv_001",
+  "page_view_id": "pvid_001",
+  "page_index_in_session": 0,
+  "ms_since_session_start": 0,
+  "ms_since_last_page_view": null,
+  "referrer_type": "external"
+}

@@ -1,0 +1,23 @@
+{
+  "event_schema_version": "thin.v2.0",
+  "event_contract_version": "event-contract-v0.1",
+  "consent_signal": "granted",
+  "site_id": "buyerrecon_com",
+  "hostname": "buyerrecon.com",
+  "path": "/en/thank-you/",
+  "anon_session_id": "ses_test_001",
+  "anon_browser_id": "brw_test_001",
+  "client_timestamp_ms": 1778064054834,
+  "ga4_present": true,
+  "ga4_measurement_id_present": true,
+  "adapter_id": "test_adapter",
+  "adapter_version": "1.0.0",
+  "event_type": "generate_lead",
+  "client_event_id": "evt_gl_001",
+  "page_view_id": "pvid_003",
+  "lead_type": "buyer_motion_evidence_report",
+  "source_kind": "form_success",
+  "source_page_view_id": "pvid_002",
+  "form_id": "buyer_motion_report_form",
+  "ms_since_session_start": 86000
+}

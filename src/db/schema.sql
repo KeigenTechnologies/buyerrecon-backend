@@ -16,7 +16,12 @@ CREATE TABLE IF NOT EXISTS accepted_events (
     client_timestamp_ms BIGINT NOT NULL,
     received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     raw JSONB NOT NULL,
-    collector_version TEXT NOT NULL
+    collector_version TEXT NOT NULL,
+    client_event_id TEXT,
+    page_view_id TEXT,
+    previous_page_view_id TEXT,
+    event_sequence_index INT,
+    event_contract_version TEXT NOT NULL DEFAULT 'legacy-thin-v2.0'
 );
 
 CREATE INDEX IF NOT EXISTS idx_accepted_site_received ON accepted_events (site_id, received_at);
@@ -24,6 +29,7 @@ CREATE INDEX IF NOT EXISTS idx_accepted_site_type ON accepted_events (site_id, e
 CREATE INDEX IF NOT EXISTS idx_accepted_session ON accepted_events (session_id);
 CREATE INDEX IF NOT EXISTS idx_accepted_browser ON accepted_events (browser_id);
 CREATE INDEX IF NOT EXISTS idx_accepted_site_ts ON accepted_events (site_id, client_timestamp_ms);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_accepted_dedup_client_event ON accepted_events (site_id, session_id, client_event_id) WHERE client_event_id IS NOT NULL;
 
 -- 2. Rejected events (spec §6.2)
 CREATE TABLE IF NOT EXISTS rejected_events (

@@ -12,9 +12,17 @@ export const TTP_SITE_ID = 'timetopoint_com';
 
 export const VALID_EVENT_TYPES = new Set([
   'session_start',
+  'page_view',
   'page_state',
+  'cta_click',
+  'form_start',
+  'form_submit',
+  'generate_lead',
   'session_summary',
 ]);
+
+export const LEGACY_CONTRACT_VERSION = 'legacy-thin-v2.0';
+export const CANONICAL_CONTRACT_VERSION = 'event-contract-v0.1';
 
 export const VALID_SCHEMA_VERSION = 'thin.v2.0';
 

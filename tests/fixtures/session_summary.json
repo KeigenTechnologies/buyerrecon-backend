@@ -1,0 +1,25 @@
+{
+  "event_schema_version": "thin.v2.0",
+  "event_contract_version": "event-contract-v0.1",
+  "consent_signal": "granted",
+  "site_id": "buyerrecon_com",
+  "hostname": "buyerrecon.com",
+  "path": "/en/",
+  "anon_session_id": "ses_test_001",
+  "anon_browser_id": "brw_test_001",
+  "client_timestamp_ms": 1778064054834,
+  "ga4_present": true,
+  "ga4_measurement_id_present": true,
+  "adapter_id": "test_adapter",
+  "adapter_version": "1.0.0",
+  "event_type": "session_summary",
+  "client_event_id": "evt_sum_001",
+  "engagement_proxy": {
+    "dwell_bucket": "30-90s",
+    "scroll_depth_bucket": "51-75",
+    "interaction_density_bucket": "3-5",
+    "tab_visible_ratio": 0.95,
+    "tab_switch_count": 1,
+    "heartbeat_active_ratio": 0.8
+  }
+}
