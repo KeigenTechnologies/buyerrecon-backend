@@ -284,6 +284,81 @@ describe('PII protection', () => {
 });
 
 // ══════════════════════════════════════════════════
+// Structural ID fields exempt from PII value scanning
+// ══════════════════════════════════════════════════
+
+describe('structural ID exemption (hotfix)', () => {
+  const legacyBase = {
+    event_schema_version: 'thin.v2.0',
+    client_timestamp_ms: Date.now(),
+    consent_signal: 'granted',
+    site_id: 'buyerrecon_com',
+    hostname: 'buyerrecon.com',
+  };
+
+  it('accepts legacy session_start with numeric anon_session_id', () => {
+    const r = validateEvent({
+      ...legacyBase,
+      event_type: 'session_start',
+      anon_session_id: 'ses_smoke_1778067320_legacy',
+      anon_browser_id: 'brw_smoke_1778067320_legacy',
+    });
+    expect(r.accepted).toBe(true);
+    expect(r.reasonCodes).toEqual([]);
+  });
+
+  it('accepts page_view with numeric client_event_id and page_view_id', () => {
+    const r = validateEvent({
+      ...legacyBase,
+      event_contract_version: 'event-contract-v0.1',
+      event_type: 'page_view',
+      client_event_id: 'evt_1778067320000_pv_001',
+      page_view_id: 'pvid_1778067320000_001',
+      path: '/en/',
+      anon_session_id: 'ses_1778067320000',
+      anon_browser_id: 'brw_1778067320000',
+    });
+    expect(r.accepted).toBe(true);
+  });
+
+  it('still rejects email key even with structural IDs present', () => {
+    const r = validateEvent({
+      ...legacyBase,
+      event_type: 'session_start',
+      anon_session_id: 'ses_smoke_001',
+      anon_browser_id: 'brw_smoke_001',
+      email: 'pii-test@example.invalid',
+    });
+    expect(r.accepted).toBe(false);
+    expect(r.reasonCodes.some(c => c.startsWith('PII_KEY_PRESENT'))).toBe(true);
+  });
+
+  it('redacted PII payload does not contain the email value', () => {
+    const raw = {
+      ...legacyBase,
+      event_type: 'session_start',
+      anon_session_id: 'ses_001',
+      anon_browser_id: 'brw_001',
+      email: 'pii-test@example.invalid',
+    };
+    const redacted = redactForPII(raw);
+    expect(JSON.stringify(redacted)).not.toContain('pii-test@example.invalid');
+    expect(redacted._redacted).toBe(true);
+  });
+
+  it('still rejects phone in cta_text_truncated_safe', () => {
+    const r = validateEvent({ ...ctaClick, cta_text_truncated_safe: 'Call +44 20 7946 0958' });
+    expect(r.accepted).toBe(false);
+    expect(r.piiRejected).toBe(true);
+  });
+
+  it('accepts cta_text_truncated_safe = "Company name"', () => {
+    const r = validateEvent({ ...ctaClick, cta_text_truncated_safe: 'Company name' });
+    expect(r.accepted).toBe(true);
+  });
+});
+
+// ══════════════════════════════════════════════════
 // PII redaction helper
 // ══════════════════════════════════════════════════
 

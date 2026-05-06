@@ -17,6 +17,16 @@ const PII_KEYS = new Set([
   'company', 'organisation', 'organization',
 ]);
 
+// Structural ID keys — exempt from phone/email value scanning
+const STRUCTURAL_ID_KEYS = new Set([
+  'anon_session_id', 'anon_browser_id', 'session_id', 'browser_id',
+  'client_event_id', 'page_view_id', 'previous_page_view_id',
+  'source_page_view_id', 'event_type', 'event_schema_version',
+  'event_contract_version', 'site_id', 'hostname', 'collector_version',
+  'client_timestamp_ms', 'event_sequence_index', 'occurred_at', 'timestamp',
+  'adapter_id', 'adapter_version', 'dedupe_key',
+]);
+
 function containsPII(val: unknown): boolean {
   if (typeof val === 'string') {
     if (EMAIL_RE.test(val)) return true;
@@ -42,8 +52,13 @@ function scanPayloadForPII(obj: unknown, path: string = ''): string | null {
   const rec = obj as Record<string, unknown>;
   for (const key of Object.keys(rec)) {
     const lk = key.toLowerCase();
+    // Reject explicit PII keys anywhere
     if (PII_KEYS.has(lk)) return `PII_KEY_PRESENT:${path}.${key}`;
+    // Skip value scanning for structural ID fields
+    if (STRUCTURAL_ID_KEYS.has(lk)) continue;
+    // Scan content-like string values for accidental PII
     if (typeof rec[key] === 'string' && containsPII(rec[key])) return `PII_IN_VALUE:${path}.${key}`;
+    // Recurse into nested objects
     if (typeof rec[key] === 'object' && rec[key] !== null) {
       const r = scanPayloadForPII(rec[key], `${path}.${key}`);
       if (r) return r;
