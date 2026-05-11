@@ -106,8 +106,20 @@ The report renders these sections, in order:
    `event_type`, `schema_key`, `canonical_key_count`.
 9. **Token health** — `token_id`, `disabled_at`, `last_used_at`,
    `created_at`. **`token_hash` is intentionally NEVER selected.**
+9b. **Session features summary** _(added by PR#12)_ — derived-layer
+    factual aggregates from the PR#11 `session_features` table. Selected by
+    `last_seen_at` within the observation window; source-event-count
+    mismatch validated against the FULL-SESSION accepted_events count.
+    Paths only (no URLs); `session_id` truncated to 8 chars + ellipsis. New
+    env knobs (all optional): `OBS_SESSION_FEATURES_VERSION` (default
+    `session-features-v0.1`), `OBS_SESSION_FEATURES_MAX_LAG_HOURS` (default
+    `24`), `OBS_REQUIRE_SESSION_FEATURES` (default off; literal `"true"`
+    promotes a missing `session_features` table from no-impact to WATCH).
+    No scoring, no classification, no bot/AI-agent surface. Full details in
+    `docs/sprint2-pr12-session-features-observation.md`.
 10. **Final observation status** — `PASS` / `WATCH` / `BLOCK` with explicit
-    reason list.
+    reason list. PR#12 contributions are merged into this status via the
+    existing `decide()` function; BLOCK precedence over WATCH unchanged.
 11. **Recommendation** — one-line phrase derived from the status.
 
 ## 6. PASS / WATCH / BLOCK decision

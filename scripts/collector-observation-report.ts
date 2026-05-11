@@ -28,6 +28,12 @@
 
 import 'dotenv/config';
 import pg from 'pg';
+import {
+  loadSessionFeaturesHealth,
+  decideSessionFeatures,
+  renderSessionFeaturesSection,
+  parseSessionFeaturesConfig,
+} from './observation-session-features.js';
 
 /* --------------------------------------------------------------------------
  * Env + arg parsing
@@ -43,18 +49,26 @@ function fail(msg: string): never {
   process.exit(1);
 }
 
-if (typeof DATABASE_URL !== 'string' || DATABASE_URL.length === 0) {
-  fail('DATABASE_URL is required. Source .env on the operator host before running.');
-}
-if (typeof WORKSPACE_ID !== 'string' || WORKSPACE_ID.length === 0) {
-  fail('WORKSPACE_ID is required. Source the site-token meta env before running.');
-}
-if (typeof SITE_ID !== 'string' || SITE_ID.length === 0) {
-  fail('SITE_ID is required. Source the site-token meta env before running.');
-}
 const WINDOW_HOURS = Number.parseInt(WINDOW_HOURS_RAW, 10);
-if (!Number.isFinite(WINDOW_HOURS) || WINDOW_HOURS <= 0) {
-  fail(`OBS_WINDOW_HOURS must be a positive integer (got ${JSON.stringify(WINDOW_HOURS_RAW)})`);
+
+/**
+ * Validate the required env vars before main() touches the DB. Called by
+ * main(), NOT at module load — so importing this file from a test (PR#12
+ * scope check) does not exit the process.
+ */
+function validateRequiredEnvOrFail(): void {
+  if (typeof DATABASE_URL !== 'string' || DATABASE_URL.length === 0) {
+    fail('DATABASE_URL is required. Source .env on the operator host before running.');
+  }
+  if (typeof WORKSPACE_ID !== 'string' || WORKSPACE_ID.length === 0) {
+    fail('WORKSPACE_ID is required. Source the site-token meta env before running.');
+  }
+  if (typeof SITE_ID !== 'string' || SITE_ID.length === 0) {
+    fail('SITE_ID is required. Source the site-token meta env before running.');
+  }
+  if (!Number.isFinite(WINDOW_HOURS) || WINDOW_HOURS <= 0) {
+    fail(`OBS_WINDOW_HOURS must be a positive integer (got ${JSON.stringify(WINDOW_HOURS_RAW)})`);
+  }
 }
 
 /* --------------------------------------------------------------------------
@@ -449,13 +463,14 @@ interface Decision {
   recommendation: string;
 }
 
-function decide(
+export function decide(
   ingest: IngestSummary,
   accRej: AcceptedRejectedSummary,
   evidence: EvidenceQuality,
   recon: ReconciliationHealth,
   tokens: TokenRow[],
   windowStart: Date,
+  sessionFeaturesContribution: { blocks: string[]; watches: string[] } | null = null,
 ): Decision {
   const blocks: string[] = [];
   const watches: string[] = [];
@@ -496,6 +511,12 @@ function decide(
     }
   }
 
+  // PR#12 — merge session_features derived-layer contributions (if any).
+  if (sessionFeaturesContribution !== null) {
+    for (const b of sessionFeaturesContribution.blocks) blocks.push(b);
+    for (const w of sessionFeaturesContribution.watches) watches.push(w);
+  }
+
   let status: Status;
   let recommendation: string;
   if (blocks.length > 0) {
@@ -516,6 +537,7 @@ function decide(
  * ------------------------------------------------------------------------ */
 
 async function main(): Promise<number> {
+  validateRequiredEnvOrFail();
   const checkedAt = new Date();
   const windowStart = new Date(checkedAt.getTime() - WINDOW_HOURS * 3600 * 1000);
 
@@ -537,7 +559,31 @@ async function main(): Promise<number> {
     const eventBreakdown = await loadEventTypeBreakdown(client);
     const latest = await loadLatestAccepted(client);
     const tokens = await loadTokenHealth(client);
-    const decision = decide(ingest, accRej, evidence, recon, tokens, windowStart);
+
+    // PR#12 — derived-layer session_features health (read-only).
+    const sessionFeaturesConfig = parseSessionFeaturesConfig(process.env);
+    const sessionFeaturesHealth = await loadSessionFeaturesHealth(client, {
+      workspaceId: WORKSPACE_ID,
+      siteId: SITE_ID,
+      windowStart,
+      windowEnd: checkedAt,
+      config: sessionFeaturesConfig,
+    });
+    const sessionFeaturesContribution = decideSessionFeatures(
+      sessionFeaturesHealth,
+      sessionFeaturesConfig,
+      accRej.accepted,
+    );
+
+    const decision = decide(
+      ingest,
+      accRej,
+      evidence,
+      recon,
+      tokens,
+      windowStart,
+      sessionFeaturesContribution,
+    );
 
     // -------- Render markdown report --------
     const lines: string[] = [];
@@ -691,6 +737,9 @@ async function main(): Promise<number> {
     }
     lines.push('');
 
+    // PR#12 — §9b session features derived-layer health.
+    lines.push(renderSessionFeaturesSection(sessionFeaturesHealth, sessionFeaturesConfig));
+
     lines.push('## 10. Final observation status');
     lines.push(`- **status: ${decision.status}**`);
     if (decision.blocks.length > 0) {
@@ -717,9 +766,16 @@ async function main(): Promise<number> {
   }
 }
 
-main()
-  .then((code) => process.exit(code))
-  .catch((err) => {
-    console.error('PR#9 observation report — fatal:', (err as Error).message);
-    process.exit(1);
-  });
+// Auto-execute only when invoked directly (e.g. `npm run observe:collector` →
+// `tsx scripts/collector-observation-report.ts`). When this module is imported
+// from a test (PR#12 scope check / pure decide() test), `require.main`
+// references the test runner's entry, not this file — so main() does not run
+// and the env validation does not exit the process.
+if (require.main === module) {
+  main()
+    .then((code) => process.exit(code))
+    .catch((err) => {
+      console.error('PR#9 observation report — fatal:', (err as Error).message);
+      process.exit(1);
+    });
+}
