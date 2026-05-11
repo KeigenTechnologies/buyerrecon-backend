@@ -1,0 +1,199 @@
+# BuyerRecon forbidden_codes.yml
+#
+# Hard-blocked names, patterns, and values.
+#
+# Enforcement:
+#   - Scorer startup parses this file and refuses to start if any rule,
+#     dictionary entry, or fixture references a hard-blocked code, value,
+#     or pattern.
+#   - CI grep scans rule files, scoring code, and test fixtures for the
+#     same patterns and fails the build on match.
+#   - Pre-commit hook scans staged files for string_patterns_blocked_in_code.
+#
+# Companion files:
+#   - signal-truth-v0.1.md          (canonical Sprint 2 contract)
+#   - reason_code_dictionary.yml    (allowed codes; this file is its complement)
+
+metadata:
+  version: forbidden-v0.1
+  status: active
+  date: 2026-05-11
+  owner: Helen Chen, Keigen Technologies (UK) Limited
+
+# ============================================================================
+# Hard-blocked reason codes — must never appear in any rule, dictionary,
+# fixture, test, or scoring path.
+# ============================================================================
+
+hard_blocked_codes:
+  # Positive-truth assertions — incompatible with evidence-first positioning
+  - A_AI_DETECTED
+  - A_AI_INTENT_HIGH
+  - A_BUYER_INTENT_HIGH
+  - A_BUYER_INTENT_CONFIRMED
+  - A_BUYER_VERIFIED
+  - A_FRAUD_CONFIRMED
+  - A_BOT_CONFIRMED
+  - A_HUMAN_CONFIRMED
+  - A_NOT_HUMAN
+  - A_TRAFFIC_LEGITIMATE
+  - A_TRAFFIC_VALID
+  - B_AI_CONFIRMED
+  - B_BAD_AI
+
+  # Marketing-namespace collisions — protect Real Buyer Growth / Keigen brand
+  - A_REAL_BUYER_VERIFIED
+  - A_REAL_BUYER_CONFIRMED
+  - A_REAL_BUYER
+  - REAL_BUYER_VERIFIED
+  - REAL_BUYER_CONFIRMED
+  - REAL_BUYER
+
+# Pattern-level blocks. Any reason code matching any of these regular
+# expression patterns is hard-blocked.
+hard_blocked_code_patterns:
+  - "^A_REAL_BUYER_.*"          # any A_REAL_BUYER_* derivative
+  - "^REAL_BUYER_.*"            # any REAL_BUYER_* derivative
+  - "^BUYER_.*"                 # any BUYER_* derivative
+  - "^INTENT_.*"                # any INTENT_* derivative
+  - ".*_CONFIRMED$"             # any *_CONFIRMED truth-claim
+  - ".*_VERIFIED$"              # any *_VERIFIED truth-claim
+                                #   (note: verification_method_strength is
+                                #    a SCHEMA field name, not a reason code,
+                                #    and is not blocked by this pattern)
+  - ".*_CERTAIN$"
+  - ".*_DETECTED$"
+  - ".*_IDENTIFIED$"
+
+# ============================================================================
+# Hard-blocked evidence_band values
+# ============================================================================
+#
+# v1 emittable: low, medium
+# Forbidden in v1: every other value
+
+hard_blocked_band_values:
+  - high
+  - certain
+  - confirmed
+  - none                        # use null or omit; do not use string "none"
+  - critical
+  - verified
+
+# ============================================================================
+# Hard-blocked action_recommendation values
+# ============================================================================
+#
+# v1 emittable: record_only, review
+# Forbidden in v1: every action that would trigger blocking, allowing,
+# or excluding traffic without server-evidence corroboration.
+
+hard_blocked_action_values:
+  - exclude
+  - block
+  - deny
+  - allow
+  - permit
+  - approve
+  - flag                        # use review instead
+  - quarantine                  # quarantine_lane.* is a runtime kill switch,
+                                #   not an action_recommendation value
+
+# ============================================================================
+# Hard-blocked verification_method_strength values (v1)
+# ============================================================================
+#
+# v1 emittable: none, weak, moderate
+# Reserved (schema present, NOT emitted in v1): strong
+#
+# Scorer startup MUST assert that no v1 rule emits "strong".
+
+hard_blocked_verification_method_strength_values_in_v1:
+  - strong
+
+# ============================================================================
+# Reason-code prefix allowlist
+# ============================================================================
+#
+# Any reason code emitted must start with one of these prefixes.
+# Scorer startup fails if an emitted code starts with anything else.
+
+prefix_allowlist:
+  - A_                          # Lane A — invalid traffic
+  - B_                          # Lane B — AI agent (dark-launch)
+  - REVIEW_                     # human review required
+  - OBS_                        # observational only (no band/action effect)
+  - UX_                         # reserved; if emitted in v1, scorer logs fatal
+
+# Prefixes that are reserved but MUST NOT emit any code in v1.
+# Scorer startup fails if any code with these prefixes appears in
+# reason_code_dictionary.yml as customer_facing=true or contributes_to_band=true.
+prefix_reserved_not_emitted_in_v1:
+  - UX_
+
+# ============================================================================
+# String patterns blocked in source code, scoring rules, and test fixtures
+# ============================================================================
+#
+# Pre-commit hook scans staged files for these patterns as substrings of
+# field names, variable names, or string literals.
+
+string_patterns_blocked_in_code:
+  # Truth-claim field or variable names
+  - fraud_confirmed
+  - bot_confirmed
+  - ai_detected
+  - intent_verified
+  - buyer_verified
+  - real_buyer_verified
+  - is_real_buyer
+  - is_bot
+  - is_ai
+  - is_fraud
+  - is_human
+  - human_score
+  - bot_score
+  - buyer_score
+  - fraud_score
+  - intent_score
+
+  # ML library imports (per signal-truth-v0.1 §10 rule F)
+  - "import sklearn"
+  - "from sklearn"
+  - "import xgboost"
+  - "from xgboost"
+  - "import torch"
+  - "from torch"
+  - "import onnx"
+  - "from onnx"
+  - "import lightgbm"
+  - "from lightgbm"
+
+# ============================================================================
+# SDK payload-field validator follow-up (Sprint 2.5 backlog, see R2)
+# ============================================================================
+#
+# These are documented here as a forward-looking guardrail. Sprint 2 does
+# NOT enforce these at the collector level (collector is Sprint 1 territory
+# and is not modified in Sprint 2 — see signal-truth-v0.1.md §1).
+#
+# Follow-up issue: add validator at the collector that rejects or strips
+# SDK payload fields whose names match any of these patterns.
+
+sdk_payload_field_blocklist_followup:
+  status: backlog
+  required_for_commit_1: false
+  patterns:
+    - is_real_buyer
+    - real_buyer
+    - buyer_score
+    - buyer_verified
+    - intent_verified
+    - intent_score
+    - is_bot
+    - is_ai
+    - is_fraud
+    - is_human
+    - fraud_confirmed
+    - bot_confirmed
+    - ai_detected

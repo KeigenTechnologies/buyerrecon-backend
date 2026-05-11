@@ -1,0 +1,259 @@
+# BuyerRecon reason_code_dictionary.yml
+#
+# Every emitted reason_code MUST exist in this file.
+# Scorer startup fails if it references a code not listed here.
+# Adding, removing, or changing a code's emission condition requires a
+# matching scoring_version bump in scoring/version.yml.
+#
+# Companion files:
+#   - signal-truth-v0.1.md  (canonical Sprint 2 contract)
+#   - forbidden_codes.yml   (hard-blocked names and patterns)
+
+metadata:
+  version: rc-v0.1
+  status: active
+  date: 2026-05-11
+  owner: Helen Chen, Keigen Technologies (UK) Limited
+  promoted_to_required_in_contract: signal-truth-v0.1
+
+# ============================================================================
+# Top-level policies
+# ============================================================================
+
+policies:
+  no_proxy_for_proof_bundle_detail: |
+    Do not create new reason codes when proof_bundle fields can carry the
+    diagnostic detail. A_REFRESH_BURST stays unified in v1; diagnostic detail
+    lives in proof_bundle fields (nav.type distribution, reload_count,
+    same_document_count, spa_route_change_count, back_forward_count,
+    continuity_quality). Splitting is permitted only after v1 calibration
+    data shows that the split creates materially different FP patterns.
+
+  obs_growth_cap:
+    max_emitted_codes_in_v1: 7
+    rule: |
+      Adding the 8th OBS_* code requires Helen sign-off AND a scoring_version
+      bump. OBS_* is internal context only, not a weak-signal dumping ground.
+
+  emission_constraints:
+    max_evidence_band:
+      lane_a_v1: medium
+      lane_b_v1_verified: medium
+      lane_b_v1_unverified: low
+      reserved_until_server_evidence: high
+    action_recommendation_default: record_only
+    customer_facing_prefixes: [A_, REVIEW_]
+    internal_only_prefixes: [B_, OBS_]
+    reserved_prefixes: [UX_]
+
+# ============================================================================
+# Lane A — Invalid traffic verification (customer-facing)
+# ============================================================================
+
+codes:
+
+  A_REFRESH_BURST:
+    lane: A
+    meaning: Short-window same-URL reload burst.
+    minimum_evidence: |
+      nav.type=reload AND streak/window thresholds met.
+      Diagnostic detail (hard reload vs mixed SPA) lives in proof_bundle,
+      not in separate reason codes (see policies.no_proxy_for_proof_bundle_detail).
+    max_band: medium
+    customer_facing: true
+    contributes_to_band: true
+    can_trigger_action: true
+
+  A_NO_MEANINGFUL_INTERACTION:
+    lane: A
+    meaning: Repeated entries without meaningful interaction.
+    minimum_evidence: |
+      click_count=0 AND scroll_count=0 across ≥ 2 consecutive same-url
+      page_views within session.
+    max_band: medium
+    customer_facing: true
+    contributes_to_band: true
+    can_trigger_action: true
+
+  A_NO_FOREGROUND_TIME:
+    lane: A
+    meaning: Session conducted without foreground or focus time.
+    minimum_evidence: foreground_duration_ms < 200 AND ≥ 1 page_view present
+    max_band: medium
+    customer_facing: true
+    contributes_to_band: true
+    can_trigger_action: true
+
+  A_JS_NOT_EXECUTED:
+    lane: A
+    meaning: Page rendered with JS execution absent or unavailable.
+    minimum_evidence: js_executed=false AND ≥ 1 corroborating A_* family hit
+    max_band: low
+    customer_facing: true
+    contributes_to_band: true
+    can_trigger_action: false       # never triggers action alone
+
+  A_BEHAVIORAL_CADENCE_ANOMALY:
+    lane: A
+    meaning: Behavioural cadence significantly anomalous against the site baseline.
+    minimum_evidence: must co-fire with ≥ 1 other A_* family
+    max_band: medium
+    customer_facing: true
+    contributes_to_band: true
+    can_trigger_action: true
+
+  # Server-evidence reserved codes — schema present, NOT emitted in v1.
+  # These will be emitted only after Sprint 3+ server_event live ingestion lands.
+
+  A_BAD_NETWORK_REPUTATION:
+    lane: A
+    meaning: Network source flagged as high-risk (server evidence).
+    minimum_evidence: server_observation_present
+    max_band: medium                 # 'high' reserved for v1.1 with server evidence
+    customer_facing: true
+    contributes_to_band: true
+    can_trigger_action: true
+    reserved_until_server_evidence: true
+
+  A_TLS_HEADER_MISMATCH:
+    lane: A
+    meaning: Request-layer inconsistent with browser-layer semantics.
+    minimum_evidence: server_observation_present
+    max_band: medium
+    customer_facing: true
+    contributes_to_band: true
+    can_trigger_action: true
+    reserved_until_server_evidence: true
+
+  A_CHALLENGE_FAILED:
+    lane: A
+    meaning: Challenge or device-check explicitly failed.
+    minimum_evidence: server_observation_present
+    max_band: medium
+    customer_facing: true
+    contributes_to_band: true
+    can_trigger_action: true
+    reserved_until_server_evidence: true
+
+  # ==========================================================================
+  # Lane B — AI agent observation (dark-launch, NEVER customer-facing)
+  # ==========================================================================
+
+  B_DECLARED_AI_CRAWLER:
+    lane: B
+    meaning: Declared AI crawler matched allowlist (UA + robots.txt token).
+    minimum_evidence: declared_agent_family IN known_crawler_allowlist
+    max_band: medium
+    customer_facing: false
+    contributes_to_band: true
+    can_trigger_action: false        # Lane B never triggers customer-facing action
+
+  B_SIGNED_AGENT:
+    lane: B
+    meaning: Web Bot Auth signature verified for signed agent.
+    minimum_evidence: |
+      verification_method=web_bot_auth
+      AND verification_method_strength >= moderate
+    max_band: medium
+    customer_facing: false
+    contributes_to_band: true
+    can_trigger_action: false
+    reserved_until_signing_path: true    # schema present; not emitted until Sprint 3
+
+  # ==========================================================================
+  # REVIEW — Human review required (customer-facing as action_recommendation)
+  # ==========================================================================
+
+  REVIEW_POSSIBLE_FALSE_POSITIVE:
+    lane: REVIEW
+    meaning: Evidence conflict or sensitive scenario; needs human review.
+    minimum_evidence: conflicting signals across families OR sensitive context detected
+    max_band: medium
+    customer_facing: true             # surfaced as action_recommendation=review
+    contributes_to_band: false        # does not raise band by itself
+    can_trigger_action: true          # can route to review queue
+
+  REVIEW_SERVER_EVIDENCE_PENDING:
+    lane: REVIEW
+    meaning: Sample qualifies for review pending server-side corroboration.
+    minimum_evidence: ≥ 1 A_* family hit AND no server_observation available
+    max_band: medium
+    customer_facing: true
+    contributes_to_band: false
+    can_trigger_action: true
+
+  # ==========================================================================
+  # OBS — Observational-only (internal context, NEVER customer-facing)
+  # Capped at 7 emitted codes in v1 (see policies.obs_growth_cap).
+  # ==========================================================================
+
+  OBS_AUTOMATION_HINT_CLIENT:
+    lane: OBS
+    meaning: Client-side automation hint observed (webdriver, headless, UA hint).
+    minimum_evidence: |
+      Any of: webdriver_hint=true, headless_hint=true,
+      user_agent_declared_bot_hint=true
+    max_band: never                   # cannot contribute to band
+    customer_facing: false
+    contributes_to_band: false
+    can_trigger_action: false
+
+  OBS_STORAGE_BLOCKED:
+    lane: OBS
+    meaning: Browser, CMP, private mode, or quota blocked tab session storage.
+    minimum_evidence: tab_session_storage_mechanism=blocked
+    max_band: never
+    customer_facing: false
+    contributes_to_band: false
+    can_trigger_action: false
+
+  OBS_TAB_CONTINUITY_LOW:
+    lane: OBS
+    meaning: Tab session continuity quality is low or broken.
+    minimum_evidence: tab_session_continuity_quality IN [low, broken]
+    max_band: never
+    customer_facing: false
+    contributes_to_band: false
+    can_trigger_action: false
+
+  OBS_JS_ERROR_PRESENT:
+    lane: OBS
+    meaning: JS errors observed during session.
+    minimum_evidence: js_error_count > 0
+    max_band: never
+    customer_facing: false
+    contributes_to_band: false
+    can_trigger_action: false
+
+  OBS_RESOURCE_ERRORS:
+    lane: OBS
+    meaning: Resource-loading errors observed.
+    minimum_evidence: resource_error_count > 0
+    max_band: never
+    customer_facing: false
+    contributes_to_band: false
+    can_trigger_action: false
+
+# Current emitted OBS_* count: 5 (cap: 7)
+# Two slots remain. Adding requires Helen sign-off + scoring_version review.
+
+# ============================================================================
+# Reserved namespaces — NOT emitted in v1
+# ============================================================================
+
+reserved_namespaces:
+
+  UX_:
+    status: reserved
+    not_emitted_in: v1
+    intended_for: Sprint 3+ UX friction evidence
+    rationale: |
+      Dead/rage click features are captured in v1 (rage_cluster_count,
+      dead_click_candidate_count) but NOT emitted as reason codes. They are
+      UX evidence, not fraud proof. The UX_* namespace is reserved so that
+      future emission can be routed to a UX-friction surface, distinct from
+      Lane A fraud routing.
+    candidate_codes_for_future:
+      - UX_DEAD_CLICK_CLUSTER
+      - UX_RAGE_CLUSTER
+      - UX_PAGE_FRICTION
