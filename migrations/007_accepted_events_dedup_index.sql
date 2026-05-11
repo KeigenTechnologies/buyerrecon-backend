@@ -1,0 +1,119 @@
+-- Migration 007: Sprint 1 PR#6 — accepted_events cross-request dedupe unique index
+-- Track B (BuyerRecon Evidence Foundation), NOT Track A (AMS Behaviour QA scoring
+-- harness), NOT Core AMS (the future productized scoring/report home).
+-- Spec: /Users/admin/github/buyerrecon-study/docs/federal/sprint-1-engineering-handoff-v0.1.md
+--   - §3.PR#6 (CREATE UNIQUE INDEX CONCURRENTLY on
+--              accepted_events(workspace_id, site_id, client_event_id))
+--   - §2.9 R-7 (duplicate_client_event_id rejection)
+--   - §2.12 verification check #3 (duplicate retry → exactly one accepted row)
+--   - §4.1 acceptance #8 (UNIQUE constraint in place rejects duplicate writes)
+--
+-- Three-part architecture rule:
+--   This migration MUST NOT introduce bot-detection, AI-agent-detection, risk
+--   scoring, classification, recommended-action, behavioural-quality scoring,
+--   or any other Track A scoring surface. Track B records evidence; scoring
+--   lives in Track A (experimental harness) and will eventually live in Core
+--   AMS as a productized package, never on this table or this index.
+--
+-- Why this index exists:
+--   PR#5b-2 / PR#5c-2 (Track B orchestrator) implement INTRA-batch dedupe only:
+--   they reject duplicate `client_event_id` tuples that appear together within
+--   a single HTTP request. They cannot see across separate requests. An SDK
+--   client that retries the same event in a second request would, without DB
+--   protection, write a SECOND accepted_events row. This index closes that
+--   gap at the database boundary by enforcing uniqueness on
+--   (workspace_id, site_id, client_event_id) for all v1 collector writes
+--   (rows where all three columns are non-null).
+--
+-- Index shape:
+--   - UNIQUE INDEX (not an attached CONSTRAINT — see below)
+--   - Columns: (workspace_id, site_id, client_event_id) in that order
+--   - Partial: WHERE all three columns IS NOT NULL
+--     - Mirrors the legacy idx_accepted_dedup_client_event partial-index pattern
+--       (different triple — that one is (site_id, session_id, client_event_id)).
+--     - workspace_id and client_event_id are still NULLABLE on the table per
+--       §3.PR#2 deferral; NOT NULL promotion lands after backfill (§3.PR#5+).
+--     - Excludes legacy pre-PR#5 rows (workspace_id IS NULL) so they do not
+--       collide with v1 writes.
+--     - Matches the orchestrator's gate in src/collector/v1/dedupe.ts (which
+--       skips dedupe when client_event_id is missing / null / empty).
+--   - CONCURRENTLY: builds without ACCESS EXCLUSIVE lock so writes are not
+--     blocked during index creation on a live table.
+--   - IF NOT EXISTS: idempotent re-application after a successful build.
+--
+-- Why a unique index, not an attached named CONSTRAINT:
+--   Attaching the index as a CONSTRAINT requires
+--   ALTER TABLE … ADD CONSTRAINT … USING INDEX …, which takes ACCESS EXCLUSIVE
+--   on accepted_events and negates the point of CONCURRENTLY. PostgreSQL
+--   enforces uniqueness identically for a unique index and an attached
+--   unique constraint — only pg_constraint listing differs. Track B's existing
+--   legacy idx_accepted_dedup_client_event is also unique-index-only.
+--
+-- ============================================================================
+-- OPERATIONAL WARNING — READ BEFORE APPLYING
+-- ============================================================================
+--   1. Run the duplicate preflight FIRST:
+--        psql "$DATABASE_URL" -f docs/sql/preflight/007_accepted_events_dedup_duplicates.sql
+--      Must return ZERO rows. If non-empty: STOP. Triage manually. This
+--      migration must NOT be applied while duplicates exist — index creation
+--      will fail and leave an INVALID index that must be DROPped before retry.
+--      Duplicate REMEDIATION is intentionally out of scope for PR#6
+--      (detection-only — Track B is the evidence ledger; silent deletion of
+--      accepted_events rows by an automated migration is forbidden).
+--
+--   2. Apply via STANDALONE psql -f:
+--        psql "$DATABASE_URL" -f migrations/007_accepted_events_dedup_index.sql
+--      Do NOT fold this statement into src/db/schema.sql or initDb(). That
+--      path runs as a single multi-statement pool.query, which PostgreSQL
+--      treats as an implicit transaction block. CREATE INDEX CONCURRENTLY
+--      cannot run inside a transaction block and will fail with
+--      "CREATE INDEX CONCURRENTLY cannot run inside a transaction block".
+--
+--   3. Do NOT wrap this file in BEGIN / COMMIT / START TRANSACTION. The single
+--      DDL statement below must execute on its own.
+--
+--   4. If CREATE INDEX CONCURRENTLY fails midway, PostgreSQL leaves the index
+--      in INVALID state (pg_index.indisvalid = false). Re-running this file
+--      will NO-OP because IF NOT EXISTS sees the invalid index. To recover:
+--        psql "$DATABASE_URL" -c "DROP INDEX CONCURRENTLY IF EXISTS accepted_events_dedup;"
+--      then re-apply this file.
+--
+--   5. Schedule a low-traffic window. CONCURRENTLY is online but does extra
+--      work and a long-running index build can interact with vacuum / replica
+--      lag in production-sized tables.
+--
+-- Out of scope for this PR (per §1 / §4.1 + three-part architecture rule):
+--   - any INSERT-side conflict handling (lands in §3.PR#7 route work)
+--   - any change to src/collector/v1/orchestrator.ts or row-builders
+--   - any change to src/db/schema.sql or initDb()
+--   - duplicate auto-deletion / row rewrites
+--   - new endpoints (§3.PR#7)
+--   - SQL verification suite scheduling (§3.PR#8)
+--   - real-DB concurrent-load test (50 SDK retries → 1 row — lives in §3.PR#8)
+--   - admin debug API (§3.PR#9)
+--   - bot detection / AI-agent detection / risk score / classification
+--   - Track A backend bridge / Core AMS scoring package
+--   - report worker / live RECORD_ONLY traffic
+--
+-- Rollback: see end of file.
+
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS accepted_events_dedup
+  ON accepted_events (workspace_id, site_id, client_event_id)
+  WHERE workspace_id IS NOT NULL
+    AND site_id IS NOT NULL
+    AND client_event_id IS NOT NULL;
+
+-- ---------------------------------------------------------------------------
+-- Rollback (must also run OUTSIDE a transaction block, standalone via psql):
+--
+--   DROP INDEX CONCURRENTLY IF EXISTS accepted_events_dedup;
+--
+-- Safe because:
+--   - No FK references this index.
+--   - No application code reads or writes a column added by this migration
+--     (this migration only adds an index — no columns).
+--   - PR#5c-2 orchestrator's in-batch dedupe continues to work without DB
+--     protection; only cross-request SDK retries lose DB-side guarding.
+--   - The legacy idx_accepted_dedup_client_event partial unique index on
+--     (site_id, session_id, client_event_id) is NOT touched by this rollback.
+-- ---------------------------------------------------------------------------

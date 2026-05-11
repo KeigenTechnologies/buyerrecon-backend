@@ -7,3 +7,8 @@ replays/
 **/.DS_Store
 .DS_Store
 **/.DS_Store
+_smoke_env.cjs
+_smoke_start.sh
+_smoke_run.cjs
+_smoke_verify.cjs
+_smoke_run.json
