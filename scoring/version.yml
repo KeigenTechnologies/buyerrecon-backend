@@ -1,0 +1,38 @@
+# BuyerRecon scoring/version.yml
+#
+# Single-source-of-truth version stamps for the Sprint 2 signal-truth
+# scoring layer. The scorer reads this file at startup and stamps every
+# `score_run` row with `scoring_version`. The reason-code dictionary and
+# forbidden-codes file have their own versions (declared inside those
+# files); they are echoed here for ease of reference.
+#
+# Bumping any of these versions requires Helen sign-off per
+# signal-truth-v0.1.md §13 + Architecture Gate A0 §0.7.
+#
+# Architecture authority: docs/architecture/ARCHITECTURE_GATE_A0.md
+# Contract authority:     docs/contracts/signal-truth-v0.1.md
+
+scoring_version: s2.v1.0
+reason_code_dictionary_version: rc-v0.1
+forbidden_codes_version: forbidden-v0.1
+
+# v1 operating mode
+status: record_only
+automated_action_enabled: false
+
+# Notes
+notes: |
+  scoring_version = s2.v1.0 is the initial Sprint 2 baseline. Any change
+  to scoring/rules/*.yml, weights, thresholds, reason_code_dictionary.yml
+  emission conditions, or forbidden_codes.yml requires a matching
+  scoring_version bump (Hard Rule E in signal-truth-v0.1.md §10).
+
+  status = record_only means action_recommendation is restricted to
+  `record_only` or `review`. No code triggers an automated customer-visible
+  action. This is the RECORD_ONLY gate default per Hard Rule B.
+
+  automated_action_enabled = false is the v1 invariant. It MUST remain
+  false until the Sprint 2 RECORD_ONLY gate opens (8 weeks elapsed since
+  first production scoring write + 500 medium-band records reviewed in
+  false_positive_review with confirmed_fp or confirmed_tp + 2 weeks
+  stability + no FP stop-the-line trigger in trailing 14 days).
