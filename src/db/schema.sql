@@ -371,3 +371,77 @@ CREATE INDEX IF NOT EXISTS session_features_session
 
 CREATE INDEX IF NOT EXISTS session_features_extraction
   ON session_features (extraction_version, extracted_at DESC);
+
+-- 13. Session behavioural features v0.2 (Sprint 2 PR#1 — second downstream
+-- derived factual layer). One row per (workspace_id, site_id, session_id,
+-- feature_version). Factual behavioural aggregates only — counts, durations,
+-- boolean temporal-order observations, enum buckets, provenance metadata.
+-- NO scoring. NO classification. NO bot/AI-agent taxonomy. Refresh-loop
+-- server-side derivation is deferred to Sprint 2 PR#2 (no refresh_loop
+-- column in v0.2). accepted_events remains the raw evidence ledger; this
+-- table is rebuildable at any time via scripts/extract-behavioural-features.ts.
+CREATE TABLE IF NOT EXISTS session_behavioural_features_v0_2 (
+  behavioural_features_id                     BIGSERIAL PRIMARY KEY,
+
+  workspace_id                                TEXT        NOT NULL,
+  site_id                                     TEXT        NOT NULL,
+  session_id                                  TEXT        NOT NULL,
+
+  feature_version                             TEXT        NOT NULL,
+  extracted_at                                TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+  first_seen_at                               TIMESTAMPTZ,
+  last_seen_at                                TIMESTAMPTZ,
+  source_event_count                          INT         NOT NULL DEFAULT 0,
+  source_event_id_min                         BIGINT,
+  source_event_id_max                         BIGINT,
+  first_event_id                              BIGINT,
+  last_event_id                               BIGINT,
+
+  ms_from_consent_to_first_cta                BIGINT,
+  dwell_ms_before_first_action                BIGINT,
+  first_form_start_precedes_first_cta         BOOLEAN,
+  form_start_count_before_first_cta           INT         NOT NULL DEFAULT 0,
+  has_form_submit_without_prior_form_start    BOOLEAN     NOT NULL DEFAULT FALSE,
+  form_submit_count_before_first_form_start   INT         NOT NULL DEFAULT 0,
+  ms_between_pageviews_p50                    BIGINT,
+  pageview_burst_count_10s                    INT         NOT NULL DEFAULT 0,
+  max_events_per_second                       INT         NOT NULL DEFAULT 0,
+  sub_200ms_transition_count                  INT         NOT NULL DEFAULT 0,
+  interaction_density_bucket                  TEXT,
+  scroll_depth_bucket_before_first_cta        TEXT,
+
+  valid_feature_count                         INT         NOT NULL DEFAULT 0,
+  missing_feature_count                       INT         NOT NULL DEFAULT 0,
+  feature_presence_map                        JSONB       NOT NULL DEFAULT '{}'::jsonb,
+  feature_source_map                          JSONB       NOT NULL DEFAULT '{}'::jsonb,
+
+  CONSTRAINT sbf_v0_2_source_event_count_nonneg
+    CHECK (source_event_count >= 0),
+  CONSTRAINT sbf_v0_2_form_start_before_cta_nonneg
+    CHECK (form_start_count_before_first_cta >= 0),
+  CONSTRAINT sbf_v0_2_form_submit_before_fs_nonneg
+    CHECK (form_submit_count_before_first_form_start >= 0),
+  CONSTRAINT sbf_v0_2_pageview_burst_nonneg
+    CHECK (pageview_burst_count_10s >= 0),
+  CONSTRAINT sbf_v0_2_max_eps_nonneg
+    CHECK (max_events_per_second >= 0),
+  CONSTRAINT sbf_v0_2_sub_200ms_nonneg
+    CHECK (sub_200ms_transition_count >= 0),
+  CONSTRAINT sbf_v0_2_valid_feature_count_nonneg
+    CHECK (valid_feature_count >= 0),
+  CONSTRAINT sbf_v0_2_missing_feature_count_nonneg
+    CHECK (missing_feature_count >= 0),
+
+  CONSTRAINT session_behavioural_features_v0_2_natural_key UNIQUE
+    (workspace_id, site_id, session_id, feature_version)
+);
+
+CREATE INDEX IF NOT EXISTS session_behavioural_features_v0_2_workspace_site
+  ON session_behavioural_features_v0_2 (workspace_id, site_id, last_seen_at DESC);
+
+CREATE INDEX IF NOT EXISTS session_behavioural_features_v0_2_session
+  ON session_behavioural_features_v0_2 (workspace_id, site_id, session_id);
+
+CREATE INDEX IF NOT EXISTS session_behavioural_features_v0_2_version
+  ON session_behavioural_features_v0_2 (feature_version, extracted_at DESC);

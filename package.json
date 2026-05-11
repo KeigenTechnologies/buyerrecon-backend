@@ -11,6 +11,7 @@
     "test:db:v1": "vitest run --config vitest.db.config.ts",
     "observe:collector": "tsx scripts/collector-observation-report.ts",
     "extract:session-features": "tsx scripts/extract-session-features.ts",
+    "extract:behavioural-features": "tsx scripts/extract-behavioural-features.ts",
     "seed": "tsx scripts/seed-configs.ts",
     "replay:export": "tsx scripts/replay-export.ts",
     "metrics": "tsx scripts/truth-metrics.ts",
