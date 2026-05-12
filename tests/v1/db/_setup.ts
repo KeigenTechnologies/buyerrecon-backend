@@ -64,6 +64,16 @@ const MIGRATION_012_PATH = join(
   'migrations',
   '012_stage0_decisions.sql',
 );
+// PR#6 (Sprint 2) — behavioural-pattern evidence layer
+// (risk_observations_v0_1). New table; mirrors PR#5 role-existence +
+// Hard-Rule-I-style guard. RECORD_ONLY evidence; the BuyerRecon-side
+// anti-corruption adapter destination for AMS Risk Core's upstream
+// adapter slot (CommonFeatures.BehavioralRisk01 input).
+const MIGRATION_013_PATH = join(
+  ROOT,
+  'migrations',
+  '013_risk_observations_v0_1.sql',
+);
 
 /* --------------------------------------------------------------------------
  * Deterministic test boundary constants
@@ -243,6 +253,19 @@ export async function applyMigration011(pool: pg.Pool): Promise<void> {
  */
 export async function applyMigration012(pool: pg.Pool): Promise<void> {
   const sql = readFileSync(MIGRATION_012_PATH, 'utf8');
+  await pool.query(sql);
+}
+
+/**
+ * Apply migrations/013 — PR#6 behavioural-pattern evidence layer
+ * (risk_observations_v0_1).
+ *
+ * Idempotent: CREATE TABLE IF NOT EXISTS, REVOKE/GRANT are safe to
+ * re-run. Prerequisite: the four canonical group roles already exist
+ * (ensureCanonicalRolesForTests pre-creates them in tests).
+ */
+export async function applyMigration013(pool: pg.Pool): Promise<void> {
+  const sql = readFileSync(MIGRATION_013_PATH, 'utf8');
   await pool.query(sql);
 }
 
@@ -481,6 +504,8 @@ export async function bootstrapTestDb(pool: pg.Pool): Promise<void> {
   await applyMigration011(pool);
   // PR#5 — Stage 0 decisions table (additive; same role-existence guard).
   await applyMigration012(pool);
+  // PR#6 — risk_observations_v0_1 evidence layer (additive; same guard).
+  await applyMigration013(pool);
   const state = await verifyAcceptedEventsDedupValid(pool);
   if (!state.exists) {
     throw new Error(

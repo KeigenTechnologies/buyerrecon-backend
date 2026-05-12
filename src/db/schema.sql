@@ -634,3 +634,73 @@ CREATE INDEX IF NOT EXISTS stage0_decisions_versions
 CREATE INDEX IF NOT EXISTS stage0_decisions_rule_id
   ON stage0_decisions (rule_id, created_at DESC)
   WHERE excluded = TRUE;
+
+-- ============================================================================
+-- Sprint 2 PR#6 — behavioural-pattern evidence layer (risk_observations_v0_1).
+-- ============================================================================
+-- Mirrors migrations/013_risk_observations_v0_1.sql. Append-only; older
+-- sections of this file are not modified.
+--
+-- Role grants + Hard-Rule-I assertion live ONLY in migration 013; this
+-- schema.sql block is GRANT-free for boot-time CREATE TABLE IF NOT EXISTS
+-- parity (matches the PR#3 / PR#5 pattern).
+--
+-- PR#6 ships RECORD_ONLY evidence-layer rows for the AMS Risk Core
+-- adapter slot (CommonFeatures.BehavioralRisk01 upstream input).
+-- behavioural_risk_01 is a normalised input feature in [0,1] — NOT a
+-- score, NOT customer-facing, NOT a verification_score, NOT a RiskIndex.
+-- No reason_codes column. No risk_index column. No verification_score
+-- column. No evidence_band column. No action_recommendation column.
+
+CREATE TABLE IF NOT EXISTS risk_observations_v0_1 (
+  risk_observation_id    UUID            PRIMARY KEY DEFAULT gen_random_uuid(),
+  workspace_id           TEXT            NOT NULL,
+  site_id                TEXT            NOT NULL,
+  session_id             TEXT            NOT NULL,
+  observation_version    TEXT            NOT NULL,
+  scoring_version        TEXT            NOT NULL,
+
+  velocity               JSONB           NOT NULL DEFAULT '{}'::jsonb,
+  device_risk_01         NUMERIC(4,3)    NOT NULL DEFAULT 0,
+  network_risk_01        NUMERIC(4,3)    NOT NULL DEFAULT 0,
+  identity_risk_01       NUMERIC(4,3)    NOT NULL DEFAULT 0,
+  behavioural_risk_01    NUMERIC(4,3)    NOT NULL DEFAULT 0,
+  tags                   JSONB           NOT NULL DEFAULT '[]'::jsonb,
+
+  record_only            BOOLEAN         NOT NULL DEFAULT TRUE,
+  source_event_count     INT             NOT NULL DEFAULT 0,
+  evidence_refs          JSONB           NOT NULL DEFAULT '[]'::jsonb,
+  created_at             TIMESTAMPTZ     NOT NULL DEFAULT now(),
+  updated_at             TIMESTAMPTZ     NOT NULL DEFAULT now(),
+
+  CONSTRAINT risk_obs_v0_1_velocity_is_object
+    CHECK (jsonb_typeof(velocity) = 'object'),
+  CONSTRAINT risk_obs_v0_1_tags_is_array
+    CHECK (jsonb_typeof(tags) = 'array'),
+  CONSTRAINT risk_obs_v0_1_evidence_refs_is_array
+    CHECK (jsonb_typeof(evidence_refs) = 'array'),
+  CONSTRAINT risk_obs_v0_1_record_only_must_be_true
+    CHECK (record_only IS TRUE),
+  CONSTRAINT risk_obs_v0_1_source_event_count_nonneg
+    CHECK (source_event_count >= 0),
+  CONSTRAINT risk_obs_v0_1_behavioural_risk_01_range
+    CHECK (behavioural_risk_01 >= 0 AND behavioural_risk_01 <= 1),
+  CONSTRAINT risk_obs_v0_1_device_risk_01_range
+    CHECK (device_risk_01 >= 0 AND device_risk_01 <= 1),
+  CONSTRAINT risk_obs_v0_1_network_risk_01_range
+    CHECK (network_risk_01 >= 0 AND network_risk_01 <= 1),
+  CONSTRAINT risk_obs_v0_1_identity_risk_01_range
+    CHECK (identity_risk_01 >= 0 AND identity_risk_01 <= 1),
+
+  CONSTRAINT risk_observations_v0_1_natural_key UNIQUE
+    (workspace_id, site_id, session_id, observation_version, scoring_version)
+);
+
+CREATE INDEX IF NOT EXISTS risk_observations_v0_1_workspace_site
+  ON risk_observations_v0_1 (workspace_id, site_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS risk_observations_v0_1_session
+  ON risk_observations_v0_1 (workspace_id, site_id, session_id);
+
+CREATE INDEX IF NOT EXISTS risk_observations_v0_1_versions
+  ON risk_observations_v0_1 (observation_version, scoring_version, created_at DESC);

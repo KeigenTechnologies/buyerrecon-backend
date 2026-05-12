@@ -11,6 +11,7 @@
     "test:db:v1": "vitest run --config vitest.db.config.ts",
     "check:scoring-contracts": "tsx scripts/check-scoring-contracts.ts",
     "stage0:run": "tsx scripts/run-stage0-worker.ts",
+    "risk-evidence:run": "tsx scripts/run-risk-evidence-worker.ts",
     "observe:collector": "tsx scripts/collector-observation-report.ts",
     "extract:session-features": "tsx scripts/extract-session-features.ts",
     "extract:behavioural-features": "tsx scripts/extract-behavioural-features.ts",
