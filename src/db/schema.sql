@@ -561,3 +561,76 @@ CREATE INDEX IF NOT EXISTS scoring_output_lane_b_session
 
 CREATE INDEX IF NOT EXISTS scoring_output_lane_b_version
   ON scoring_output_lane_b (scoring_version, created_at DESC);
+
+-- ============================================================================
+-- Sprint 2 PR#5 — Stage 0 RECORD_ONLY decisions table.
+-- ============================================================================
+-- Mirrors migrations/012_stage0_decisions.sql. Append-only; older
+-- sections of this file are not modified.
+--
+-- Role grants + Hard-Rule-I assertion live ONLY in migration 012; this
+-- schema.sql block is GRANT-free for boot-time CREATE TABLE IF NOT EXISTS
+-- parity (matches the PR#3 pattern).
+--
+-- PR#5 ships RECORD_ONLY. No reason_codes, no verification_score, no
+-- evidence_band, no action_recommendation. rule_id is a Stage-0-
+-- specific enum text; the allowed values mirror the upstream Track A
+-- RULES (commit 6ce15f20…). See docs/vendor/track-a-stage0-pr5.md.
+
+CREATE TABLE IF NOT EXISTS stage0_decisions (
+  stage0_decision_id    UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+  workspace_id          TEXT         NOT NULL,
+  site_id               TEXT         NOT NULL,
+  session_id            TEXT         NOT NULL,
+  stage0_version        TEXT         NOT NULL,
+  scoring_version       TEXT         NOT NULL,
+  excluded              BOOLEAN      NOT NULL,
+  rule_id               TEXT         NOT NULL,
+  rule_inputs           JSONB        NOT NULL DEFAULT '{}'::jsonb,
+  evidence_refs         JSONB        NOT NULL DEFAULT '[]'::jsonb,
+  record_only           BOOLEAN      NOT NULL DEFAULT TRUE,
+  source_event_count    INT          NOT NULL DEFAULT 0,
+  created_at            TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  updated_at            TIMESTAMPTZ  NOT NULL DEFAULT now(),
+
+  CONSTRAINT stage0_decisions_rule_inputs_is_object
+    CHECK (jsonb_typeof(rule_inputs) = 'object'),
+  CONSTRAINT stage0_decisions_evidence_refs_is_array
+    CHECK (jsonb_typeof(evidence_refs) = 'array'),
+  CONSTRAINT stage0_decisions_record_only_must_be_true
+    CHECK (record_only IS TRUE),
+  CONSTRAINT stage0_decisions_source_event_count_nonneg
+    CHECK (source_event_count >= 0),
+  CONSTRAINT stage0_decisions_rule_id_enum
+    CHECK (rule_id IN (
+      'no_stage0_exclusion',
+      'webdriver_global_present',
+      'automation_globals_detected',
+      'known_bot_ua_family',
+      'scanner_or_probe_path',
+      'impossible_request_frequency',
+      'non_browser_runtime',
+      'attack_like_request_pattern'
+    )),
+  CONSTRAINT stage0_decisions_excluded_iff_rule_id
+    CHECK (
+      (excluded = TRUE  AND rule_id <> 'no_stage0_exclusion')
+   OR (excluded = FALSE AND rule_id = 'no_stage0_exclusion')
+    ),
+
+  CONSTRAINT stage0_decisions_natural_key UNIQUE
+    (workspace_id, site_id, session_id, stage0_version, scoring_version)
+);
+
+CREATE INDEX IF NOT EXISTS stage0_decisions_workspace_site
+  ON stage0_decisions (workspace_id, site_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS stage0_decisions_session
+  ON stage0_decisions (workspace_id, site_id, session_id);
+
+CREATE INDEX IF NOT EXISTS stage0_decisions_versions
+  ON stage0_decisions (stage0_version, scoring_version, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS stage0_decisions_rule_id
+  ON stage0_decisions (rule_id, created_at DESC)
+  WHERE excluded = TRUE;

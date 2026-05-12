@@ -354,8 +354,18 @@ describe('Generic score-shaped identifiers remain forbidden in active source', (
    *
    * Comments are stripped first so existing JSDoc / SQL `--` boundary
    * explainers in PR#0..PR#2 files do not trip the rule.
+   *
+   * Vendored third-party code carve-out (PR#5):
+   *   `src/scoring/stage0/vendor/**` is a verbatim upstream Track A copy,
+   *   SHA-256-pinned in `docs/vendor/track-a-stage0-pr5.md`. The upstream
+   *   file's runtime behaviour discards Stage 1 envelope fields, but
+   *   the source text contains type/field names (`classification`,
+   *   `recommendedAction`, etc.) as part of the upstream contract.
+   *   Editing the vendor copy is forbidden — its provenance is enforced
+   *   by SHA-256 + the §I.5 vendor-audit checklist instead.
    */
   const ACTIVE_PREFIXES = ['migrations/', 'src/', 'scripts/', 'scoring/'];
+  const VENDOR_EXCLUDE_PREFIXES = ['src/scoring/stage0/vendor/'];
   const ACTIVE_EXTENSIONS = /\.(ts|tsx|js|mjs|cjs|sql)$/;
   const FORBIDDEN = [
     'risk_score',
@@ -384,6 +394,7 @@ describe('Generic score-shaped identifiers remain forbidden in active source', (
       for (const f of walkRepoSource(ROOT)) {
         const rel = f.slice(ROOT.length + 1);
         if (!ACTIVE_PREFIXES.some((p) => rel.startsWith(p))) continue;
+        if (VENDOR_EXCLUDE_PREFIXES.some((p) => rel.startsWith(p))) continue;
         if (!ACTIVE_EXTENSIONS.test(f)) continue;
         const raw = readFileSync(f, 'utf8');
         const stripped = /\.sql$/.test(f) ? stripSqlComments(raw) : stripTsComments(raw);

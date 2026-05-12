@@ -57,6 +57,13 @@ const MIGRATION_011_PATH = join(
   'migrations',
   '011_scoring_output_lanes.sql',
 );
+// PR#5 (Sprint 2) — Stage 0 RECORD_ONLY decisions table.
+// New table; mirrors PR#3 role-existence + Hard-Rule-I-style guard.
+const MIGRATION_012_PATH = join(
+  ROOT,
+  'migrations',
+  '012_stage0_decisions.sql',
+);
 
 /* --------------------------------------------------------------------------
  * Deterministic test boundary constants
@@ -224,6 +231,18 @@ export async function ensureCanonicalRolesForTests(pool: pg.Pool): Promise<void>
  */
 export async function applyMigration011(pool: pg.Pool): Promise<void> {
   const sql = readFileSync(MIGRATION_011_PATH, 'utf8');
+  await pool.query(sql);
+}
+
+/**
+ * Apply migrations/012 — PR#5 Stage 0 RECORD_ONLY decisions table.
+ *
+ * Idempotent: CREATE TABLE IF NOT EXISTS, REVOKE/GRANT are safe to
+ * re-run. Prerequisite: the four canonical group roles already exist
+ * (ensureCanonicalRolesForTests pre-creates them in tests).
+ */
+export async function applyMigration012(pool: pg.Pool): Promise<void> {
+  const sql = readFileSync(MIGRATION_012_PATH, 'utf8');
   await pool.query(sql);
 }
 
@@ -460,6 +479,8 @@ export async function bootstrapTestDb(pool: pg.Pool): Promise<void> {
   // any of the four canonical group roles is missing.
   await ensureCanonicalRolesForTests(pool);
   await applyMigration011(pool);
+  // PR#5 — Stage 0 decisions table (additive; same role-existence guard).
+  await applyMigration012(pool);
   const state = await verifyAcceptedEventsDedupValid(pool);
   if (!state.exists) {
     throw new Error(
