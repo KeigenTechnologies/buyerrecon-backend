@@ -38,6 +38,7 @@ export {
   normaliseBehaviouralRisk01,
 } from './normalise-behavioural-risk.js';
 export {
+  CURRENT_BEHAVIOURAL_FEATURE_VERSION,
   OBSERVATION_VERSION_DEFAULT,
   type RiskInputsCompat,
   type RiskObservationRow,

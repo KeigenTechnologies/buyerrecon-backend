@@ -28,6 +28,7 @@ import {
   CONTEXT_TAGS_ALLOWED,
   CONTEXT_TAGS_MAX_PER_SESSION,
   CONTEXT_TAG_SHAPE_REGEX,
+  CURRENT_BEHAVIOURAL_FEATURE_VERSION,
   FORBIDDEN_TAG_PATTERNS,
   FORBIDDEN_TAG_PREFIXES,
   BEHAVIOURAL_RISK_NORMALISATION_CONFIG_V0_1,
@@ -316,6 +317,44 @@ describe('PR#6 — ContextTag enum discipline', () => {
 
   it('OBSERVATION_VERSION_DEFAULT is the v0.1 stamp', () => {
     expect(OBSERVATION_VERSION_DEFAULT).toBe('risk-obs-v0.1');
+  });
+});
+
+/* --------------------------------------------------------------------------
+ * 3b. CURRENT_BEHAVIOURAL_FEATURE_VERSION + worker SQL filter
+ *
+ * Hetzner-staging finding under PR#6 commit de76950: the worker JOIN
+ * matched both v0.2 and v0.3 SBF rows for the same session, reporting
+ * `upserted_rows: 4` while only 2 rows landed under the natural key.
+ * The fix is the feature_version filter below — tested at the SQL
+ * level here, and at the DB level in
+ * `tests/v1/db/risk-observations-v0_1.dbtest.ts`.
+ * ------------------------------------------------------------------------ */
+
+describe('PR#6 — CURRENT_BEHAVIOURAL_FEATURE_VERSION + worker SQL filter', () => {
+  it('CURRENT_BEHAVIOURAL_FEATURE_VERSION equals the PR#1 extractor default', () => {
+    // Mirrors scripts/extract-behavioural-features.ts's
+    // `DEFAULT_FEATURE_VERSION = 'behavioural-features-v0.3'`.
+    expect(CURRENT_BEHAVIOURAL_FEATURE_VERSION).toBe('behavioural-features-v0.3');
+  });
+
+  it('worker SQL contains an explicit feature_version equality filter on the SBF join side', () => {
+    const worker = stripTsComments(readFileSync(WORKER_FILE, 'utf8'));
+    // The filter must appear in the WHERE clause as an equality (not
+    // an inequality / IN / nullable). Allow either `b.feature_version`
+    // or `feature_version` after a `b.` alias on the JOIN side.
+    expect(/\bb\.feature_version\s*=\s*\$\d+/.test(worker)).toBe(true);
+  });
+
+  it('worker passes CURRENT_BEHAVIOURAL_FEATURE_VERSION as the default param', () => {
+    const worker = stripTsComments(readFileSync(WORKER_FILE, 'utf8'));
+    // The default fallback must reference CURRENT_BEHAVIOURAL_FEATURE_VERSION.
+    expect(/behavioural_feature_version\s*\?\?\s*CURRENT_BEHAVIOURAL_FEATURE_VERSION/.test(worker)).toBe(true);
+  });
+
+  it('worker RiskEvidenceWorkerResult shape exposes behavioural_feature_version', () => {
+    const worker = stripTsComments(readFileSync(WORKER_FILE, 'utf8'));
+    expect(/behavioural_feature_version:\s*string;/.test(worker)).toBe(true);
   });
 });
 

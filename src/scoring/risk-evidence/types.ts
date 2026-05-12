@@ -40,6 +40,26 @@ import type { ContextTag } from './context-tags.js';
  */
 export const OBSERVATION_VERSION_DEFAULT = 'risk-obs-v0.1';
 
+/**
+ * The current `session_behavioural_features_v0_2.feature_version` PR#6
+ * reads from. Matches `scripts/extract-behavioural-features.ts`'s
+ * `DEFAULT_FEATURE_VERSION = 'behavioural-features-v0.3'`.
+ *
+ * Hetzner staging (PR#6 commit `de76950`) revealed that without this
+ * filter the worker JOIN matched BOTH `behavioural-features-v0.2` AND
+ * `behavioural-features-v0.3` rows for the same session — `upserted_rows`
+ * reported `4` while only `2` rows landed under the natural key (the
+ * second UPSERT overwrote the first via ON CONFLICT DO UPDATE). The
+ * final persisted rows were clean, but the worker was wasting work on
+ * obsolete feature versions and the `upserted_rows` count was
+ * misleading. The filter below is the fix.
+ *
+ * Bumping this value (e.g. when PR#1 ships v0.4) requires a matching
+ * bump in `OBSERVATION_VERSION_DEFAULT` so prior persisted rows remain
+ * reproducible from their own provenance row.
+ */
+export const CURRENT_BEHAVIOURAL_FEATURE_VERSION = 'behavioural-features-v0.3';
+
 /* --------------------------------------------------------------------------
  * Session behavioural features v0.3 — read view (PR#1 + PR#2 layer)
  * ------------------------------------------------------------------------ */

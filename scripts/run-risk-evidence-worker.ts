@@ -12,6 +12,11 @@
  *   UNTIL                   optional ISO timestamp; overrides upper bound (default NOW)
  *   OBSERVATION_VERSION     default 'risk-obs-v0.1'
  *   STAGE0_VERSION_FILTER   optional filter for the stage0_decisions read
+ *   BEHAVIOURAL_FEATURE_VERSION  optional override for the SBF
+ *                                feature_version filter (default
+ *                                'behavioural-features-v0.3'). See
+ *                                Hetzner-staging finding under commit
+ *                                de76950 for why this filter exists.
  *
  * Output: PASS summary on stdout; never prints raw UA / token / IP /
  * payload / canonical_jsonb.
@@ -63,12 +68,13 @@ async function main(): Promise<void> {
 
   process.stdout.write([
     `Sprint 2 PR#6 risk-evidence worker — PASS`,
-    `  database:             ${maskUrl(parsed.databaseUrl)}`,
-    `  observation_version:  ${result.observation_version}`,
-    `  scoring_version:      ${result.scoring_version}`,
-    `  window:               ${result.window_start.toISOString()} → ${result.window_end.toISOString()}`,
-    `  upserted_rows:        ${result.upserted_rows}`,
-    `  bytespider_tagged:    ${result.bytespider_tagged}`,
+    `  database:                     ${maskUrl(parsed.databaseUrl)}`,
+    `  observation_version:          ${result.observation_version}`,
+    `  scoring_version:              ${result.scoring_version}`,
+    `  behavioural_feature_version:  ${result.behavioural_feature_version}`,
+    `  window:                       ${result.window_start.toISOString()} → ${result.window_end.toISOString()}`,
+    `  upserted_rows:                ${result.upserted_rows}`,
+    `  bytespider_tagged:            ${result.bytespider_tagged}`,
     '',
   ].join('\n'));
 

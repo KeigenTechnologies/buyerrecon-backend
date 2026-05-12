@@ -22,6 +22,7 @@ import {
   getTestPool,
 } from './_setup.js';
 import {
+  CURRENT_BEHAVIOURAL_FEATURE_VERSION,
   OBSERVATION_VERSION_DEFAULT,
   runRiskEvidenceWorker,
 } from '../../../src/scoring/risk-evidence/index.js';
@@ -58,6 +59,14 @@ interface SeedOpts {
   stage0Excluded?:                    boolean;
   stage0RuleId?:                      string;
   stage0RuleInputs?:                  Record<string, unknown>;
+  /**
+   * SBF `feature_version` to stamp on the seeded row. Defaults to
+   * `CURRENT_BEHAVIOURAL_FEATURE_VERSION` ('behavioural-features-v0.3')
+   * — the version the PR#6 worker reads by default. Tests that
+   * exercise the multi-version-coexistence Hetzner finding override
+   * this to seed obsolete v0.2 rows alongside.
+   */
+  featureVersion?:                    string;
   /** SBF field overrides. */
   maxEventsPerSecond?:                number;
   pageviewBurstCount10s?:             number;
@@ -76,37 +85,8 @@ interface SeedOpts {
   baseTimeMs?:                        number;
 }
 
-async function seedStage0AndSbf(opts: SeedOpts): Promise<{
-  stage0_decision_id:       string;
-  behavioural_features_id:  number;
-}> {
+async function seedSbfRow(opts: SeedOpts & { featureVersion: string }): Promise<number> {
   const base = opts.baseTimeMs ?? Date.now() - 60_000;
-  const stage0Id = randomUUID();
-  const excluded = opts.stage0Excluded === true;
-  const ruleId   = opts.stage0RuleId ?? (excluded ? 'known_bot_ua_family' : 'no_stage0_exclusion');
-  const ruleInputs = opts.stage0RuleInputs ?? {
-    matched_rule_id:    ruleId,
-    user_agent_family:  'browser',
-    ua_source:          'ingest_requests',
-    events_per_second:  opts.maxEventsPerSecond ?? 1,
-    path_loop_count:    1,
-  };
-
-  await pool.query(
-    `INSERT INTO stage0_decisions (
-       stage0_decision_id, workspace_id, site_id, session_id,
-       stage0_version, scoring_version,
-       excluded, rule_id, rule_inputs, evidence_refs,
-       record_only, source_event_count, created_at, updated_at
-     ) VALUES ($1,$2,$3,$4,'stage0-test-v0.1','s2.v1.0',$5,$6,$7::jsonb,'[]'::jsonb, TRUE, $8, $9, $9)`,
-    [
-      stage0Id, TEST_WORKSPACE, TEST_SITE, opts.sessionId,
-      excluded, ruleId, JSON.stringify(ruleInputs),
-      opts.sourceEventCount ?? 3,
-      new Date(base),
-    ],
-  );
-
   const sbfRes = await pool.query<{ behavioural_features_id: string }>(
     `INSERT INTO session_behavioural_features_v0_2 (
        workspace_id, site_id, session_id,
@@ -128,7 +108,7 @@ async function seedStage0AndSbf(opts: SeedOpts): Promise<{
        repeat_pageview_candidate_count, refresh_loop_source
      ) VALUES (
        $1, $2, $3,
-       'v0.3', $4,
+       $19, $4,
        $4, $4, $5,
        $6, $7,
        NULL,
@@ -163,12 +143,51 @@ async function seedStage0AndSbf(opts: SeedOpts): Promise<{
       opts.refreshLoopCount ?? 0,
       opts.samePathRepeatCount ?? 0,
       opts.samePathRepeatMinDeltaMs,
+      opts.featureVersion,
+    ],
+  );
+  return Number(sbfRes.rows[0]!.behavioural_features_id);
+}
+
+async function seedStage0AndSbf(opts: SeedOpts): Promise<{
+  stage0_decision_id:       string;
+  behavioural_features_id:  number;
+}> {
+  const base = opts.baseTimeMs ?? Date.now() - 60_000;
+  const stage0Id = randomUUID();
+  const excluded = opts.stage0Excluded === true;
+  const ruleId   = opts.stage0RuleId ?? (excluded ? 'known_bot_ua_family' : 'no_stage0_exclusion');
+  const ruleInputs = opts.stage0RuleInputs ?? {
+    matched_rule_id:    ruleId,
+    user_agent_family:  'browser',
+    ua_source:          'ingest_requests',
+    events_per_second:  opts.maxEventsPerSecond ?? 1,
+    path_loop_count:    1,
+  };
+
+  await pool.query(
+    `INSERT INTO stage0_decisions (
+       stage0_decision_id, workspace_id, site_id, session_id,
+       stage0_version, scoring_version,
+       excluded, rule_id, rule_inputs, evidence_refs,
+       record_only, source_event_count, created_at, updated_at
+     ) VALUES ($1,$2,$3,$4,'stage0-test-v0.1','s2.v1.0',$5,$6,$7::jsonb,'[]'::jsonb, TRUE, $8, $9, $9)`,
+    [
+      stage0Id, TEST_WORKSPACE, TEST_SITE, opts.sessionId,
+      excluded, ruleId, JSON.stringify(ruleInputs),
+      opts.sourceEventCount ?? 3,
+      new Date(base),
     ],
   );
 
+  const sbfId = await seedSbfRow({
+    ...opts,
+    featureVersion: opts.featureVersion ?? CURRENT_BEHAVIOURAL_FEATURE_VERSION,
+  });
+
   return {
     stage0_decision_id:      stage0Id,
-    behavioural_features_id: Number(sbfRes.rows[0]!.behavioural_features_id),
+    behavioural_features_id: sbfId,
   };
 }
 
@@ -559,6 +578,134 @@ describe('PR#6 — forbidden JSON keys + replay determinism', () => {
     expect(b.rows[0]!.velocity).toEqual(a.rows[0]!.velocity);
     expect(b.rows[0]!.behavioural_risk_01).toBe(a.rows[0]!.behavioural_risk_01);
     expect(b.rows[0]!.tags).toEqual(a.rows[0]!.tags);
+  });
+});
+
+/* --------------------------------------------------------------------------
+ * 8b. Hetzner finding — multi-feature-version coexistence
+ *
+ * Under PR#6 commit de76950 the Hetzner staging proof showed two SBF
+ * versions ('behavioural-features-v0.2' + 'behavioural-features-v0.3')
+ * coexisting for the same sessions. The unfiltered worker JOIN
+ * matched every session twice (once per SBF version) and reported
+ * `upserted_rows: 4` while only 2 rows landed under the natural key
+ * (the second UPSERT overwrote the first via ON CONFLICT DO UPDATE).
+ *
+ * The fix: filter SBF reads to CURRENT_BEHAVIOURAL_FEATURE_VERSION
+ * ('behavioural-features-v0.3').
+ * ------------------------------------------------------------------------ */
+
+describe('PR#6 — feature_version filter (Hetzner finding under de76950)', () => {
+  it('worker ignores obsolete behavioural-features-v0.2 SBF rows', async () => {
+    // Seed one Stage 0 row + a v0.2 SBF row ONLY.
+    await pool.query(
+      `INSERT INTO stage0_decisions (
+         stage0_decision_id, workspace_id, site_id, session_id,
+         stage0_version, scoring_version,
+         excluded, rule_id, rule_inputs, evidence_refs,
+         record_only, source_event_count, created_at, updated_at
+       ) VALUES ($1,$2,$3,$4,'stage0-test-v0.1','s2.v1.0',FALSE,'no_stage0_exclusion','{"user_agent_family":"browser"}'::jsonb,'[]'::jsonb,TRUE,3,$5,$5)`,
+      [randomUUID(), TEST_WORKSPACE, TEST_SITE, 'sess-v02-only', new Date(Date.now() - 60_000)],
+    );
+    await seedSbfRow({
+      sessionId:      'sess-v02-only',
+      featureVersion: 'behavioural-features-v0.2',
+    });
+    const result = await runRiskEvidenceWorker(pool, {
+      workspace_id:        TEST_WORKSPACE,
+      site_id:             TEST_SITE,
+      window_start:        new Date(Date.now() - 24 * 3600 * 1000),
+      window_end:          new Date(Date.now() + 3600 * 1000),
+      observation_version: TEST_OBS_V1,
+    });
+    expect(result.upserted_rows).toBe(0);
+    expect(result.behavioural_feature_version).toBe(CURRENT_BEHAVIOURAL_FEATURE_VERSION);
+    expect(await countRows('risk_observations_v0_1')).toBe(0);
+  });
+
+  it('worker processes the v0.3 SBF row when both v0.2 and v0.3 coexist for the same session', async () => {
+    // Seed one Stage 0 row.
+    await pool.query(
+      `INSERT INTO stage0_decisions (
+         stage0_decision_id, workspace_id, site_id, session_id,
+         stage0_version, scoring_version,
+         excluded, rule_id, rule_inputs, evidence_refs,
+         record_only, source_event_count, created_at, updated_at
+       ) VALUES ($1,$2,$3,$4,'stage0-test-v0.1','s2.v1.0',FALSE,'no_stage0_exclusion','{"user_agent_family":"browser"}'::jsonb,'[]'::jsonb,TRUE,3,$5,$5)`,
+      [randomUUID(), TEST_WORKSPACE, TEST_SITE, 'sess-multi', new Date(Date.now() - 60_000)],
+    );
+    // Seed BOTH SBF versions for the same session — the SBF natural key
+    // (workspace, site, session, feature_version) permits this.
+    const v02Id = await seedSbfRow({
+      sessionId:           'sess-multi',
+      featureVersion:      'behavioural-features-v0.2',
+      maxEventsPerSecond:  99,        // distinct values so the wrong row would be visible
+      pageviewBurstCount10s: 99,
+    });
+    const v03Id = await seedSbfRow({
+      sessionId:           'sess-multi',
+      featureVersion:      'behavioural-features-v0.3',
+      maxEventsPerSecond:  4,
+      pageviewBurstCount10s: 2,
+    });
+    expect(v02Id).not.toBe(v03Id);
+
+    const result = await runRiskEvidenceWorker(pool, {
+      workspace_id:        TEST_WORKSPACE,
+      site_id:             TEST_SITE,
+      window_start:        new Date(Date.now() - 24 * 3600 * 1000),
+      window_end:          new Date(Date.now() + 3600 * 1000),
+      observation_version: TEST_OBS_V1,
+    });
+
+    // Exactly one upsert (NOT two), exactly one persisted row.
+    expect(result.upserted_rows).toBe(1);
+    expect(await countRows('risk_observations_v0_1')).toBe(1);
+
+    // The persisted row's evidence_refs must point at the v0.3 SBF, not the v0.2 one.
+    const r = await pool.query<{
+      velocity:       { events_per_second: number; pageview_burst_count_10s: number };
+      evidence_refs:  Array<{ table: string; behavioural_features_id?: number; feature_version?: string }>;
+    }>(
+      `SELECT velocity, evidence_refs FROM risk_observations_v0_1 WHERE workspace_id = $1 AND session_id = 'sess-multi'`,
+      [TEST_WORKSPACE],
+    );
+    const row = r.rows[0]!;
+    expect(row.velocity.events_per_second).toBe(4);
+    expect(row.velocity.pageview_burst_count_10s).toBe(2);
+
+    const sbfRef = row.evidence_refs.find((ref) => ref.table === 'session_behavioural_features_v0_2');
+    expect(sbfRef).toBeDefined();
+    expect(sbfRef!.feature_version).toBe(CURRENT_BEHAVIOURAL_FEATURE_VERSION);
+    expect(sbfRef!.behavioural_features_id).toBe(v03Id);
+  });
+
+  it('worker upserted_rows count equals the v0.3 eligible session count (not multi-version JOIN cardinality)', async () => {
+    // Two eligible sessions, each with both SBF versions present.
+    // Without the feature_version filter, JOIN cardinality = 4. With
+    // the filter, JOIN cardinality = 2 → upserted_rows = 2.
+    for (const session of ['sess-cnt-1', 'sess-cnt-2']) {
+      await pool.query(
+        `INSERT INTO stage0_decisions (
+           stage0_decision_id, workspace_id, site_id, session_id,
+           stage0_version, scoring_version,
+           excluded, rule_id, rule_inputs, evidence_refs,
+           record_only, source_event_count, created_at, updated_at
+         ) VALUES ($1,$2,$3,$4,'stage0-test-v0.1','s2.v1.0',FALSE,'no_stage0_exclusion','{"user_agent_family":"browser"}'::jsonb,'[]'::jsonb,TRUE,3,$5,$5)`,
+        [randomUUID(), TEST_WORKSPACE, TEST_SITE, session, new Date(Date.now() - 60_000)],
+      );
+      await seedSbfRow({ sessionId: session, featureVersion: 'behavioural-features-v0.2' });
+      await seedSbfRow({ sessionId: session, featureVersion: 'behavioural-features-v0.3' });
+    }
+    const result = await runRiskEvidenceWorker(pool, {
+      workspace_id:        TEST_WORKSPACE,
+      site_id:             TEST_SITE,
+      window_start:        new Date(Date.now() - 24 * 3600 * 1000),
+      window_end:          new Date(Date.now() + 3600 * 1000),
+      observation_version: TEST_OBS_V1,
+    });
+    expect(result.upserted_rows).toBe(2);  // not 4
+    expect(await countRows('risk_observations_v0_1')).toBe(2);
   });
 });
 

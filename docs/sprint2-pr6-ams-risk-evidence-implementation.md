@@ -467,6 +467,63 @@ Pass 1 projection writer is a separate later PR.
 
 ---
 
+## §9b Hetzner staging finding under commit `de76950` — multi-feature-version filter
+
+**Symptom** (Hetzner proof, PR#6 commit `de76950`):
+
+| Probe | Value | Interpretation |
+| --- | --- | --- |
+| `stage0_decisions` non-excluded rows | 2 | 2 eligible sessions |
+| `session_behavioural_features_v0_2` rows by `feature_version` | `behavioural-features-v0.2`: 8 · `behavioural-features-v0.3`: 8 | two SBF versions coexist |
+| eligible JOIN candidates (worker SELECT cardinality) | 4 | each session matched twice — once per SBF version |
+| PR#6 worker `upserted_rows` | 4 | reflects JOIN cardinality |
+| Final `risk_observations_v0_1` rows | 2 | second UPSERT per session overwrote the first via `ON CONFLICT DO UPDATE` |
+| `evidence_refs.feature_version` on the final rows | v0.3 only | the later UPSERT was the v0.3 row, so the final pointer is v0.3 — but the v0.2 work was wasted |
+
+**Root cause.** The PR#6 worker SELECT joined
+`stage0_decisions` × `session_behavioural_features_v0_2` on
+`(workspace_id, site_id, session_id)` with no
+`feature_version` filter. The SBF natural key
+`(workspace, site, session, feature_version)` permits one row per
+version, so the unfiltered JOIN matched each eligible session N
+times (once per SBF version present). The natural-key UPSERT on the
+destination then collapsed the duplicates — final rows looked clean,
+but `upserted_rows` was misleading and the worker re-ran the adapter
+on obsolete versions.
+
+**Fix.** Filter the worker SELECT to a single source SBF version.
+
+- New constant in `src/scoring/risk-evidence/types.ts`:
+  ```ts
+  export const CURRENT_BEHAVIOURAL_FEATURE_VERSION = 'behavioural-features-v0.3';
+  ```
+  (Matches `scripts/extract-behavioural-features.ts`'s
+  `DEFAULT_FEATURE_VERSION` value.)
+- `worker.ts` `SELECT_SQL` adds
+  `AND b.feature_version = $2` (param 2; later params shifted by one).
+- `RiskEvidenceWorkerOptions` gains an optional
+  `behavioural_feature_version?: string` override (defaults to the
+  constant). `RiskEvidenceWorkerResult` adds the resolved value as
+  `behavioural_feature_version: string` so the CLI reports which
+  version actually flowed.
+- `parseRiskEvidenceEnvOptions` reads optional
+  `BEHAVIOURAL_FEATURE_VERSION` env var.
+- CLI runner prints the resolved value.
+- Tests cover: (a) obsolete v0.2 rows ignored; (b) when v0.2 + v0.3
+  coexist for the same session, only the v0.3 row contributes (and
+  `evidence_refs.feature_version` proves it); (c) `upserted_rows`
+  equals the v0.3-eligible session count (2), not the multi-version
+  JOIN cardinality (4); (d) pure-test SQL grep asserting
+  `b.feature_version = $N` appears in `worker.ts`.
+
+**Bumping the source SBF version.** Per the planning doc D-12 +
+this fix: bumping `CURRENT_BEHAVIOURAL_FEATURE_VERSION` (e.g. when
+PR#1 ships v0.4) requires a matching bump in
+`OBSERVATION_VERSION_DEFAULT` so prior persisted rows remain
+reproducible from their own provenance row.
+
+---
+
 ## §10 Implementation gate status
 
 | Gate | Status |

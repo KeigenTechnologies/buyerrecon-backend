@@ -33,6 +33,7 @@ import {
 } from '../contracts.js';
 import { buyerreconBehaviouralToRiskInputs } from './adapter.js';
 import {
+  CURRENT_BEHAVIOURAL_FEATURE_VERSION,
   OBSERVATION_VERSION_DEFAULT,
   type RiskObservationRow,
   type SessionBehaviouralFeaturesV0_3Row,
@@ -58,17 +59,29 @@ export interface RiskEvidenceWorkerOptions {
    * scoring contract version are considered).
    */
   stage0_version_filter?:   string;
+  /**
+   * Optional override for the
+   * `session_behavioural_features_v0_2.feature_version` filter.
+   * Defaults to `CURRENT_BEHAVIOURAL_FEATURE_VERSION`
+   * ('behavioural-features-v0.3'). The Hetzner-staging finding under
+   * commit `de76950` is the reason this filter exists at all — without
+   * it the worker double-processed v0.2 + v0.3 SBF rows for the same
+   * session. Tests that need to exercise a synthetic version override
+   * the value here.
+   */
+  behavioural_feature_version?: string;
   /** Repo root for the PR#4 contract loader (defaults to auto-detect). */
   rootDir?:                 string;
 }
 
 export interface RiskEvidenceWorkerResult {
-  upserted_rows:        number;
-  bytespider_tagged:    number;
-  observation_version:  string;
-  scoring_version:      string;
-  window_start:         Date;
-  window_end:           Date;
+  upserted_rows:               number;
+  bytespider_tagged:           number;
+  observation_version:         string;
+  scoring_version:             string;
+  behavioural_feature_version: string;
+  window_start:                Date;
+  window_end:                  Date;
 }
 
 /* --------------------------------------------------------------------------
@@ -77,6 +90,20 @@ export interface RiskEvidenceWorkerResult {
  * The JOIN keys are (workspace_id, site_id, session_id). The Stage 0
  * row is the eligibility filter (excluded = FALSE); the SBF row
  * carries the behavioural evidence the adapter normalises.
+ *
+ * IMPORTANT (Hetzner staging finding under commit de76950):
+ *   SBF rows under multiple `feature_version` values may coexist for
+ *   the same (workspace, site, session) — the SBF natural key permits
+ *   one row per (ws, site, session, feature_version). Without an
+ *   explicit feature_version filter the JOIN matches each session
+ *   ONCE PER SBF VERSION, causing the worker to UPSERT the same
+ *   risk_observations_v0_1 natural key twice (the second UPSERT
+ *   overwrites the first via ON CONFLICT DO UPDATE — final rows are
+ *   clean, but `upserted_rows` is wrong and obsolete versions are
+ *   wastefully reprocessed). The filter below is the fix: PR#6 reads
+ *   only the current behavioural feature version (default
+ *   `behavioural-features-v0.3`; override via
+ *   `behavioural_feature_version` opt).
  *
  * No raw UA. No raw page_url. No payload bytes. The Stage 0
  * `rule_inputs` JSONB is read for the `user_agent_family` provenance
@@ -119,11 +146,12 @@ JOIN session_behavioural_features_v0_2 b
   AND b.session_id   = s.session_id
 WHERE s.excluded        = FALSE
   AND s.scoring_version = $1
-  AND ($2::text IS NULL OR s.stage0_version = $2)
-  AND ($3::text IS NULL OR s.workspace_id   = $3)
-  AND ($4::text IS NULL OR s.site_id        = $4)
-  AND s.created_at >= $5
-  AND s.created_at <  $6
+  AND b.feature_version = $2
+  AND ($3::text IS NULL OR s.stage0_version = $3)
+  AND ($4::text IS NULL OR s.workspace_id   = $4)
+  AND ($5::text IS NULL OR s.site_id        = $5)
+  AND s.created_at >= $6
+  AND s.created_at <  $7
 ORDER BY s.created_at ASC, s.stage0_decision_id ASC
 `;
 
@@ -272,10 +300,15 @@ export async function runRiskEvidenceWorker(
   const scoring_version     = opts.scoring_version_override ?? contracts.version.scoring_version;
   const observation_version = opts.observation_version;
   const stage0_version_filter = opts.stage0_version_filter ?? null;
+  const behavioural_feature_version =
+    opts.behavioural_feature_version ?? CURRENT_BEHAVIOURAL_FEATURE_VERSION;
 
-  // §3 — SELECT eligible joined rows.
+  // §3 — SELECT eligible joined rows. The behavioural_feature_version
+  // filter is REQUIRED (not nullable) — see SELECT_SQL doc comment for
+  // the Hetzner-staging double-process bug under commit de76950.
   const select = await pool.query<JoinedRow>(SELECT_SQL, [
     scoring_version,
+    behavioural_feature_version,
     stage0_version_filter,
     opts.workspace_id,
     opts.site_id,
@@ -345,12 +378,13 @@ export async function runRiskEvidenceWorker(
   }
 
   return {
-    upserted_rows:        upserted,
+    upserted_rows:               upserted,
     bytespider_tagged,
     observation_version,
     scoring_version,
-    window_start:         opts.window_start,
-    window_end:           opts.window_end,
+    behavioural_feature_version,
+    window_start:                opts.window_start,
+    window_end:                  opts.window_end,
   };
 }
 
@@ -422,6 +456,12 @@ export function parseRiskEvidenceEnvOptions(
       ? env.STAGE0_VERSION_FILTER
       : undefined;
 
+  const behavioural_feature_version =
+    typeof env.BEHAVIOURAL_FEATURE_VERSION === 'string'
+      && env.BEHAVIOURAL_FEATURE_VERSION.length > 0
+      ? env.BEHAVIOURAL_FEATURE_VERSION
+      : undefined;  // worker defaults to CURRENT_BEHAVIOURAL_FEATURE_VERSION
+
   return {
     databaseUrl,
     options: {
@@ -431,6 +471,7 @@ export function parseRiskEvidenceEnvOptions(
       window_end,
       observation_version,
       stage0_version_filter,
+      behavioural_feature_version,
     },
   };
 }
