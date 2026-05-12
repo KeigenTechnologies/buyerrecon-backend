@@ -1,0 +1,7 @@
+# Sprint 2 PR#4 fixture — version.yml whose reason_code_dictionary_version
+# does NOT match the live dictionary's metadata.version (rc-v0.1).
+scoring_version: s2.v1.0
+reason_code_dictionary_version: rc-vBAD
+forbidden_codes_version: forbidden-v0.1
+status: record_only
+automated_action_enabled: false

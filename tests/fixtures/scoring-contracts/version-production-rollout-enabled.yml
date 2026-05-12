@@ -1,0 +1,8 @@
+# Sprint 2 PR#4 fixture — version.yml with an unknown `production_*`
+# activation key set to true.
+scoring_version: s2.v1.0
+reason_code_dictionary_version: rc-v0.1
+forbidden_codes_version: forbidden-v0.1
+status: record_only
+automated_action_enabled: false
+production_rollout_enabled: true

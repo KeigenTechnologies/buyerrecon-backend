@@ -1,0 +1,14 @@
+# Sprint 2 PR#4 fixture — forbidden_codes.yml missing the
+# hard_blocked_verification_method_strength_values_in_v1 key entirely.
+metadata:
+  version: forbidden-v0.1
+hard_blocked_codes: []
+hard_blocked_code_patterns:
+  applies_to: emitted_reason_codes_only
+  patterns: []
+hard_blocked_band_values: [high]
+hard_blocked_action_values: [exclude, allow, block, deny]
+prefix_allowlist: [A_, B_, REVIEW_, OBS_]
+string_patterns_blocked_in_code:
+  applies_to: source_code_strings_only
+  patterns: []

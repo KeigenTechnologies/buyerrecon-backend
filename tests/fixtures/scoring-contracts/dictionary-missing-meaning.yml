@@ -1,0 +1,10 @@
+# Sprint 2 PR#4 fixture — dictionary with a code missing the `meaning` field.
+metadata:
+  version: rc-v0.1
+codes:
+  A_TEST_MISSING_MEANING:
+    can_route_to_review: true
+    can_trigger_automated_action: false
+reserved_namespaces:
+  UX_:
+    status: reserved

@@ -1,0 +1,40 @@
+# Sprint 2 PR#4 fixture — dictionary with 8 OBS_* codes (cap is 7 in v1
+# per signal-truth §12.2).
+metadata:
+  version: rc-v0.1
+codes:
+  OBS_ONE:
+    meaning: Test.
+    can_route_to_review: false
+    can_trigger_automated_action: false
+  OBS_TWO:
+    meaning: Test.
+    can_route_to_review: false
+    can_trigger_automated_action: false
+  OBS_THREE:
+    meaning: Test.
+    can_route_to_review: false
+    can_trigger_automated_action: false
+  OBS_FOUR:
+    meaning: Test.
+    can_route_to_review: false
+    can_trigger_automated_action: false
+  OBS_FIVE:
+    meaning: Test.
+    can_route_to_review: false
+    can_trigger_automated_action: false
+  OBS_SIX:
+    meaning: Test.
+    can_route_to_review: false
+    can_trigger_automated_action: false
+  OBS_SEVEN:
+    meaning: Test.
+    can_route_to_review: false
+    can_trigger_automated_action: false
+  OBS_EIGHT:
+    meaning: Test.
+    can_route_to_review: false
+    can_trigger_automated_action: false
+reserved_namespaces:
+  UX_:
+    status: reserved

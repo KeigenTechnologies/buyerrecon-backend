@@ -1,0 +1,13 @@
+# Sprint 2 PR#4 fixture — dictionary with a code carrying the legacy
+# `can_trigger_action` field that CF-3 removed.
+metadata:
+  version: rc-v0.1
+codes:
+  A_TEST_LEGACY:
+    meaning: Legacy field present.
+    can_route_to_review: true
+    can_trigger_automated_action: false
+    can_trigger_action: false
+reserved_namespaces:
+  UX_:
+    status: reserved

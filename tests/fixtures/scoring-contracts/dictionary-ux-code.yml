@@ -1,0 +1,12 @@
+# Sprint 2 PR#4 fixture — dictionary containing a UX_* code under `codes:`.
+# UX_* is a reserved-not-emitted namespace in v1 (signal-truth §11).
+metadata:
+  version: rc-v0.1
+codes:
+  UX_FAKE_CODE:
+    meaning: UX_* codes are reserved-not-emitted in v1.
+    can_route_to_review: false
+    can_trigger_automated_action: false
+reserved_namespaces:
+  UX_:
+    status: reserved

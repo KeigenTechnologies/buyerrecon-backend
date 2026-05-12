@@ -1,0 +1,12 @@
+# Sprint 2 PR#4 fixture — dictionary with a code whose prefix is none of
+# A_ / B_ / REVIEW_ / OBS_.
+metadata:
+  version: rc-v0.1
+codes:
+  X_UNKNOWN_PREFIX:
+    meaning: Bad prefix — not A_/B_/REVIEW_/OBS_.
+    can_route_to_review: false
+    can_trigger_automated_action: false
+reserved_namespaces:
+  UX_:
+    status: reserved

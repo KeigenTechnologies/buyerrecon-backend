@@ -1,0 +1,8 @@
+# Sprint 2 PR#4 fixture — version.yml with an unknown `live_*` activation
+# key set to true (must be HARD-issued by the prefix-family matcher).
+scoring_version: s2.v1.0
+reason_code_dictionary_version: rc-v0.1
+forbidden_codes_version: forbidden-v0.1
+status: record_only
+automated_action_enabled: false
+live_scoring_enabled: true

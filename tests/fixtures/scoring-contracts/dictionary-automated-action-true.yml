@@ -1,0 +1,12 @@
+# Sprint 2 PR#4 fixture — dictionary with a code whose
+# can_trigger_automated_action is true (forbidden in v1).
+metadata:
+  version: rc-v0.1
+codes:
+  A_TEST_AUTO_ACTION:
+    meaning: Automated action enabled — forbidden in v1.
+    can_route_to_review: true
+    can_trigger_automated_action: true
+reserved_namespaces:
+  UX_:
+    status: reserved

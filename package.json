@@ -9,6 +9,7 @@
     "start": "node dist/server.js",
     "test": "vitest run",
     "test:db:v1": "vitest run --config vitest.db.config.ts",
+    "check:scoring-contracts": "tsx scripts/check-scoring-contracts.ts",
     "observe:collector": "tsx scripts/collector-observation-report.ts",
     "extract:session-features": "tsx scripts/extract-session-features.ts",
     "extract:behavioural-features": "tsx scripts/extract-behavioural-features.ts",
@@ -26,7 +27,8 @@
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "helmet": "^8.1.0",
-    "pg": "^8.20.0"
+    "pg": "^8.20.0",
+    "yaml": "^2.9.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
