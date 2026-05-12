@@ -1,37 +1,30 @@
 /**
- * Sprint 2 PR#1 — opt-in DB tests for behavioural_features_v0.2 extractor.
+ * Sprint 2 PR#1 + PR#2 — opt-in DB tests for behavioural_features_v0.3 extractor.
  *
  * Runs only under `npm run test:db:v1` with TEST_DATABASE_URL set. Seeds
  * accepted_events directly under a fresh disposable workspace
  * (`__test_ws_pr1_behavioural__`), runs the extractor against real
- * Postgres, and asserts row-level facts including:
+ * Postgres, and asserts row-level facts.
  *
- *   1.  page-view-only session
- *   2.  cta-after-pageview session
- *   3.  immediate-cta session (ms_from_consent_to_first_cta)
- *   4.  form_start before cta
- *   5.  form_submit without prior form_start
- *   6.  multiple pageviews → ms_between_pageviews_p50
- *   7.  pageview burst within 10 seconds
- *   8.  max_events_per_second
- *   9.  sub_200ms_transition_count
- *  10.  interaction_density_bucket
- *  11.  scroll_depth_bucket_before_first_cta NULL + not_extractable
- *  12.  multi-session isolation
- *  13.  cross-workspace isolation
- *  14.  cross-site isolation (same session_id under two sites does not merge)
- *  15.  candidate-window vs full-session aggregation (event outside window)
- *  16.  late-event rerun updates same row (same behavioural_features_id)
- *  17.  source tables unchanged
- *  18.  feature_presence_map is a JSONB object with all 12 keys
- *  19.  feature_source_map is a JSONB object
- *  20.  no scoring columns present on the table
- *  21.  idempotent rerun
- *  22.  no refresh_loop column (D-3: deferred to PR#2)
+ * PR#1 baseline scenarios (1-21): unchanged in behaviour; uses
+ * TEST_FEATURE_VERSION='behavioural-features-v0.3' now (default version).
+ * The maps assert 13 keys in v0.3.
+ *
+ * PR#2 refresh-loop scenarios (23+):
+ *   - N boundary (1, 2, 3 consecutive same-path page_views)
+ *   - W boundary (span <= 10000ms vs > 10000ms)
+ *   - K boundary (0, 1, 2 actions between adjacent same-path PVs)
+ *   - alternating paths A/B/A → no candidate
+ *   - two streaks per session
+ *   - late-event rerun preserves refresh-loop fields
+ *   - candidate-window vs full-session for refresh-loop
+ *   - SDK refresh-loop hint ignored (server-only derivation)
+ *   - v0.3 valid + missing = 13, v0.2 row still = 12
+ *   - source tables unchanged
  *
  * Test boundary: `__test_ws_pr1_behavioural__`. Distinct from PR#8
  * (`__test_ws_pr8__`), PR#11 (`__test_ws_pr11__`), and the smoke
- * boundary (`buyerrecon_smoke_ws`) so PR#1 tests never collide.
+ * boundary (`buyerrecon_smoke_ws`) so PR#1/PR#2 tests never collide.
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
@@ -40,6 +33,10 @@ import { bootstrapTestDb, endTestPool, getTestPool } from './_setup.js';
 import {
   EXTRACTION_SQL,
   EXPECTED_FEATURE_COUNT_V0_2,
+  EXPECTED_FEATURE_COUNT_V0_3,
+  REFRESH_LOOP_MAX_ACTIONS_BETWEEN,
+  REFRESH_LOOP_MAX_SPAN_MS,
+  REFRESH_LOOP_MIN_CONSECUTIVE_PAGE_VIEWS,
   runExtraction,
 } from '../../../scripts/extract-behavioural-features.js';
 import { payloadSha256 } from '../../../src/collector/v1/payload-hash.js';
@@ -49,7 +46,8 @@ const TEST_WORKSPACE = '__test_ws_pr1_behavioural__';
 const TEST_WORKSPACE_OTHER = '__test_ws_pr1_behavioural_other__';
 const TEST_SITE = '__test_site_pr1_behavioural__';
 const TEST_SITE_OTHER = '__test_site_pr1_behavioural_other__';
-const TEST_FEATURE_VERSION = 'behavioural-features-v0.2';
+const TEST_FEATURE_VERSION = 'behavioural-features-v0.3';
+const TEST_FEATURE_VERSION_V0_2 = 'behavioural-features-v0.2';
 
 let pool: Pool;
 
@@ -688,41 +686,42 @@ describe('PR#1 — source tables unchanged', () => {
  * 18-19. feature_presence_map + feature_source_map shapes
  * ------------------------------------------------------------------------ */
 
-describe('PR#1 — feature_presence_map + feature_source_map shapes', () => {
-  it('feature_presence_map is a JSONB object with 12 keys', async () => {
+describe('PR#1 — feature_presence_map + feature_source_map shapes (v0.3 default)', () => {
+  it('feature_presence_map is a JSONB object with 13 keys (v0.3)', async () => {
     await seedAccepted({ session_id: 'sess-map-shape', event_name: 'page_view' });
     await extractDefault();
     const row = await selectRow(TEST_WORKSPACE, 'sess-map-shape');
     expect(row).not.toBeNull();
     const presence = row!.feature_presence_map as Record<string, string>;
     expect(typeof presence).toBe('object');
-    expect(Object.keys(presence).length).toBe(EXPECTED_FEATURE_COUNT_V0_2);
-    // Every value must be one of present | missing | not_extractable
+    expect(Object.keys(presence).length).toBe(EXPECTED_FEATURE_COUNT_V0_3);
     for (const v of Object.values(presence)) {
       expect(['present', 'missing', 'not_extractable']).toContain(v);
     }
+    expect(presence['refresh_loop_candidate']).toBe('present');
   });
 
-  it('feature_source_map is a JSONB object with 12 keys', async () => {
+  it('feature_source_map is a JSONB object with 13 keys (v0.3)', async () => {
     await seedAccepted({ session_id: 'sess-source-shape', event_name: 'page_view' });
     await extractDefault();
     const row = await selectRow(TEST_WORKSPACE, 'sess-source-shape');
     expect(row).not.toBeNull();
     const source = row!.feature_source_map as Record<string, string>;
     expect(typeof source).toBe('object');
-    expect(Object.keys(source).length).toBe(EXPECTED_FEATURE_COUNT_V0_2);
+    expect(Object.keys(source).length).toBe(EXPECTED_FEATURE_COUNT_V0_3);
     for (const v of Object.values(source)) {
       expect(['server_derived', 'not_extractable']).toContain(v);
     }
+    expect(source['refresh_loop_candidate']).toBe('server_derived');
   });
 
-  it('valid_feature_count + missing_feature_count = EXPECTED_FEATURE_COUNT_V0_2', async () => {
+  it('valid_feature_count + missing_feature_count = EXPECTED_FEATURE_COUNT_V0_3 (13)', async () => {
     await seedAccepted({ session_id: 'sess-counts', event_name: 'page_view' });
     await extractDefault();
     const row = await selectRow(TEST_WORKSPACE, 'sess-counts');
     expect(row).not.toBeNull();
     expect(Number(row!.valid_feature_count) + Number(row!.missing_feature_count)).toBe(
-      EXPECTED_FEATURE_COUNT_V0_2,
+      EXPECTED_FEATURE_COUNT_V0_3,
     );
   });
 });
@@ -769,19 +768,533 @@ describe('PR#1 — idempotent rerun', () => {
 });
 
 /* --------------------------------------------------------------------------
- * 22. no refresh_loop column (D-3 deferred to PR#2)
+ * 22. PR#2 refresh-loop columns present (NOT refresh_loop_observed)
  * ------------------------------------------------------------------------ */
 
-describe('PR#1 — no refresh_loop column (D-3 deferred to PR#2)', () => {
-  it('information_schema does not show any refresh_loop column', async () => {
+describe('PR#2 — refresh-loop columns present and shaped correctly', () => {
+  it('information_schema shows all 8 refresh-loop columns and NO refresh_loop_observed', async () => {
     const r = await pool.query<{ column_name: string }>(
       `SELECT column_name
          FROM information_schema.columns
         WHERE table_schema = 'public'
           AND table_name   = 'session_behavioural_features_v0_2'
-          AND column_name LIKE 'refresh_loop%'`,
+          AND (
+                column_name LIKE 'refresh_loop%'
+             OR column_name LIKE 'same_path_repeat%'
+             OR column_name = 'repeat_pageview_candidate_count'
+          )
+        ORDER BY column_name`,
+    );
+    const names = new Set(r.rows.map((row) => row.column_name));
+    for (const c of [
+      'refresh_loop_candidate',
+      'refresh_loop_count',
+      'refresh_loop_source',
+      'same_path_repeat_count',
+      'same_path_repeat_max_span_ms',
+      'same_path_repeat_min_delta_ms',
+      'same_path_repeat_median_delta_ms',
+      'repeat_pageview_candidate_count',
+    ]) {
+      expect(names.has(c)).toBe(true);
+    }
+    expect(names.has('refresh_loop_observed')).toBe(false);
+  });
+
+  it('no scoring/judgement columns leaked alongside the new factual columns', async () => {
+    const r = await pool.query<{ column_name: string }>(
+      `SELECT column_name
+         FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name   = 'session_behavioural_features_v0_2'
+          AND column_name ~ '(score|risk|classification|recommend|confidence|is_bot|is_agent|ai_agent|buyer_intent|lead_quality|verified|confirmed|refresh_loop_observed)'`,
     );
     expect(r.rows.length).toBe(0);
+  });
+});
+
+/* --------------------------------------------------------------------------
+ * 23. PR#2 — N threshold (consecutive same-path page_views)
+ * ------------------------------------------------------------------------ */
+
+describe('PR#2 — N threshold (min consecutive same-path page_views = 3)', () => {
+  it('N=1 single page_view → refresh_loop_candidate FALSE, same_path_repeat_count=1', async () => {
+    await seedAccepted({
+      session_id: 'sess-n1',
+      event_name: 'page_view',
+      page_path: '/a',
+    });
+    await extractDefault();
+    const row = await selectRow(TEST_WORKSPACE, 'sess-n1');
+    expect(row).not.toBeNull();
+    expect(row!.refresh_loop_candidate).toBe(false);
+    expect(row!.refresh_loop_count).toBe(0);
+    expect(row!.same_path_repeat_count).toBe(1);
+    expect(row!.repeat_pageview_candidate_count).toBe(0);
+    expect(row!.refresh_loop_source).toBe('server_derived');
+  });
+
+  it('N=2 two same-path PVs within W → still below N=3, refresh_loop_candidate FALSE', async () => {
+    const t = Date.now() - 60_000;
+    await seedAccepted({ session_id: 'sess-n2', event_name: 'page_view', page_path: '/a', received_at: new Date(t) });
+    await seedAccepted({ session_id: 'sess-n2', event_name: 'page_view', page_path: '/a', received_at: new Date(t + 500) });
+    await extractDefault();
+    const row = await selectRow(TEST_WORKSPACE, 'sess-n2');
+    expect(row).not.toBeNull();
+    expect(row!.refresh_loop_candidate).toBe(false);
+    expect(row!.refresh_loop_count).toBe(0);
+    expect(row!.same_path_repeat_count).toBe(2);
+    expect(row!.repeat_pageview_candidate_count).toBe(0);
+  });
+
+  it('N=3 three same-path PVs within W → refresh_loop_candidate TRUE', async () => {
+    const t = Date.now() - 60_000;
+    for (let i = 0; i < 3; i++) {
+      await seedAccepted({
+        session_id: 'sess-n3',
+        event_name: 'page_view',
+        page_path: '/a',
+        received_at: new Date(t + i * 500),
+      });
+    }
+    await extractDefault();
+    const row = await selectRow(TEST_WORKSPACE, 'sess-n3');
+    expect(row).not.toBeNull();
+    expect(row!.refresh_loop_candidate).toBe(true);
+    expect(row!.refresh_loop_count).toBe(1);
+    expect(row!.same_path_repeat_count).toBe(3);
+    expect(row!.repeat_pageview_candidate_count).toBe(3);
+  });
+
+  it('constants exposed for tests match D-3 (N=3, W=10000, K=1)', () => {
+    expect(REFRESH_LOOP_MIN_CONSECUTIVE_PAGE_VIEWS).toBe(3);
+    expect(REFRESH_LOOP_MAX_SPAN_MS).toBe(10000);
+    expect(REFRESH_LOOP_MAX_ACTIONS_BETWEEN).toBe(1);
+  });
+});
+
+/* --------------------------------------------------------------------------
+ * 24. PR#2 — W threshold (max run span in ms)
+ * ------------------------------------------------------------------------ */
+
+describe('PR#2 — W threshold (max run span <= 10000ms)', () => {
+  it('span < W → candidate TRUE', async () => {
+    const t = Date.now() - 60_000;
+    await seedAccepted({ session_id: 'sess-w-in', event_name: 'page_view', page_path: '/a', received_at: new Date(t) });
+    await seedAccepted({ session_id: 'sess-w-in', event_name: 'page_view', page_path: '/a', received_at: new Date(t + 2000) });
+    await seedAccepted({ session_id: 'sess-w-in', event_name: 'page_view', page_path: '/a', received_at: new Date(t + 4000) });
+    await extractDefault();
+    const row = await selectRow(TEST_WORKSPACE, 'sess-w-in');
+    expect(row).not.toBeNull();
+    expect(row!.refresh_loop_candidate).toBe(true);
+    expect(row!.refresh_loop_count).toBe(1);
+    expect(Number(row!.same_path_repeat_max_span_ms)).toBe(4000);
+  });
+
+  it('span > W → candidate FALSE despite N>=3', async () => {
+    const t = Date.now() - 600_000;
+    // 3 same-path PVs spanning 15s — exceeds W=10000ms.
+    await seedAccepted({ session_id: 'sess-w-over', event_name: 'page_view', page_path: '/a', received_at: new Date(t) });
+    await seedAccepted({ session_id: 'sess-w-over', event_name: 'page_view', page_path: '/a', received_at: new Date(t + 7000) });
+    await seedAccepted({ session_id: 'sess-w-over', event_name: 'page_view', page_path: '/a', received_at: new Date(t + 15000) });
+    await extractDefault();
+    const row = await selectRow(TEST_WORKSPACE, 'sess-w-over');
+    expect(row).not.toBeNull();
+    expect(row!.refresh_loop_candidate).toBe(false);
+    expect(row!.refresh_loop_count).toBe(0);
+    expect(row!.same_path_repeat_count).toBe(3);
+    expect(Number(row!.same_path_repeat_max_span_ms)).toBe(15000);
+  });
+});
+
+/* --------------------------------------------------------------------------
+ * 25. PR#2 — K threshold (max actions between adjacent same-path PVs)
+ * ------------------------------------------------------------------------ */
+
+describe('PR#2 — K threshold (max actions between adjacent same-path PVs <= 1)', () => {
+  it('K=0 (no actions between) → candidate TRUE', async () => {
+    const t = Date.now() - 60_000;
+    await seedAccepted({ session_id: 'sess-k0', event_name: 'page_view', page_path: '/a', received_at: new Date(t) });
+    await seedAccepted({ session_id: 'sess-k0', event_name: 'page_view', page_path: '/a', received_at: new Date(t + 500) });
+    await seedAccepted({ session_id: 'sess-k0', event_name: 'page_view', page_path: '/a', received_at: new Date(t + 1000) });
+    await extractDefault();
+    const row = await selectRow(TEST_WORKSPACE, 'sess-k0');
+    expect(row).not.toBeNull();
+    expect(row!.refresh_loop_candidate).toBe(true);
+  });
+
+  it('K=1 (one action between adjacent PVs) → candidate TRUE (boundary inclusive)', async () => {
+    const t = Date.now() - 60_000;
+    await seedAccepted({ session_id: 'sess-k1', event_name: 'page_view', page_path: '/a', received_at: new Date(t) });
+    await seedAccepted({ session_id: 'sess-k1', event_name: 'cta_click', received_at: new Date(t + 100) });
+    await seedAccepted({ session_id: 'sess-k1', event_name: 'page_view', page_path: '/a', received_at: new Date(t + 300) });
+    await seedAccepted({ session_id: 'sess-k1', event_name: 'page_view', page_path: '/a', received_at: new Date(t + 600) });
+    await extractDefault();
+    const row = await selectRow(TEST_WORKSPACE, 'sess-k1');
+    expect(row).not.toBeNull();
+    expect(row!.refresh_loop_candidate).toBe(true);
+  });
+
+  it('K=2 (two actions between adjacent PVs) → candidate FALSE', async () => {
+    const t = Date.now() - 60_000;
+    await seedAccepted({ session_id: 'sess-k2', event_name: 'page_view', page_path: '/a', received_at: new Date(t) });
+    await seedAccepted({ session_id: 'sess-k2', event_name: 'cta_click', received_at: new Date(t + 100) });
+    await seedAccepted({ session_id: 'sess-k2', event_name: 'form_start', received_at: new Date(t + 150) });
+    await seedAccepted({ session_id: 'sess-k2', event_name: 'page_view', page_path: '/a', received_at: new Date(t + 300) });
+    await seedAccepted({ session_id: 'sess-k2', event_name: 'page_view', page_path: '/a', received_at: new Date(t + 600) });
+    await extractDefault();
+    const row = await selectRow(TEST_WORKSPACE, 'sess-k2');
+    expect(row).not.toBeNull();
+    expect(row!.refresh_loop_candidate).toBe(false);
+    // Run length is still 3 (path didn't change), but the K filter rejects it.
+    expect(row!.same_path_repeat_count).toBe(3);
+    expect(row!.refresh_loop_count).toBe(0);
+  });
+});
+
+/* --------------------------------------------------------------------------
+ * 25b. PR#2 — same-received_at tie cases (Codex BLOCKER fix)
+ *
+ * accepted_events.event_id is BIGSERIAL, so seeding rows sequentially via
+ * sequential `await seedAccepted(...)` calls assigns monotonically
+ * increasing event_id values. That gives us deterministic event_id
+ * ordering without altering the seed helper. The window ordering in
+ * the extractor is (received_at ASC, event_id ASC), so when timestamps
+ * tie, the earlier-seeded row is "before" the later-seeded row.
+ * ------------------------------------------------------------------------ */
+
+describe('PR#2 — same-received_at ties resolved by event_id (Codex BLOCKER fix)', () => {
+  it('A. action ordered AFTER PV1 and BEFORE PV2 by event_id at same timestamp → action counts; K=1 streak is candidate', async () => {
+    const t = Date.now() - 60_000;
+    const T = new Date(t);
+    // Seed order = event_id order: PV1 < action < PV2 < PV3.
+    await seedAccepted({ session_id: 'sess-tie-a', event_name: 'page_view', page_path: '/a', received_at: T });
+    await seedAccepted({ session_id: 'sess-tie-a', event_name: 'cta_click',                       received_at: T });
+    await seedAccepted({ session_id: 'sess-tie-a', event_name: 'page_view', page_path: '/a', received_at: T });
+    await seedAccepted({ session_id: 'sess-tie-a', event_name: 'page_view', page_path: '/a', received_at: new Date(t + 100) });
+    await extractDefault();
+    const row = await selectRow(TEST_WORKSPACE, 'sess-tie-a');
+    expect(row).not.toBeNull();
+    // 1 action between PV1 and PV2, 0 between PV2 and PV3 → max actions in run = 1 (K=1 passes).
+    expect(row!.refresh_loop_candidate).toBe(true);
+    expect(row!.refresh_loop_count).toBe(1);
+    expect(row!.same_path_repeat_count).toBe(3);
+  });
+
+  it('B. action ordered AFTER PV2 by event_id at same timestamp → does NOT count between PV1 and PV2; candidate TRUE', async () => {
+    const t = Date.now() - 60_000;
+    const T = new Date(t);
+    // Seed order = event_id order: PV1 < PV2 < action < PV3.
+    // The action's event_id is greater than PV2.event_id, so it is NOT
+    // in the (PV1, PV2) interval. PV2 → PV3 spans a later timestamp,
+    // and the action at T is strictly before PV3 → action counts as 1
+    // between PV2 and PV3 (K=1 still passes).
+    await seedAccepted({ session_id: 'sess-tie-b', event_name: 'page_view', page_path: '/a', received_at: T });
+    await seedAccepted({ session_id: 'sess-tie-b', event_name: 'page_view', page_path: '/a', received_at: T });
+    await seedAccepted({ session_id: 'sess-tie-b', event_name: 'cta_click',                       received_at: T });
+    await seedAccepted({ session_id: 'sess-tie-b', event_name: 'page_view', page_path: '/a', received_at: new Date(t + 100) });
+    await extractDefault();
+    const row = await selectRow(TEST_WORKSPACE, 'sess-tie-b');
+    expect(row).not.toBeNull();
+    // PV1→PV2: 0 actions. PV2→PV3: 1 action. Max = 1 ≤ K=1 → candidate.
+    expect(row!.refresh_loop_candidate).toBe(true);
+    expect(row!.refresh_loop_count).toBe(1);
+    expect(row!.same_path_repeat_count).toBe(3);
+  });
+
+  it('C. two actions between PV1 and PV2 by event_id at same timestamp → K=2 fails; candidate FALSE; run length unchanged', async () => {
+    const t = Date.now() - 60_000;
+    const T = new Date(t);
+    // Seed order = event_id order: PV1 < action1 < action2 < PV2 < PV3.
+    await seedAccepted({ session_id: 'sess-tie-c', event_name: 'page_view',  page_path: '/a', received_at: T });
+    await seedAccepted({ session_id: 'sess-tie-c', event_name: 'cta_click',                        received_at: T });
+    await seedAccepted({ session_id: 'sess-tie-c', event_name: 'form_start',                       received_at: T });
+    await seedAccepted({ session_id: 'sess-tie-c', event_name: 'page_view',  page_path: '/a', received_at: T });
+    await seedAccepted({ session_id: 'sess-tie-c', event_name: 'page_view',  page_path: '/a', received_at: new Date(t + 100) });
+    await extractDefault();
+    const row = await selectRow(TEST_WORKSPACE, 'sess-tie-c');
+    expect(row).not.toBeNull();
+    // PV1→PV2: 2 actions > K=1 → run fails candidate filter.
+    // PV2→PV3: 0 actions. Run length stays 3, but K rejects → not a candidate.
+    expect(row!.refresh_loop_candidate).toBe(false);
+    expect(row!.refresh_loop_count).toBe(0);
+    expect(row!.same_path_repeat_count).toBe(3);
+  });
+});
+
+/* --------------------------------------------------------------------------
+ * 26. PR#2 — alternating paths (A/B/A/B/A → no candidate)
+ * ------------------------------------------------------------------------ */
+
+describe('PR#2 — alternating paths break same-path runs', () => {
+  it('A/B/A/B/A → 5 page_views, max same-path run length = 1, no candidate', async () => {
+    const t = Date.now() - 60_000;
+    const paths = ['/a', '/b', '/a', '/b', '/a'];
+    for (let i = 0; i < paths.length; i++) {
+      await seedAccepted({
+        session_id: 'sess-alt',
+        event_name: 'page_view',
+        page_path: paths[i]!,
+        received_at: new Date(t + i * 500),
+      });
+    }
+    await extractDefault();
+    const row = await selectRow(TEST_WORKSPACE, 'sess-alt');
+    expect(row).not.toBeNull();
+    expect(row!.refresh_loop_candidate).toBe(false);
+    expect(row!.refresh_loop_count).toBe(0);
+    expect(row!.same_path_repeat_count).toBe(1);
+  });
+});
+
+/* --------------------------------------------------------------------------
+ * 27. PR#2 — two streaks in same session
+ * ------------------------------------------------------------------------ */
+
+describe('PR#2 — two streaks in same session', () => {
+  it('two distinct same-path runs each >= N → refresh_loop_count = 2', async () => {
+    const t = Date.now() - 60_000;
+    // Streak 1 on /a (3 PVs, span 1000ms, no actions between)
+    await seedAccepted({ session_id: 'sess-two-streaks', event_name: 'page_view', page_path: '/a', received_at: new Date(t) });
+    await seedAccepted({ session_id: 'sess-two-streaks', event_name: 'page_view', page_path: '/a', received_at: new Date(t + 500) });
+    await seedAccepted({ session_id: 'sess-two-streaks', event_name: 'page_view', page_path: '/a', received_at: new Date(t + 1000) });
+    // Path change to /b (single PV — breaks run)
+    await seedAccepted({ session_id: 'sess-two-streaks', event_name: 'page_view', page_path: '/b', received_at: new Date(t + 2000) });
+    // Streak 2 on /c (3 PVs, span 1000ms)
+    await seedAccepted({ session_id: 'sess-two-streaks', event_name: 'page_view', page_path: '/c', received_at: new Date(t + 3000) });
+    await seedAccepted({ session_id: 'sess-two-streaks', event_name: 'page_view', page_path: '/c', received_at: new Date(t + 3500) });
+    await seedAccepted({ session_id: 'sess-two-streaks', event_name: 'page_view', page_path: '/c', received_at: new Date(t + 4000) });
+
+    await extractDefault();
+    const row = await selectRow(TEST_WORKSPACE, 'sess-two-streaks');
+    expect(row).not.toBeNull();
+    expect(row!.refresh_loop_candidate).toBe(true);
+    expect(row!.refresh_loop_count).toBe(2);
+    // repeat_pageview_candidate_count sums PV counts across both streaks: 3 + 3.
+    expect(row!.repeat_pageview_candidate_count).toBe(6);
+    // same_path_repeat_count is max run length across all runs.
+    expect(row!.same_path_repeat_count).toBe(3);
+  });
+});
+
+/* --------------------------------------------------------------------------
+ * 28. PR#2 — same_path_repeat_median_delta_ms is POOLED median (not median of medians)
+ * ------------------------------------------------------------------------ */
+
+describe('PR#2 — pooled median of same-path deltas (NOT median of per-run medians)', () => {
+  it('two runs with different delta distributions → median over pooled deltas', async () => {
+    const t = Date.now() - 60_000;
+    // Run 1 on /a: deltas 100ms, 100ms
+    await seedAccepted({ session_id: 'sess-median', event_name: 'page_view', page_path: '/a', received_at: new Date(t) });
+    await seedAccepted({ session_id: 'sess-median', event_name: 'page_view', page_path: '/a', received_at: new Date(t + 100) });
+    await seedAccepted({ session_id: 'sess-median', event_name: 'page_view', page_path: '/a', received_at: new Date(t + 200) });
+    // Path change
+    await seedAccepted({ session_id: 'sess-median', event_name: 'page_view', page_path: '/b', received_at: new Date(t + 5000) });
+    // Run 2 on /c: deltas 5000ms, 5000ms
+    await seedAccepted({ session_id: 'sess-median', event_name: 'page_view', page_path: '/c', received_at: new Date(t + 10000) });
+    await seedAccepted({ session_id: 'sess-median', event_name: 'page_view', page_path: '/c', received_at: new Date(t + 15000) });
+    await seedAccepted({ session_id: 'sess-median', event_name: 'page_view', page_path: '/c', received_at: new Date(t + 20000) });
+
+    await extractDefault();
+    const row = await selectRow(TEST_WORKSPACE, 'sess-median');
+    expect(row).not.toBeNull();
+    // Pooled deltas: [100, 100, 5000, 5000] → median = (100 + 5000) / 2 = 2550.
+    // (Median-of-per-run-medians would be (100 + 5000)/2 = 2550 also here,
+    // but the SQL is verified to do the pooled computation; cross-check with
+    // a more asymmetric case below.)
+    expect(Number(row!.same_path_repeat_median_delta_ms)).toBe(2550);
+  });
+
+  it('asymmetric run sizes → pooled median differs from median-of-medians', async () => {
+    const t = Date.now() - 60_000;
+    // Run 1 on /a: 4 PVs → 3 deltas of 100ms each (median 100ms).
+    for (let i = 0; i < 4; i++) {
+      await seedAccepted({
+        session_id: 'sess-median-asym',
+        event_name: 'page_view',
+        page_path: '/a',
+        received_at: new Date(t + i * 100),
+      });
+    }
+    // Path change
+    await seedAccepted({
+      session_id: 'sess-median-asym',
+      event_name: 'page_view',
+      page_path: '/b',
+      received_at: new Date(t + 10000),
+    });
+    // Run 2 on /c: 2 PVs → 1 delta of 10000ms (per-run median 10000ms).
+    await seedAccepted({ session_id: 'sess-median-asym', event_name: 'page_view', page_path: '/c', received_at: new Date(t + 20000) });
+    await seedAccepted({ session_id: 'sess-median-asym', event_name: 'page_view', page_path: '/c', received_at: new Date(t + 30000) });
+
+    await extractDefault();
+    const row = await selectRow(TEST_WORKSPACE, 'sess-median-asym');
+    expect(row).not.toBeNull();
+    // Pooled deltas across the session: [100, 100, 100, 10000] → median = (100 + 100) / 2 = 100.
+    // Median-of-per-run-medians would be (100 + 10000) / 2 = 5050 — different.
+    expect(Number(row!.same_path_repeat_median_delta_ms)).toBe(100);
+  });
+});
+
+/* --------------------------------------------------------------------------
+ * 29. PR#2 — SDK refresh-loop hint ignored (D-4 Option α)
+ * ------------------------------------------------------------------------ */
+
+describe('PR#2 — SDK refresh-loop hint is IGNORED (server-only derivation)', () => {
+  it('SDK hint refresh_loop=true in raw is not trusted; candidate determined by server algorithm', async () => {
+    const t = Date.now() - 60_000;
+    // Only 2 same-path PVs — server algorithm would say NOT a candidate (N<3).
+    // SDK lies and emits refresh_loop=true in raw. Server must ignore.
+    await seedAccepted({
+      session_id: 'sess-sdk-lie',
+      event_name: 'page_view',
+      page_path: '/a',
+      received_at: new Date(t),
+      raw_overrides: { refresh_loop: true, is_refresh_loop: true },
+    });
+    await seedAccepted({
+      session_id: 'sess-sdk-lie',
+      event_name: 'page_view',
+      page_path: '/a',
+      received_at: new Date(t + 500),
+      raw_overrides: { refresh_loop: true },
+    });
+    await extractDefault();
+    const row = await selectRow(TEST_WORKSPACE, 'sess-sdk-lie');
+    expect(row).not.toBeNull();
+    // Despite SDK lie, the server says: 2 PVs < N=3 → not a candidate.
+    expect(row!.refresh_loop_candidate).toBe(false);
+    expect(row!.refresh_loop_count).toBe(0);
+    expect(row!.refresh_loop_source).toBe('server_derived');
+  });
+
+  it('SDK hint refresh_loop=false but server algorithm sees 3+ same-path PVs → server wins (TRUE)', async () => {
+    const t = Date.now() - 60_000;
+    for (let i = 0; i < 3; i++) {
+      await seedAccepted({
+        session_id: 'sess-sdk-deny',
+        event_name: 'page_view',
+        page_path: '/a',
+        received_at: new Date(t + i * 500),
+        raw_overrides: { refresh_loop: false, is_refresh_loop: false },
+      });
+    }
+    await extractDefault();
+    const row = await selectRow(TEST_WORKSPACE, 'sess-sdk-deny');
+    expect(row).not.toBeNull();
+    expect(row!.refresh_loop_candidate).toBe(true);
+    expect(row!.refresh_loop_count).toBe(1);
+    expect(row!.refresh_loop_source).toBe('server_derived');
+  });
+});
+
+/* --------------------------------------------------------------------------
+ * 30. PR#2 — candidate-window vs full-session (refresh-loop)
+ * ------------------------------------------------------------------------ */
+
+describe('PR#2 — refresh-loop derivation runs full-session, not window-bounded', () => {
+  it('a candidate streak entirely OUTSIDE the window still produces refresh_loop_candidate=TRUE when session is a candidate (recent event)', async () => {
+    const now = Date.now();
+    // Three same-path PVs ~300 days ago — outside the default 168-hour window.
+    const old = now - 300 * 86400_000;
+    await seedAccepted({ session_id: 'sess-rl-cw', event_name: 'page_view', page_path: '/a', received_at: new Date(old) });
+    await seedAccepted({ session_id: 'sess-rl-cw', event_name: 'page_view', page_path: '/a', received_at: new Date(old + 500) });
+    await seedAccepted({ session_id: 'sess-rl-cw', event_name: 'page_view', page_path: '/a', received_at: new Date(old + 1000) });
+    // A recent event makes the session a candidate (1 hour ago).
+    await seedAccepted({ session_id: 'sess-rl-cw', event_name: 'page_view', page_path: '/b', received_at: new Date(now - 3600_000) });
+    await extractDefault();
+    const row = await selectRow(TEST_WORKSPACE, 'sess-rl-cw');
+    expect(row).not.toBeNull();
+    expect(row!.refresh_loop_candidate).toBe(true);
+    expect(row!.refresh_loop_count).toBe(1);
+    expect(Number(row!.source_event_count)).toBe(4);
+  });
+});
+
+/* --------------------------------------------------------------------------
+ * 31. PR#2 — late-event rerun preserves refresh-loop fields
+ * ------------------------------------------------------------------------ */
+
+describe('PR#2 — late-event rerun refreshes refresh-loop fields on the same row', () => {
+  it('rerun after a new same-path PV updates refresh_loop_count without changing behavioural_features_id', async () => {
+    const t = Date.now() - 60_000;
+    // Seed 2 same-path PVs first — not yet a candidate (N=2 < 3).
+    await seedAccepted({ session_id: 'sess-rl-late', event_name: 'page_view', page_path: '/a', received_at: new Date(t) });
+    await seedAccepted({ session_id: 'sess-rl-late', event_name: 'page_view', page_path: '/a', received_at: new Date(t + 500) });
+    await extractDefault();
+    const first = await selectRow(TEST_WORKSPACE, 'sess-rl-late');
+    expect(first).not.toBeNull();
+    expect(first!.refresh_loop_candidate).toBe(false);
+    const firstId = first!.behavioural_features_id;
+
+    // Add a third same-path PV — push the run to N=3, within W.
+    await seedAccepted({ session_id: 'sess-rl-late', event_name: 'page_view', page_path: '/a', received_at: new Date(t + 1000) });
+    await extractDefault();
+    const second = await selectRow(TEST_WORKSPACE, 'sess-rl-late');
+    expect(second).not.toBeNull();
+    expect(second!.behavioural_features_id).toBe(firstId);
+    expect(second!.refresh_loop_candidate).toBe(true);
+    expect(second!.refresh_loop_count).toBe(1);
+    expect(second!.same_path_repeat_count).toBe(3);
+  });
+});
+
+/* --------------------------------------------------------------------------
+ * 32. PR#2 — source tables unchanged
+ * ------------------------------------------------------------------------ */
+
+describe('PR#2 — source tables unchanged after refresh-loop extraction', () => {
+  it('does not mutate accepted_events / rejected_events / ingest_requests / session_features even when refresh-loop columns are written', async () => {
+    const t = Date.now() - 60_000;
+    for (let i = 0; i < 3; i++) {
+      await seedAccepted({
+        session_id: 'sess-rl-src',
+        event_name: 'page_view',
+        page_path: '/a',
+        received_at: new Date(t + i * 500),
+      });
+    }
+    const before = await readSourceTableCounts();
+    await extractDefault();
+    const after = await readSourceTableCounts();
+    expect(after.accepted).toBe(before.accepted);
+    expect(after.rejected).toBe(before.rejected);
+    expect(after.ingest).toBe(before.ingest);
+    expect(after.session_features).toBe(before.session_features);
+
+    // And the new row carries refresh-loop facts.
+    const row = await selectRow(TEST_WORKSPACE, 'sess-rl-src');
+    expect(row).not.toBeNull();
+    expect(row!.refresh_loop_candidate).toBe(true);
+  });
+});
+
+/* --------------------------------------------------------------------------
+ * 33. PR#2 — v0.2 backward compat (12-key maps still emitted when version=v0.2)
+ * ------------------------------------------------------------------------ */
+
+describe('PR#2 — v0.2 backward-compat extraction still produces 12-key maps', () => {
+  it('explicit FEATURE_VERSION=v0.2 → presence map has 12 keys (no refresh_loop_candidate)', async () => {
+    const now = new Date();
+    const window_start = new Date(now.getTime() - 168 * 3600 * 1000);
+    await seedAccepted({ session_id: 'sess-v02-compat', event_name: 'page_view', page_path: '/a' });
+    await runExtraction(pool, {
+      workspace_id: TEST_WORKSPACE,
+      site_id: null,
+      window_start,
+      window_end: now,
+      feature_version: TEST_FEATURE_VERSION_V0_2,
+    });
+    const row = await selectRow(TEST_WORKSPACE, 'sess-v02-compat', TEST_SITE, TEST_FEATURE_VERSION_V0_2);
+    expect(row).not.toBeNull();
+    const presence = row!.feature_presence_map as Record<string, string>;
+    expect(Object.keys(presence).length).toBe(EXPECTED_FEATURE_COUNT_V0_2);
+    expect(presence['refresh_loop_candidate']).toBeUndefined();
+    const source = row!.feature_source_map as Record<string, string>;
+    expect(Object.keys(source).length).toBe(EXPECTED_FEATURE_COUNT_V0_2);
+    expect(Number(row!.valid_feature_count) + Number(row!.missing_feature_count)).toBe(
+      EXPECTED_FEATURE_COUNT_V0_2,
+    );
   });
 });
 
@@ -789,7 +1302,7 @@ describe('PR#1 — no refresh_loop column (D-3 deferred to PR#2)', () => {
  * Sanity: SQL string sweep at runtime (defence-in-depth)
  * ------------------------------------------------------------------------ */
 
-describe('PR#1 — EXTRACTION_SQL runtime sanity', () => {
+describe('PR#1+PR#2 — EXTRACTION_SQL runtime sanity', () => {
   it('writes only to session_behavioural_features_v0_2', () => {
     const inserts = EXTRACTION_SQL.match(/INSERT INTO\s+(\w+)/g) ?? [];
     expect(inserts.length).toBe(1);

@@ -411,6 +411,20 @@ CREATE TABLE IF NOT EXISTS session_behavioural_features_v0_2 (
   interaction_density_bucket                  TEXT,
   scroll_depth_bucket_before_first_cta        TEXT,
 
+  -- Sprint 2 PR#2 additive columns (migration 010): server-side
+  -- refresh-loop / repeated-pageview factual derivation. Factual flags
+  -- and counts only — NO scoring, NO judgement, NO reason codes, NO
+  -- trust of SDK refresh-loop hints. refresh_loop_source is provenance
+  -- only ('server_derived' in v0.3).
+  refresh_loop_candidate                      BOOLEAN,
+  refresh_loop_count                          INT         NOT NULL DEFAULT 0,
+  same_path_repeat_count                      INT         NOT NULL DEFAULT 0,
+  same_path_repeat_max_span_ms                BIGINT,
+  same_path_repeat_min_delta_ms               BIGINT,
+  same_path_repeat_median_delta_ms            BIGINT,
+  repeat_pageview_candidate_count             INT         NOT NULL DEFAULT 0,
+  refresh_loop_source                         TEXT,
+
   valid_feature_count                         INT         NOT NULL DEFAULT 0,
   missing_feature_count                       INT         NOT NULL DEFAULT 0,
   feature_presence_map                        JSONB       NOT NULL DEFAULT '{}'::jsonb,
@@ -432,6 +446,13 @@ CREATE TABLE IF NOT EXISTS session_behavioural_features_v0_2 (
     CHECK (valid_feature_count >= 0),
   CONSTRAINT sbf_v0_2_missing_feature_count_nonneg
     CHECK (missing_feature_count >= 0),
+  -- PR#2 non-negativity CHECK constraints
+  CONSTRAINT sbf_v0_2_refresh_loop_count_nonneg
+    CHECK (refresh_loop_count >= 0),
+  CONSTRAINT sbf_v0_2_same_path_repeat_count_nonneg
+    CHECK (same_path_repeat_count >= 0),
+  CONSTRAINT sbf_v0_2_repeat_pageview_candidate_count_nonneg
+    CHECK (repeat_pageview_candidate_count >= 0),
 
   CONSTRAINT session_behavioural_features_v0_2_natural_key UNIQUE
     (workspace_id, site_id, session_id, feature_version)

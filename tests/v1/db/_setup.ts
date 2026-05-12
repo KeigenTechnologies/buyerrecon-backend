@@ -39,6 +39,14 @@ const MIGRATION_007_PATH = join(
   'migrations',
   '007_accepted_events_dedup_index.sql',
 );
+// PR#2 (Sprint 2) — additive refresh-loop columns on
+// session_behavioural_features_v0_2. `ADD COLUMN IF NOT EXISTS` makes this
+// idempotent for test DBs that already hold the PR#1 baseline schema.
+const MIGRATION_010_PATH = join(
+  ROOT,
+  'migrations',
+  '010_session_behavioural_features_v0_2_refresh_loop.sql',
+);
 
 /* --------------------------------------------------------------------------
  * Deterministic test boundary constants
@@ -141,6 +149,18 @@ export async function ensureSchema(pool: pg.Pool): Promise<void> {
  */
 export async function applyMigration007(pool: pg.Pool): Promise<void> {
   const sql = readFileSync(MIGRATION_007_PATH, 'utf8');
+  await pool.query(sql);
+}
+
+/**
+ * Apply migrations/010 — PR#2 refresh-loop additive columns.
+ *
+ * Idempotent (`ADD COLUMN IF NOT EXISTS`, `DO` blocks guard CHECK
+ * constraints). Safe to call when the table is fresh from schema.sql
+ * (already has the columns) or carried over from a prior PR#1 test run.
+ */
+export async function applyMigration010(pool: pg.Pool): Promise<void> {
+  const sql = readFileSync(MIGRATION_010_PATH, 'utf8');
   await pool.query(sql);
 }
 
@@ -371,6 +391,7 @@ export function makeValidEvent(
 export async function bootstrapTestDb(pool: pg.Pool): Promise<void> {
   await ensureSchema(pool);
   await applyMigration007(pool);
+  await applyMigration010(pool);
   const state = await verifyAcceptedEventsDedupValid(pool);
   if (!state.exists) {
     throw new Error(
