@@ -47,6 +47,16 @@ const MIGRATION_010_PATH = join(
   'migrations',
   '010_session_behavioural_features_v0_2_refresh_loop.sql',
 );
+// PR#3 (Sprint 2) — Lane A / Lane B scoring output contract tables.
+// Schema-only: tables + role grants + Hard Rule I assertion. No writer.
+// Migration 011 asserts the four canonical roles exist; the test
+// bootstrap below pre-creates them in the test environment so the
+// migration's role-existence guard passes.
+const MIGRATION_011_PATH = join(
+  ROOT,
+  'migrations',
+  '011_scoring_output_lanes.sql',
+);
 
 /* --------------------------------------------------------------------------
  * Deterministic test boundary constants
@@ -161,6 +171,59 @@ export async function applyMigration007(pool: pg.Pool): Promise<void> {
  */
 export async function applyMigration010(pool: pg.Pool): Promise<void> {
   const sql = readFileSync(MIGRATION_010_PATH, 'utf8');
+  await pool.query(sql);
+}
+
+/**
+ * Test-environment ONLY: ensure the four PR#3 canonical group roles
+ * exist before migration 011 runs its role-presence assertion.
+ *
+ * IMPORTANT: this helper exists because the test bootstrap is a
+ * test-only fixture, NOT production migration code. The roles are
+ * NOLOGIN group roles with no passwords. This helper is the test-side
+ * equivalent of docs/ops/pr3-db-role-setup-staging.md Phase 3 (which
+ * is the operator action on real environments).
+ *
+ * Migration 011 itself is FORBIDDEN from running CREATE ROLE. The
+ * separation is deliberate: the migration models the production
+ * contract where roles pre-exist (per OD-8); the bootstrap pretends
+ * they have been pre-created.
+ *
+ * Postgres has no native CREATE ROLE IF NOT EXISTS, so each statement
+ * is wrapped in a DO block that catches duplicate_object.
+ */
+export async function ensureCanonicalRolesForTests(pool: pg.Pool): Promise<void> {
+  const sql = `
+    DO $$ BEGIN
+      CREATE ROLE buyerrecon_migrator NOLOGIN;
+    EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+    DO $$ BEGIN
+      CREATE ROLE buyerrecon_scoring_worker NOLOGIN;
+    EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+    DO $$ BEGIN
+      CREATE ROLE buyerrecon_customer_api NOLOGIN;
+    EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+    DO $$ BEGIN
+      CREATE ROLE buyerrecon_internal_readonly NOLOGIN;
+    EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+  `;
+  await pool.query(sql);
+}
+
+/**
+ * Apply migrations/011 — PR#3 Lane A / Lane B scoring output contract
+ * tables + role grants + Hard Rule I assertion.
+ *
+ * Idempotent: CREATE TABLE IF NOT EXISTS, role-existence DO/RAISE
+ * guards, REVOKE/GRANT are safe to re-run. Calling this twice succeeds.
+ *
+ * Prerequisite: ensureCanonicalRolesForTests(pool) must have run, or
+ * the migration's role-presence assertion will RAISE EXCEPTION and
+ * fail this call (which is the intended behaviour in production —
+ * here we satisfy it via the test-only role helper above).
+ */
+export async function applyMigration011(pool: pg.Pool): Promise<void> {
+  const sql = readFileSync(MIGRATION_011_PATH, 'utf8');
   await pool.query(sql);
 }
 
@@ -392,6 +455,11 @@ export async function bootstrapTestDb(pool: pg.Pool): Promise<void> {
   await ensureSchema(pool);
   await applyMigration007(pool);
   await applyMigration010(pool);
+  // PR#3 test-environment role pre-creation, then schema-only migration.
+  // Order matters: migration 011 asserts role presence and aborts if
+  // any of the four canonical group roles is missing.
+  await ensureCanonicalRolesForTests(pool);
+  await applyMigration011(pool);
   const state = await verifyAcceptedEventsDedupValid(pool);
   if (!state.exists) {
     throw new Error(

@@ -466,3 +466,98 @@ CREATE INDEX IF NOT EXISTS session_behavioural_features_v0_2_session
 
 CREATE INDEX IF NOT EXISTS session_behavioural_features_v0_2_version
   ON session_behavioural_features_v0_2 (feature_version, extracted_at DESC);
+
+-- ============================================================================
+-- Sprint 2 PR#3 — Lane A / Lane B scoring output contract tables.
+-- ============================================================================
+-- Mirrors migrations/011_scoring_output_lanes.sql. Append-only; older
+-- sections of this file are not modified.
+--
+-- Role grants + Hard Rule I assertion live ONLY in migration 011; this
+-- schema.sql block is for boot-time CREATE TABLE IF NOT EXISTS parity.
+-- It is intentionally GRANT-free here because schema.sql may be applied
+-- against environments that have not yet provisioned the canonical group
+-- roles (operator runs docs/ops/pr3-db-role-setup-staging.md Phase 3
+-- before migration 011 is applied).
+--
+-- PR#3 ships NO writer. PR#3 emits NO reason codes. The columns below
+-- are *typed reservations* the future scorer (PR#5 / PR#6 / PR#3b)
+-- writes to under separate sign-off.
+
+CREATE TABLE IF NOT EXISTS scoring_output_lane_a (
+  scoring_output_lane_a_id   UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+  workspace_id               TEXT         NOT NULL,
+  site_id                    TEXT         NOT NULL,
+  session_id                 TEXT         NOT NULL,
+  scoring_version            TEXT         NOT NULL,
+  source_feature_version     TEXT,
+  verification_score         INT          NOT NULL,
+  evidence_band              TEXT         NOT NULL,
+  action_recommendation      TEXT         NOT NULL DEFAULT 'record_only',
+  reason_codes               JSONB        NOT NULL DEFAULT '[]'::jsonb,
+  evidence_refs              JSONB        NOT NULL DEFAULT '[]'::jsonb,
+  knob_version_id            TEXT,
+  record_only                BOOLEAN      NOT NULL DEFAULT TRUE,
+  created_at                 TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  updated_at                 TIMESTAMPTZ  NOT NULL DEFAULT now(),
+
+  CONSTRAINT scoring_output_lane_a_verification_score_range
+    CHECK (verification_score BETWEEN 0 AND 99),
+  CONSTRAINT scoring_output_lane_a_evidence_band_enum
+    CHECK (evidence_band IN ('low','medium')),
+  CONSTRAINT scoring_output_lane_a_action_recommendation_enum
+    CHECK (action_recommendation IN ('record_only','review')),
+  CONSTRAINT scoring_output_lane_a_reason_codes_is_array
+    CHECK (jsonb_typeof(reason_codes) = 'array'),
+  CONSTRAINT scoring_output_lane_a_evidence_refs_is_array
+    CHECK (jsonb_typeof(evidence_refs) = 'array'),
+
+  CONSTRAINT scoring_output_lane_a_natural_key UNIQUE
+    (workspace_id, site_id, session_id, scoring_version)
+);
+
+CREATE INDEX IF NOT EXISTS scoring_output_lane_a_workspace_site
+  ON scoring_output_lane_a (workspace_id, site_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS scoring_output_lane_a_session
+  ON scoring_output_lane_a (workspace_id, site_id, session_id);
+
+CREATE INDEX IF NOT EXISTS scoring_output_lane_a_version
+  ON scoring_output_lane_a (scoring_version, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS scoring_output_lane_b (
+  scoring_output_lane_b_id        UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+  workspace_id                    TEXT         NOT NULL,
+  site_id                         TEXT         NOT NULL,
+  session_id                      TEXT         NOT NULL,
+  scoring_version                 TEXT         NOT NULL,
+  agent_family                    TEXT         NOT NULL,
+  verification_method             TEXT         NOT NULL,
+  verification_method_strength    TEXT,
+  reason_codes                    JSONB        NOT NULL DEFAULT '[]'::jsonb,
+  evidence_refs                   JSONB        NOT NULL DEFAULT '[]'::jsonb,
+  record_only                     BOOLEAN      NOT NULL DEFAULT TRUE,
+  created_at                      TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  updated_at                      TIMESTAMPTZ  NOT NULL DEFAULT now(),
+
+  CONSTRAINT scoring_output_lane_b_verification_method_enum
+    CHECK (verification_method IN ('reverse_dns','ip_validation','web_bot_auth','partner_allowlist','none')),
+  CONSTRAINT scoring_output_lane_b_strength_null_v1
+    CHECK (verification_method_strength IS NULL),
+  CONSTRAINT scoring_output_lane_b_reason_codes_is_array
+    CHECK (jsonb_typeof(reason_codes) = 'array'),
+  CONSTRAINT scoring_output_lane_b_evidence_refs_is_array
+    CHECK (jsonb_typeof(evidence_refs) = 'array'),
+
+  CONSTRAINT scoring_output_lane_b_natural_key UNIQUE
+    (workspace_id, site_id, session_id, scoring_version)
+);
+
+CREATE INDEX IF NOT EXISTS scoring_output_lane_b_workspace_site
+  ON scoring_output_lane_b (workspace_id, site_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS scoring_output_lane_b_session
+  ON scoring_output_lane_b (workspace_id, site_id, session_id);
+
+CREATE INDEX IF NOT EXISTS scoring_output_lane_b_version
+  ON scoring_output_lane_b (scoring_version, created_at DESC);
