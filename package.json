@@ -14,6 +14,7 @@
     "risk-evidence:run": "tsx scripts/run-risk-evidence-worker.ts",
     "observe:collector": "tsx scripts/collector-observation-report.ts",
     "observe:risk-core-bridge": "tsx scripts/risk-core-bridge-observation-report.ts",
+    "observe:poi-core-input": "tsx scripts/poi-core-input-observation-report.ts",
     "extract:session-features": "tsx scripts/extract-session-features.ts",
     "extract:behavioural-features": "tsx scripts/extract-behavioural-features.ts",
     "seed": "tsx scripts/seed-configs.ts",
