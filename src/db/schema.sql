@@ -704,3 +704,90 @@ CREATE INDEX IF NOT EXISTS risk_observations_v0_1_session
 
 CREATE INDEX IF NOT EXISTS risk_observations_v0_1_versions
   ON risk_observations_v0_1 (observation_version, scoring_version, created_at DESC);
+
+-- ============================================================================
+-- Sprint 2 PR#11c — POI observation evidence layer (poi_observations_v0_1).
+-- Mirror block of migrations/014_poi_observations_v0_1.sql. Additive only.
+-- Persists successful page_path POI envelopes derived from session_features.
+-- See docs/sprint2-pr11c-poi-observations-table-worker-planning.md.
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS poi_observations_v0_1 (
+  poi_observation_id        BIGSERIAL    PRIMARY KEY,
+
+  workspace_id              TEXT         NOT NULL,
+  site_id                   TEXT         NOT NULL,
+  session_id                TEXT         NOT NULL,
+
+  poi_type                  TEXT         NOT NULL,
+  poi_key                   TEXT         NOT NULL,
+  poi_surface_class         TEXT,
+
+  poi_input_version         TEXT         NOT NULL,
+  poi_observation_version   TEXT         NOT NULL,
+  extraction_version        TEXT         NOT NULL,
+
+  evidence_refs             JSONB        NOT NULL,
+
+  source_table              TEXT         NOT NULL,
+  source_row_id             TEXT         NOT NULL,
+  source_event_count        INT          NOT NULL,
+  poi_key_source_field      TEXT         NOT NULL,
+
+  source_versions           JSONB        NOT NULL DEFAULT '{}'::jsonb,
+
+  stage0_excluded           BOOLEAN      NOT NULL DEFAULT FALSE,
+  poi_eligible              BOOLEAN      NOT NULL,
+  stage0_rule_id            TEXT,
+
+  first_seen_at             TIMESTAMPTZ,
+  last_seen_at              TIMESTAMPTZ,
+  derived_at                TIMESTAMPTZ  NOT NULL,
+  created_at                TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  updated_at                TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+
+  record_only               BOOLEAN      NOT NULL DEFAULT TRUE,
+
+  CONSTRAINT poi_obs_v0_1_poi_type_v0_1
+    CHECK (poi_type = 'page_path'),
+  CONSTRAINT poi_obs_v0_1_source_table_v0_1
+    CHECK (source_table = 'session_features'),
+  CONSTRAINT poi_obs_v0_1_poi_key_source_field_enum
+    CHECK (poi_key_source_field IN ('landing_page_path', 'last_page_path')),
+  CONSTRAINT poi_obs_v0_1_record_only_must_be_true
+    CHECK (record_only IS TRUE),
+  CONSTRAINT poi_obs_v0_1_source_event_count_nonneg
+    CHECK (source_event_count >= 0),
+  CONSTRAINT poi_obs_v0_1_poi_eligible_is_pure_inverse_of_stage0_excluded
+    CHECK (poi_eligible = (NOT stage0_excluded)),
+  CONSTRAINT poi_obs_v0_1_timestamps_ordered
+    CHECK (first_seen_at IS NULL
+           OR last_seen_at IS NULL
+           OR first_seen_at <= last_seen_at),
+  CONSTRAINT poi_obs_v0_1_evidence_refs_is_array
+    CHECK (jsonb_typeof(evidence_refs) = 'array'),
+  CONSTRAINT poi_obs_v0_1_evidence_refs_nonempty
+    CHECK (jsonb_array_length(evidence_refs) > 0),
+  CONSTRAINT poi_obs_v0_1_source_versions_is_object
+    CHECK (jsonb_typeof(source_versions) = 'object'),
+
+  CONSTRAINT poi_obs_v0_1_natural_key UNIQUE
+    (workspace_id, site_id, session_id, poi_type, poi_key,
+     poi_input_version, poi_observation_version, extraction_version)
+);
+
+CREATE INDEX IF NOT EXISTS poi_obs_v0_1_workspace_site
+  ON poi_observations_v0_1 (workspace_id, site_id, derived_at DESC);
+
+CREATE INDEX IF NOT EXISTS poi_obs_v0_1_session
+  ON poi_observations_v0_1 (workspace_id, site_id, session_id);
+
+CREATE INDEX IF NOT EXISTS poi_obs_v0_1_poi_key
+  ON poi_observations_v0_1 (workspace_id, site_id, poi_type, poi_key);
+
+CREATE INDEX IF NOT EXISTS poi_obs_v0_1_versions
+  ON poi_observations_v0_1 (poi_input_version, poi_observation_version, derived_at DESC);
+
+CREATE INDEX IF NOT EXISTS poi_obs_v0_1_stage0_excluded
+  ON poi_observations_v0_1 (workspace_id, site_id, stage0_excluded, derived_at DESC)
+  WHERE stage0_excluded = TRUE;
