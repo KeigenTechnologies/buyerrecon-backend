@@ -1,0 +1,74 @@
+/**
+ * Sprint 2 PR#11d — POI Observations Table Observer — public re-exports.
+ *
+ * No DB. No HTTP. No process side effects on import. The runner
+ * accepts an already-constructed pg client.
+ */
+
+export {
+  aggregateReport,
+  FORBIDDEN_COLUMNS,
+  parseDatabaseUrl,
+  serialiseReport,
+  truncateSessionId,
+  type AggregateInputs,
+  type DistributionRow,
+} from './report.js';
+
+export {
+  makeStubClient,
+  runPoiTableObserver,
+  type RunObserverArgs,
+  type StubClient,
+  type StubQueryFn,
+} from './runner.js';
+
+export {
+  // Anomaly counter queries (authoritative; no LIMIT)
+  SELECT_DUPLICATE_NATURAL_KEY_COUNT_SQL,
+  SELECT_EVIDENCE_REFS_FORBIDDEN_KEY_COUNT_SQL,
+  SELECT_EVIDENCE_REFS_INVALID_COUNT_SQL,
+  SELECT_NEGATIVE_SOURCE_EVENT_COUNT_COUNT_SQL,
+  SELECT_POI_ELIGIBLE_MISMATCH_COUNT_SQL,
+  SELECT_POI_KEY_UNSAFE_COUNT_SQL,
+  SELECT_SOURCE_VERSIONS_INVALID_COUNT_SQL,
+  SELECT_TIMESTAMP_ORDERING_VIOLATION_COUNT_SQL,
+  SELECT_V0_1_ENUM_VIOLATION_COUNT_SQL,
+  // Anomaly sample queries (cap at $5 anomaly_sample_limit)
+  SELECT_DUPLICATE_NATURAL_KEY_SAMPLE_SQL,
+  SELECT_EVIDENCE_REFS_FORBIDDEN_KEY_SAMPLE_SQL,
+  SELECT_EVIDENCE_REFS_INVALID_SAMPLE_SQL,
+  SELECT_NEGATIVE_SOURCE_EVENT_COUNT_SAMPLE_SQL,
+  SELECT_POI_ELIGIBLE_MISMATCH_SAMPLE_SQL,
+  SELECT_POI_KEY_UNSAFE_SAMPLE_SQL,
+  SELECT_SOURCE_VERSIONS_INVALID_SAMPLE_SQL,
+  SELECT_TIMESTAMP_ORDERING_VIOLATION_SAMPLE_SQL,
+  SELECT_V0_1_ENUM_VIOLATION_SAMPLE_SQL,
+  // Schema / row-count / distributions / identity diagnostics
+  SELECT_EXTRACTION_VERSION_DISTRIBUTION_SQL,
+  SELECT_FORBIDDEN_COLUMNS_SQL,
+  SELECT_POI_ELIGIBLE_DISTRIBUTION_SQL,
+  SELECT_POI_INPUT_VERSION_DISTRIBUTION_SQL,
+  SELECT_POI_KEY_SOURCE_FIELD_DISTRIBUTION_SQL,
+  SELECT_POI_OBSERVATION_VERSION_DISTRIBUTION_SQL,
+  SELECT_POI_SURFACE_CLASS_DISTRIBUTION_SQL,
+  SELECT_POI_TYPE_DISTRIBUTION_SQL,
+  SELECT_ROW_COUNT_SQL,
+  SELECT_SAMPLE_SESSION_IDS_SQL,
+  SELECT_SOURCE_TABLE_DISTRIBUTION_SQL,
+  SELECT_STAGE0_EXCLUDED_DISTRIBUTION_SQL,
+  SELECT_TABLE_PRESENT_SQL,
+  SELECT_UNIQUE_SESSION_IDS_SQL,
+  SELECT_UNIQUE_WORKSPACE_SITE_PAIRS_SQL,
+} from './query.js';
+
+export {
+  ANOMALY_KINDS,
+  POI_OBSERVATION_VERSION_EXPECTED,
+  type AnomalyKind,
+  type BooleanDistribution,
+  type PoiObservationVersionExpected,
+  type TableObserverReport,
+  type TableObserverRunMetadata,
+  type TableObserverRunOptions,
+} from './types.js';
