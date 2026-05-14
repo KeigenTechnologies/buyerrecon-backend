@@ -87,7 +87,29 @@ export interface RunObserverArgs {
   readonly database_name: string;
 }
 
+/* --------------------------------------------------------------------------
+ * Detailed observer result — used by PR#14c bridge candidate observer
+ * to access per-session previews without re-issuing SQL.
+ *
+ * The existing `runProductContextTimingObserver` keeps returning just
+ * `ObserverReport` (callers from the PR#13b CLI are unchanged).
+ * `runProductContextTimingObserverDetailed` returns the same report
+ * plus the per-session `SessionPreview[]` for downstream consumers
+ * that need richer access.
+ * ------------------------------------------------------------------------ */
+
+import type { SessionPreview } from './mapper.js';
+
+export interface DetailedObserverResult {
+  readonly report:   ObserverReport;
+  readonly previews: readonly SessionPreview[];
+}
+
 export async function runProductContextTimingObserver(args: RunObserverArgs): Promise<ObserverReport> {
+  return (await runProductContextTimingObserverDetailed(args)).report;
+}
+
+export async function runProductContextTimingObserverDetailed(args: RunObserverArgs): Promise<DetailedObserverResult> {
   const run_started_at = new Date().toISOString();
   const checked_at     = args.options.evaluation_at.toISOString();
 
@@ -138,7 +160,7 @@ export async function runProductContextTimingObserver(args: RunObserverArgs): Pr
 
   if (failClosed) {
     const run_ended_at = new Date().toISOString();
-    return Object.freeze({
+    const failClosedReport: ObserverReport = Object.freeze({
       boundary,
       source_readiness,
       source_scan:                emptySourceScanBlock(),
@@ -149,6 +171,7 @@ export async function runProductContextTimingObserver(args: RunObserverArgs): Pr
       read_only_proof:            buildReadOnlyProof(),
       run_metadata:               buildRunMetadata(run_started_at, run_ended_at),
     });
+    return Object.freeze({ report: failClosedReport, previews: Object.freeze<SessionPreview[]>([]) });
   }
 
   // §3 source scan
@@ -348,7 +371,7 @@ export async function runProductContextTimingObserver(args: RunObserverArgs): Pr
     run_metadata:     buildRunMetadata(run_started_at, run_ended_at),
   });
 
-  return report;
+  return Object.freeze({ report, previews: Object.freeze([...previews]) });
 }
 
 /* --------------------------------------------------------------------------
@@ -378,7 +401,7 @@ function buildFailClosedReason(
   return reasons.join('; ');
 }
 
-function timingBucketLabel(hoursSinceLast: number | null): string {
+export function timingBucketLabel(hoursSinceLast: number | null): string {
   if (hoursSinceLast === null) return 'unknown';
   if (hoursSinceLast <= 1)     return '<=1h';
   if (hoursSinceLast <= 24)    return '<=24h';

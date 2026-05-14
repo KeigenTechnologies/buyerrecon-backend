@@ -567,11 +567,11 @@ describe('S. no SQL / DB / pg imports in bridge module', () => {
  * T. No package.json change
  * ------------------------------------------------------------------------ */
 
-describe('T. no package.json change', () => {
-  it('package.json contains no `observe:product-features-namespace-bridge` or similar new script', () => {
+describe('T. no package.json change for the PR#14b mapper itself', () => {
+  it('package.json contains no `observe:product-features-namespace-bridge` (PR#14b is mapper-only; PR#14c adds its own observer script)', () => {
     const pkg = readSource('package.json');
     expect(pkg).not.toContain('product-features-namespace-bridge');
-    expect(pkg).not.toContain('observe:product-features');
+    expect(pkg).not.toContain('observe:product-features-namespace-bridge');
   });
 });
 
