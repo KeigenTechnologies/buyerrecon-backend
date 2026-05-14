@@ -314,6 +314,130 @@ P-4. PR#12b only proves staging on Hetzner. No production push.
 
 ---
 
+## Hetzner staging proof — PASS
+
+**Date.** 2026-05-14.
+**Server path.** `/opt/buyerrecon-backend`.
+**Branch.** `sprint2-architecture-contracts-d4cc2bf`.
+**HEAD.** `c460f74e6c0da2431b07c11fbb5c1d349fba425c`.
+**DB (masked).** `127.0.0.1:5432/buyerrecon_staging`.
+
+### Static validation
+
+| Step | Result |
+| --- | --- |
+| `npx tsc --noEmit` | PASS |
+| `npm run check:scoring-contracts` | PASS |
+| `npx vitest run tests/v1/poi-sequence-observer.test.ts` (targeted) | **62/62 PASS** |
+| `npm test` (full suite) | **46 files / 2,618 tests PASS** |
+| `git diff --check` | PASS (no whitespace errors) |
+
+### Observer environment
+
+```
+OBS_WORKSPACE_ID=buyerrecon_staging_ws
+OBS_SITE_ID=buyerrecon_com
+OBS_WINDOW_HOURS=720
+DATABASE_URL=<masked → 127.0.0.1:5432/buyerrecon_staging>
+```
+
+### Pre / post table-count parity (unchanged across the observer run)
+
+| Table | Pre | Post |
+| --- | --- | --- |
+| `accepted_events` | 14 | 14 |
+| `ingest_requests` | 14 | 14 |
+| `rejected_events` | 0 | 0 |
+| `risk_observations_v0_1` | 2 | 2 |
+| `scoring_output_lane_a` | 0 | 0 |
+| `scoring_output_lane_b` | 0 | 0 |
+| `session_behavioural_features_v0_2` | 16 | 16 |
+| `session_features` | 8 | 8 |
+| `stage0_decisions` | 8 | 8 |
+| `poi_observations_v0_1` | 8 | 8 |
+
+**Observer wrote nothing.** All counts identical pre → post.
+
+### `npm run observe:poi-sequence` result
+
+**Top-line counts**
+- `rows_scanned`: **8**
+- `sessions_seen`: **8**
+- `poi_sequences_built`: **8**
+- `unique_session_ids_seen`: **8**
+- `unique_workspace_site_pairs_seen`: **1**
+
+**Pattern class distribution**
+- `single_poi`: **8**
+- `repeated_same_poi`: 0
+- `multi_poi_linear`: 0
+- `loop_or_backtrack`: 0
+- `insufficient_temporal_data`: 0
+- `unknown`: **0** ✓ (must stay 0 in healthy run)
+
+**Bucket distributions**
+- `poi_count_distribution`: `{ "1": 8 }`
+- `progression_depth_distribution`: `{ "1": 8 }`
+
+**Stage 0 carry-through + eligibility**
+- `stage0_excluded_distribution`: `{ true_count: 6, false_count: 2 }`
+- `poi_sequence_eligible_distribution`: `{ true_count: 2, false_count: 6 }` (pure inverse of stage0_excluded ✓)
+- `has_repetition_distribution`: `{ true_count: 0, false_count: 8 }`
+- `has_progression_distribution`: `{ true_count: 0, false_count: 8 }`
+
+**Carry-through version stamps**
+- `poi_input_version_distribution`: `{ "poi-core-input-v0.1": 8 }`
+- `poi_observation_version_distribution`: `{ "poi-observation-v0.1": 8 }`
+
+**Anomaly counters (all zero — healthy run)**
+- `total_anomalies`: **0**
+- `unknown_pattern_count`: 0
+- `insufficient_temporal_data_count`: 0
+- `invalid_evidence_refs_count`: 0
+- `invalid_source_versions_count`: 0
+- `forbidden_source_table_count`: 0
+- `forbidden_key_present_count`: 0
+- `anomaly_samples`: all empty arrays ✓ (no `poi_observation_id`s surfaced because no anomalies)
+
+**Run metadata**
+- `record_only`: `true`
+
+### Regression observers — concurrent PASS
+
+| Observer | Result |
+| --- | --- |
+| `observe:risk-core-bridge` | PASS — `rows_scanned: 2`, `envelopes_built: 2`, `rejects: 0` |
+| `observe:poi-core-input` | PASS — `rows_scanned: 24`, `envelopes_built: 8`, `rejects: 16` (all `NO_PAGE_PATH_CANDIDATE` from SBF rows — expected v0.1 behaviour), `stage0_excluded: 6`, `eligible_for_poi: 2` |
+| `observe:poi-table` | PASS — `table_present: true`, `rows_in_table: 8`, `total_anomalies: 0`, `forbidden_column_present_count: 0` |
+
+PR#6 / PR#7b / PR#8b / PR#9a / PR#10 / PR#11a..d behaviour remains
+intact after PR#12b lands. No regression observed.
+
+### Scope confirmation
+
+- ✓ Read-only observer only
+- ✓ No DB writes
+- ✓ No migrations
+- ✓ No schema changes
+- ✓ No `psql` writes
+- ✓ No Render touched (A0 P-4 production block still active)
+- ✓ No Lane A/B changes (both 0 → 0)
+- ✓ No customer output
+- ✓ No Trust / Policy / Product-Context Fit
+- ✓ No AMS Series Core runtime names
+
+### Verdict
+
+**PR#12b Hetzner staging proof PASS.**
+PR#12b is staging-proven and closed.
+
+**Next safe step:** PR#12c planning only — do NOT begin durable POI
+Sequence table work (`poi_sequence_observations_v0_1` migration +
+worker) without a planning / review gate mirroring the PR#11a → PR#11c
+cadence.
+
+---
+
 ## §10 Rollback path
 
 Forward-only at the file level. To revert PR#12b:
