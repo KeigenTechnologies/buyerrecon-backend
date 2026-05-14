@@ -276,6 +276,117 @@ Render production deploy remains **BLOCKED** by A0 P-4.
 
 ---
 
+## Hetzner staging proof — PASS
+
+**Date.** 2026-05-14.
+**Server path.** `/opt/buyerrecon-backend`.
+**Branch.** `sprint2-architecture-contracts-d4cc2bf`.
+**HEAD.** `e20ad7b7a89c5d74bdfa378ad613442c0335b33f`.
+**DB (masked).** `127.0.0.1:5432/buyerrecon_staging`.
+**Final working tree.** Clean after restoring server-side
+`package-lock.json` change written by `npm install`.
+
+### Static validation
+
+| Step | Result |
+| --- | --- |
+| `npx tsc --noEmit` | PASS |
+| `npm run check:scoring-contracts` | PASS |
+| `npx vitest run tests/v1/product-context-timing-observer.test.ts` (targeted) | **82/82 PASS** |
+| `npm test` (full suite) | **49 files / 2,795 tests PASS** |
+| `git diff --check` | PASS (no whitespace errors) |
+
+### Observer environment
+
+```
+OBS_WORKSPACE_ID=buyerrecon_staging_ws
+OBS_SITE_ID=buyerrecon_com
+OBS_WINDOW_HOURS=720
+DATABASE_URL=<masked → 127.0.0.1:5432/buyerrecon_staging>
+```
+
+### Observer run — `npm run observe:product-context-timing`
+
+| Signal | Result |
+| --- | --- |
+| CLI exit code | 0 (success) |
+| `source_readiness.fail_closed` | `false` |
+| `source_scan.poi_rows_scanned` | 8 |
+| `source_scan.poi_sequence_rows_scanned` | 8 |
+| `source_scan.unique_session_ids_seen` | 8 |
+| `evidence_quality.rows_accepted_into_preview` | **2** |
+| `evidence_quality.rows_rejected_from_preview` | **6** |
+| `evidence_quality.reject_reason_counts.stage0_excluded_session` | 6 (Stage 0 carry-through — expected) |
+| `product_context_preview.mapping_coverage_percent` | **100.0%** |
+| `product_context_preview.universal_surface_distribution` | `{ homepage: 7, pricing: 1 }` |
+| `timing_actionability.actionability_band_distribution` | `{ warm_recent: 8 }` |
+| `timing_actionability.conversion_proximity_indicators` | `{ pricing_visited: 1 }` |
+| AMS-aligned JSON preview emitted | yes — internal-only `buyerrecon_product_features_shape_preview` shape, capped at `OBS_SAMPLE_LIMIT` |
+| Customer output | none |
+| AMS Product Layer runtime execution | none |
+
+### Pre / post table-count parity (unchanged across the observer run)
+
+| Table | Pre | Post |
+| --- | --- | --- |
+| `accepted_events` | 16 | 16 |
+| `ingest_requests` | 16 | 16 |
+| `rejected_events` | 0 | 0 |
+| `poi_observations_v0_1` | 8 | 8 |
+| `poi_sequence_observations_v0_1` | 8 | 8 |
+| `risk_observations_v0_1` | 2 | 2 |
+| `scoring_output_lane_a` | 0 | 0 |
+| `scoring_output_lane_b` | 0 | 0 |
+
+**Observer wrote nothing.** All counts identical pre → post.
+
+### Regression observers — concurrent PASS
+
+| Observer | Result |
+| --- | --- |
+| `observe:poi-table` | PASS — `total_anomalies: 0` |
+| `observe:poi-sequence-table` | PASS — `total_anomalies: 0` |
+
+PR#11d / PR#12e behaviour remains intact after PR#13b lands. No
+regression observed.
+
+### Operator note (non-failure)
+
+The first observer invocation on the Hetzner host had pasted-in
+explanatory text directly into the shell, which produced harmless
+lines like `Expected:: command not found` as the shell tried to
+interpret the explanatory text as commands. The observer itself was
+re-run cleanly afterwards and produced the PASS result above. This
+is recorded as an **operator-side paste artifact**, not an observer
+failure.
+
+### Scope confirmation
+
+- ✓ Read-only observer only.
+- ✓ No DB writes.
+- ✓ No migrations.
+- ✓ No `schema.sql` change.
+- ✓ No `psql` mutation.
+- ✓ No collector change.
+- ✓ No Lane A/B writes.
+- ✓ No Trust / Policy output.
+- ✓ No customer output.
+- ✓ No AMS Product Layer runtime execution.
+- ✓ No Render touched (A0 P-4 production block still active).
+- ✓ No production DB touched.
+
+### Verdict
+
+**PR#13b Hetzner staging proof PASS.**
+PR#13b is staging-proven and closed after this doc patch is committed.
+
+**Next safe step:** Hetzner proof closure commit + push, then
+PR#13c planning for the next evidence-consumer layer (AMS bridge
+work or Product-Context Fit profile persistence — Helen's call per
+PR#13a §14 implementation-options ladder).
+
+---
+
 ## §7 Rollback path
 
 Forward-only at the file level. To revert PR#13b:
