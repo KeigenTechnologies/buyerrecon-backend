@@ -791,3 +791,113 @@ CREATE INDEX IF NOT EXISTS poi_obs_v0_1_versions
 CREATE INDEX IF NOT EXISTS poi_obs_v0_1_stage0_excluded
   ON poi_observations_v0_1 (workspace_id, site_id, stage0_excluded, derived_at DESC)
   WHERE stage0_excluded = TRUE;
+
+-- ============================================================================
+-- Sprint 2 PR#12d — POI Sequence observation evidence layer
+-- (poi_sequence_observations_v0_1). Mirror block of
+-- migrations/015_poi_sequence_observations_v0_1.sql. Additive only.
+-- Persists per-session POI ordering / path facts derived only from
+-- poi_observations_v0_1 (the PR#11c POI evidence layer). No raw
+-- ledger reads, no Stage 0 re-read, no lower-layer direct refs in
+-- evidence_refs (OD-14). See
+-- docs/sprint2-pr12c-poi-sequence-observations-table-worker-planning.md
+-- (Helen-signed OD-1..OD-14 at commit f991e0b).
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS poi_sequence_observations_v0_1 (
+  poi_sequence_observation_id   BIGSERIAL    PRIMARY KEY,
+
+  workspace_id                  TEXT         NOT NULL,
+  site_id                       TEXT         NOT NULL,
+  session_id                    TEXT         NOT NULL,
+
+  poi_sequence_version          TEXT         NOT NULL DEFAULT 'poi-sequence-v0.1',
+  poi_observation_version       TEXT         NOT NULL,
+
+  poi_count                     INTEGER      NOT NULL,
+  unique_poi_count              INTEGER      NOT NULL,
+  first_poi_type                TEXT         NOT NULL,
+  first_poi_key                 TEXT         NOT NULL,
+  last_poi_type                 TEXT         NOT NULL,
+  last_poi_key                  TEXT         NOT NULL,
+  first_seen_at                 TIMESTAMPTZ,
+  last_seen_at                  TIMESTAMPTZ,
+  duration_seconds              INTEGER,
+  repeated_poi_count            INTEGER      NOT NULL,
+  has_repetition                BOOLEAN      NOT NULL,
+  has_progression               BOOLEAN      NOT NULL,
+  progression_depth             INTEGER      NOT NULL,
+  poi_sequence_pattern_class    TEXT         NOT NULL,
+
+  stage0_excluded               BOOLEAN      NOT NULL,
+  poi_sequence_eligible         BOOLEAN      NOT NULL,
+  stage0_rule_id                TEXT,
+
+  evidence_refs                 JSONB        NOT NULL,
+  source_versions               JSONB        NOT NULL DEFAULT '{}'::jsonb,
+
+  source_poi_observation_count  INTEGER      NOT NULL,
+  source_min_poi_observation_id BIGINT,
+  source_max_poi_observation_id BIGINT,
+
+  record_only                   BOOLEAN      NOT NULL DEFAULT TRUE,
+  derived_at                    TIMESTAMPTZ  NOT NULL,
+  created_at                    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  updated_at                    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+
+  CONSTRAINT poi_seq_obs_v0_1_version_pin
+    CHECK (poi_sequence_version = 'poi-sequence-v0.1'),
+  CONSTRAINT poi_seq_obs_v0_1_pattern_class_enum
+    CHECK (poi_sequence_pattern_class IN (
+      'single_poi','repeated_same_poi','multi_poi_linear',
+      'loop_or_backtrack','insufficient_temporal_data','unknown'
+    )),
+  CONSTRAINT poi_seq_obs_v0_1_eligible_is_pure_inverse_of_stage0_excluded
+    CHECK (poi_sequence_eligible = (NOT stage0_excluded)),
+  CONSTRAINT poi_seq_obs_v0_1_poi_count_pos
+    CHECK (poi_count >= 1),
+  CONSTRAINT poi_seq_obs_v0_1_unique_poi_count_pos
+    CHECK (unique_poi_count >= 1 AND unique_poi_count <= poi_count),
+  CONSTRAINT poi_seq_obs_v0_1_progression_depth_equals_unique
+    CHECK (progression_depth = unique_poi_count),
+  CONSTRAINT poi_seq_obs_v0_1_has_progression_rule
+    CHECK (has_progression = (unique_poi_count >= 2)),
+  CONSTRAINT poi_seq_obs_v0_1_repeated_poi_count_identity
+    CHECK (repeated_poi_count = poi_count - unique_poi_count),
+  CONSTRAINT poi_seq_obs_v0_1_has_repetition_rule
+    CHECK (has_repetition = (repeated_poi_count > 0)),
+  CONSTRAINT poi_seq_obs_v0_1_duration_nonneg
+    CHECK (duration_seconds IS NULL OR duration_seconds >= 0),
+  CONSTRAINT poi_seq_obs_v0_1_timestamps_ordered
+    CHECK (first_seen_at IS NULL
+           OR last_seen_at IS NULL
+           OR first_seen_at <= last_seen_at),
+  CONSTRAINT poi_seq_obs_v0_1_source_count_matches_poi_count
+    CHECK (source_poi_observation_count = poi_count),
+  CONSTRAINT poi_seq_obs_v0_1_source_id_range_ordered
+    CHECK (source_min_poi_observation_id IS NULL
+           OR source_max_poi_observation_id IS NULL
+           OR source_min_poi_observation_id <= source_max_poi_observation_id),
+  CONSTRAINT poi_seq_obs_v0_1_record_only_must_be_true
+    CHECK (record_only IS TRUE),
+  CONSTRAINT poi_seq_obs_v0_1_evidence_refs_is_array
+    CHECK (jsonb_typeof(evidence_refs) = 'array'),
+  CONSTRAINT poi_seq_obs_v0_1_evidence_refs_nonempty
+    CHECK (jsonb_array_length(evidence_refs) > 0),
+  CONSTRAINT poi_seq_obs_v0_1_source_versions_is_object
+    CHECK (jsonb_typeof(source_versions) = 'object'),
+  CONSTRAINT poi_seq_obs_v0_1_natural_key UNIQUE
+    (workspace_id, site_id, session_id,
+     poi_sequence_version, poi_observation_version)
+);
+
+CREATE INDEX IF NOT EXISTS poi_seq_obs_v0_1_workspace_site
+  ON poi_sequence_observations_v0_1 (workspace_id, site_id, derived_at DESC);
+CREATE INDEX IF NOT EXISTS poi_seq_obs_v0_1_session
+  ON poi_sequence_observations_v0_1 (workspace_id, site_id, session_id);
+CREATE INDEX IF NOT EXISTS poi_seq_obs_v0_1_versions
+  ON poi_sequence_observations_v0_1
+    (poi_sequence_version, poi_observation_version, derived_at DESC);
+CREATE INDEX IF NOT EXISTS poi_seq_obs_v0_1_stage0_excluded
+  ON poi_sequence_observations_v0_1 (workspace_id, site_id, stage0_excluded, derived_at DESC)
+  WHERE stage0_excluded = TRUE;

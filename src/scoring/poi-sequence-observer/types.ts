@@ -244,6 +244,7 @@ export interface PoiObservationRowRaw {
   readonly source_table:             unknown;
   readonly stage0_excluded:          unknown;
   readonly poi_eligible:             unknown;
+  readonly stage0_rule_id?:          unknown;  // optional — observer SELECT omits it, PR#12d worker SELECT includes it
   readonly first_seen_at:            unknown;
   readonly last_seen_at:             unknown;
   readonly derived_at:               unknown;
