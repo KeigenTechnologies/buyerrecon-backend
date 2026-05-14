@@ -262,6 +262,165 @@ proves staging on Hetzner. No production push.
 
 ---
 
+## Hetzner staging proof — PASS
+
+**Date.** 2026-05-14.
+**Server path.** `/opt/buyerrecon-backend`.
+**Branch.** `sprint2-architecture-contracts-d4cc2bf`.
+**HEAD.** `3ab4b6c47cb894cd37f98388cdc914745865547c`.
+**DB (masked).** `127.0.0.1:5432/buyerrecon_staging`.
+
+### Static validation
+
+| Step | Result |
+| --- | --- |
+| `npx tsc --noEmit` | PASS |
+| `npm run check:scoring-contracts` | PASS |
+| `npx vitest run tests/v1/poi-sequence-table-observer.test.ts` (targeted) | **36/36 PASS** |
+| `npm test` (full suite) | **48 files / 2,713 tests PASS** |
+| `git diff --check` | PASS (no whitespace errors) |
+
+### Observer environment
+
+```
+OBS_WORKSPACE_ID=buyerrecon_staging_ws
+OBS_SITE_ID=buyerrecon_com
+OBS_WINDOW_HOURS=720
+DATABASE_URL=<masked → 127.0.0.1:5432/buyerrecon_staging>
+```
+
+### Pre / post table-count parity (unchanged across the observer run)
+
+| Table | Pre | Post |
+| --- | --- | --- |
+| `accepted_events` | 14 | 14 |
+| `ingest_requests` | 14 | 14 |
+| `rejected_events` | 0 | 0 |
+| `risk_observations_v0_1` | 2 | 2 |
+| `scoring_output_lane_a` | 0 | 0 |
+| `scoring_output_lane_b` | 0 | 0 |
+| `session_behavioural_features_v0_2` | 16 | 16 |
+| `session_features` | 8 | 8 |
+| `stage0_decisions` | 8 | 8 |
+| `poi_observations_v0_1` | 8 | 8 |
+| `poi_sequence_observations_v0_1` | 8 | 8 |
+
+**Observer wrote nothing.** All counts identical pre → post.
+
+### `npm run observe:poi-sequence-table` result
+
+**Top-line table state**
+- `table_present`: **true**
+- `rows_in_table`: **8**
+- `rows_inspected`: 0 (every anomaly counter returned 0, so the
+  rows_inspected accumulator stays at 0 — see §4 counter semantics:
+  the accumulator sums anomaly counters, not total rows)
+
+**Anomaly counters (all zero — healthy run)**
+- `duplicate_natural_key_count`: 0
+- `poi_sequence_eligible_mismatch_count`: 0
+- `invalid_pattern_class_count`: 0
+- `has_progression_mismatch_count`: 0
+- `progression_depth_mismatch_count`: 0
+- `repeated_poi_count_mismatch_count`: 0
+- `has_repetition_mismatch_count`: 0
+- `source_count_mismatch_count`: 0
+- `negative_count_count`: 0
+- `timestamp_ordering_violation_count`: 0
+- `negative_duration_count`: 0
+- `evidence_refs_invalid_count`: 0
+- **`evidence_refs_forbidden_direct_table_count`: 0** (OD-14 guard) ✓
+- **`evidence_refs_bad_id_count`: 0** (integer-validation Codex fix) ✓
+- `source_versions_invalid_count`: 0
+- `forbidden_column_present_count`: 0
+- **`total_anomalies`: 0** ✓
+- `anomaly_samples`: all empty arrays ✓ (no `poi_sequence_observation_id`s surfaced)
+
+**Pattern class distribution**
+- `single_poi`: **8**
+- `repeated_same_poi`: 0
+- `multi_poi_linear`: 0
+- `loop_or_backtrack`: 0
+- `insufficient_temporal_data`: 0
+- `unknown`: **0** ✓ (must stay 0 in healthy run)
+
+**Bucket distributions**
+- `poi_count_distribution`: `{ "1": 8 }`
+- `progression_depth_distribution`: `{ "1": 8 }`
+
+**Stage 0 carry-through + eligibility**
+- `stage0_excluded_distribution`: `{ true_count: 6, false_count: 2 }`
+- `poi_sequence_eligible_distribution`: `{ true_count: 2, false_count: 6 }` (pure inverse holds ✓)
+- `has_repetition_distribution`: `{ true_count: 0, false_count: 8 }`
+- `has_progression_distribution`: `{ true_count: 0, false_count: 8 }`
+
+**Version stamps**
+- `poi_sequence_version_distribution`: `{ "poi-sequence-v0.1": 8 }`
+- `poi_observation_version_distribution`: `{ "poi-observation-v0.1": 8 }`
+
+**Identity diagnostics**
+- `unique_session_ids_seen`: 8
+- `unique_workspace_site_pairs_seen`: 1
+- `sample_session_id_prefixes`: masked prefixes only
+
+**Run metadata**
+- `record_only`: `true`
+
+### Verification SQL cross-check — `docs/sql/verification/15_poi_sequence_observations_v0_1_invariants.sql`
+
+| Check | Result |
+| --- | --- |
+| `table_present` | `t` ✓ |
+| All 18 row-level / schema-level anomaly result sets | 0 rows each ✓ |
+| Lane A / Lane B parity | 0 / 0 (pre = post) ✓ |
+| POI coverage gap (sessions in `poi_observations_v0_1` not in `poi_sequence_observations_v0_1`) | 0 rows ✓ |
+
+### Regression observers — concurrent PASS
+
+| Observer | Result |
+| --- | --- |
+| `observe:risk-core-bridge` | PASS — `rows_scanned: 2`, `envelopes_built: 2`, `rejects: 0` |
+| `observe:poi-core-input` | PASS — `rows_scanned: 24`, `envelopes_built: 8`, `rejects: 16` (all `NO_PAGE_PATH_CANDIDATE` from SBF rows — expected v0.1 behaviour), `stage0_excluded: 6`, `eligible_for_poi: 2` |
+| `observe:poi-table` | PASS — `table_present: true`, `rows_in_table: 8`, `total_anomalies: 0`, `forbidden_column_present_count: 0` |
+| `observe:poi-sequence` (PR#12b) | PASS — `rows_scanned: 8`, `sessions_seen: 8`, `poi_sequences_built: 8`, `single_poi: 8`, `total_anomalies: 0` |
+
+PR#6 / PR#7b / PR#8b / PR#9a / PR#10 / PR#11a..d / PR#12b / PR#12d behaviour remains intact after PR#12e lands. No regression observed.
+
+### Scope confirmation
+
+- ✓ Read-only observer only.
+- ✓ No DB writes.
+- ✓ No migrations.
+- ✓ No schema changes.
+- ✓ No `psql` writes.
+- ✓ No Render touched (A0 P-4 production block still active).
+- ✓ No worker changes.
+- ✓ No Lane A/B changes (both 0 / 0).
+- ✓ No customer output.
+- ✓ No Trust / Policy / Product-Context Fit.
+- ✓ No AMS Series Core runtime names.
+
+### Verdict
+
+**PR#12e Hetzner staging proof PASS.**
+PR#12e is staging-proven and closed after this doc patch is committed.
+
+**PR#12 chain status:** PR#12a (rename) + PR#12b (read-only POI
+Sequence Observer) + PR#12c (planning) + PR#12d (durable table +
+worker) + PR#12e (read-only table observer) all closed and
+Hetzner-proven. The POI Sequence evidence layer is complete and
+locked at v0.1.
+
+**Next safe step:** **PR#13a — Product-Context Fit + Timing Window
+planning only.** This is a planning-only PR mirroring the PR#12c
+cadence. Per the workflow truth file §11 (Product-Context Fit) and
+§14 (Timing Window Detection), PR#13a establishes the OD list and
+boundary contract for the next evidence-consumer layer. No
+implementation in PR#13a — that follows in PR#13b once Codex review
+and Helen sign-off close on the planning doc.
+
+---
+
 ## §9 Rollback path
 
 Forward-only at the file level. To revert PR#12e:
