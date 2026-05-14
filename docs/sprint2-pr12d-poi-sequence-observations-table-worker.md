@@ -322,6 +322,163 @@ proves staging on Hetzner. No production push.
 
 ---
 
+## Hetzner staging proof — PASS
+
+**Date.** 2026-05-14.
+**Server path.** `/opt/buyerrecon-backend`.
+**Branch.** `sprint2-architecture-contracts-d4cc2bf`.
+**HEAD.** `f5e4889999aa8caabe97c8a5fe9c95df3b0592ae`.
+
+### Static validation
+
+| Step | Result |
+| --- | --- |
+| `npx tsc --noEmit` | PASS |
+| `npm run check:scoring-contracts` | PASS |
+| `npx vitest run tests/v1/poi-sequence-worker.test.ts` (targeted) | **59/59 PASS** |
+| `npm test` (full suite) | **47 files / 2,677 tests PASS** |
+| `git diff --check` | PASS (no whitespace errors) |
+
+### Migration 015 apply
+
+- **Environment note (operator):** `DATABASE_URL_MIGRATOR` was missing
+  on Hetzner; the first invocation fell back to the local OS role
+  `root` and failed with `role "root" does not exist`. Operator then
+  re-ran migration 015 using the established staging
+  `DATABASE_URL` role and the migration applied successfully.
+- `poi_sequence_observations_v0_1` exists after migration. Role
+  grants applied; Hard-Rule-I parity DO block passed (customer_api
+  zero SELECT; internal_readonly SELECT-only with zero sequence
+  USAGE / UPDATE).
+- **Staging environment note only — no production / Render DB
+  touched.**
+
+### Pre-counts after migration apply
+
+| Table | Pre |
+| --- | --- |
+| `accepted_events` | 14 |
+| `ingest_requests` | 14 |
+| `rejected_events` | 0 |
+| `risk_observations_v0_1` | 2 |
+| `scoring_output_lane_a` | 0 |
+| `scoring_output_lane_b` | 0 |
+| `session_behavioural_features_v0_2` | 16 |
+| `session_features` | 8 |
+| `stage0_decisions` | 8 |
+| `poi_observations_v0_1` | 8 |
+| `poi_sequence_observations_v0_1` | 0 (table just created, empty) |
+
+### Worker first run — `npm run run:poi-sequence-worker`
+
+| Signal | Result |
+| --- | --- |
+| `rows_scanned` | **8** |
+| `sessions_seen` | **8** |
+| `rows_inserted` | **8** |
+| `rows_updated` | 0 |
+| `rejects` | 0 |
+| `pattern_class.single_poi` | **8** |
+| `repeated_same_poi` / `multi_poi_linear` / `loop_or_backtrack` / `insufficient_temporal_data` / `unknown` | 0 each ✓ |
+| `stage0_excluded_count` | **6** |
+| `poi_sequence_eligible_count` | **2** (pure inverse holds ✓) |
+| `run_metadata.source_table` | `poi_observations_v0_1` |
+| `run_metadata.target_table` | `poi_sequence_observations_v0_1` |
+| `run_metadata.record_only` | `true` |
+
+### Worker rerun — idempotency check
+
+| Signal | Result |
+| --- | --- |
+| `rows_scanned` | 8 |
+| `sessions_seen` | 8 |
+| `rows_inserted` | **0** |
+| `rows_updated` | **8** |
+| `rejects` | 0 |
+| `pattern_class.single_poi` | 8 |
+| `stage0_excluded_count` | 6 |
+| `poi_sequence_eligible_count` | 2 |
+| `poi_sequence_observations_v0_1` row count after rerun | **8 (stable)** ✓ |
+
+Row-count idempotency confirmed. `derived_at` and `updated_at` advanced per the locked semantics in §6.
+
+### Verification SQL — `docs/sql/verification/15_poi_sequence_observations_v0_1_invariants.sql`
+
+| Check | Result |
+| --- | --- |
+| `table_present` | `t` ✓ |
+| Duplicate natural keys | 0 |
+| `poi_sequence_eligible` mismatch (≠ NOT stage0_excluded) | 0 |
+| Invalid `poi_sequence_pattern_class` | 0 |
+| `has_progression` mismatch (≠ `unique_poi_count >= 2`) | 0 |
+| `progression_depth` mismatch (≠ `unique_poi_count`) | 0 |
+| `repeated_poi_count` mismatch (≠ `poi_count - unique_poi_count`) | 0 |
+| `has_repetition` mismatch (≠ `repeated_poi_count > 0`) | 0 |
+| `source_poi_observation_count` ≠ `poi_count` | 0 |
+| Negative counts / out-of-range `unique_poi_count` | 0 |
+| Timestamp ordering violations | 0 |
+| Negative duration | 0 |
+| Empty / non-array `evidence_refs` | 0 |
+| Forbidden direct `evidence_refs[].table` (OD-14 check) | **0** ✓ |
+| Bad `evidence_refs[].poi_observation_id` | 0 |
+| Non-object `source_versions` | 0 |
+| Forbidden column names present | **0** ✓ |
+| Lane A / Lane B parity | both 0 / 0 (pre = post) ✓ |
+| POI coverage gap (sessions in `poi_observations_v0_1` not in `poi_sequence_observations_v0_1`) | **0** ✓ |
+
+### Post-counts after worker (pre = post on every monitored table; only `poi_sequence_observations_v0_1` grew from 0 → 8)
+
+| Table | Pre | Post |
+| --- | --- | --- |
+| `accepted_events` | 14 | 14 |
+| `ingest_requests` | 14 | 14 |
+| `rejected_events` | 0 | 0 |
+| `risk_observations_v0_1` | 2 | 2 |
+| `scoring_output_lane_a` | 0 | 0 |
+| `scoring_output_lane_b` | 0 | 0 |
+| `session_behavioural_features_v0_2` | 16 | 16 |
+| `session_features` | 8 | 8 |
+| `stage0_decisions` | 8 | 8 |
+| `poi_observations_v0_1` | 8 | 8 |
+| `poi_sequence_observations_v0_1` | 0 | **8** (worker insertions; expected) |
+
+Source / control tables unchanged. Lane A / Lane B unchanged. Only target table grew, exactly as the locked scope requires.
+
+### Regression observers — concurrent PASS
+
+| Observer | Result |
+| --- | --- |
+| `observe:risk-core-bridge` | PASS — `rows_scanned: 2`, `envelopes_built: 2`, `rejects: 0` |
+| `observe:poi-core-input` | PASS — `rows_scanned: 24`, `envelopes_built: 8`, `rejects: 16` (all `NO_PAGE_PATH_CANDIDATE` from SBF rows — expected v0.1 behaviour), `stage0_excluded: 6`, `eligible_for_poi: 2` |
+| `observe:poi-table` | PASS — `table_present: true`, `rows_in_table: 8`, `total_anomalies: 0`, `forbidden_column_present_count: 0` |
+| `observe:poi-sequence` (PR#12b) | PASS — `rows_scanned: 8`, `sessions_seen: 8`, `poi_sequences_built: 8`, `single_poi: 8`, `total_anomalies: 0` |
+
+PR#6 / PR#7b / PR#8b / PR#9a / PR#10 / PR#11a..d / PR#12b behaviour remains intact after PR#12d lands. No regression observed.
+
+### Scope confirmation
+
+- ✓ Migration 015 applied on staging only.
+- ✓ Worker wrote only `poi_sequence_observations_v0_1`.
+- ✓ Source / control tables unchanged.
+- ✓ Lane A / Lane B unchanged at 0 / 0.
+- ✓ No Render production touched (A0 P-4 still active).
+- ✓ No customer output.
+- ✓ No Trust / Policy / Product-Context Fit.
+- ✓ No AMS Series Core runtime naming.
+
+### Verdict
+
+**PR#12d Hetzner staging proof PASS.**
+PR#12d is staging-proven and closed after this doc patch is committed.
+
+**Next safe step:** PR#12e planning / implementation for the
+read-only POI Sequence table observer (mirrors PR#11d structure
+applied to `poi_sequence_observations_v0_1`) + its own Hetzner
+proof. **Keep PR#12e separate** — do NOT bundle observer work into
+PR#12d post-hoc.
+
+---
+
 ## §10 Rollback path
 
 Forward-only at the file level. To revert PR#12d:
