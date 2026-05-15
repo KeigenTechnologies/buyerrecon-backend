@@ -1,0 +1,220 @@
+{
+  "fixture_id": "buyerrecon-candidate-invalid-v0.1",
+  "fixture_version": "v0.1",
+  "fixture_status": "invalid_cases",
+  "fixture_notes": "BuyerRecon-side enumerated invalid-cases catalogue. Each entry is one offending JSON fragment a future PR#14f fixture-consumer test (and any future AMS-side fixture test) must reject. expected_reject_reason_family records WHO enforces the rejection: pr14b_validator_* families are enforced by today's PR#14b validateBridgeMapperInput / validateBridgeCandidate; pr14f_fixture_privacy_value_scan is required FUTURE work in PR#14f (current PR#14b validator does NOT claim general recursive URL/query/email-shape value scanning). See ./README.md for the precise PR#14b vs PR#14f boundary.",
+  "invalid_cases": [
+    {
+      "case_id": "I-1",
+      "description": "Required version field missing — bridge_contract_version omitted from the candidate root.",
+      "expected_reject_reason_family": "pr14b_validator_required_fields",
+      "candidate_patch_or_bad_fragment": {
+        "omit_fields_from_valid_candidate": ["bridge_contract_version"]
+      }
+    },
+    {
+      "case_id": "I-2",
+      "description": "namespace_key_candidate is not 'buyerrecon' — alien product namespace.",
+      "expected_reject_reason_family": "pr14b_validator_enum_or_allowlist",
+      "candidate_patch_or_bad_fragment": {
+        "namespace_key_candidate": "acme"
+      }
+    },
+    {
+      "case_id": "I-3",
+      "description": "Unknown surface label outside the v0.1 universal-surface taxonomy.",
+      "expected_reject_reason_family": "pr14b_validator_enum_or_allowlist",
+      "candidate_patch_or_bad_fragment": {
+        "payload_candidate": {
+          "fit_like_inputs": {
+            "surface_distribution": {
+              "homepage": 1,
+              "glossary": 2
+            }
+          }
+        }
+      }
+    },
+    {
+      "case_id": "I-4",
+      "description": "buyerrecon_actionability_band uses an AMS WindowState enum value ('in_window') — BuyerRecon-side band must be one of hot_now / warm_recent / cooling / stale / dormant / insufficient_evidence.",
+      "expected_reject_reason_family": "pr14b_validator_enum_or_allowlist",
+      "candidate_patch_or_bad_fragment": {
+        "payload_candidate": {
+          "timing_like_inputs": {
+            "buyerrecon_actionability_band": "in_window"
+          }
+        }
+      }
+    },
+    {
+      "case_id": "I-5",
+      "description": "Unknown conversion_proximity_indicator key outside ALLOWED_CONVERSION_PROXIMITY_INDICATORS allowlist.",
+      "expected_reject_reason_family": "pr14b_validator_enum_or_allowlist",
+      "candidate_patch_or_bad_fragment": {
+        "payload_candidate": {
+          "intent_like_inputs": {
+            "conversion_proximity_indicators": {
+              "pricing_visited": 1,
+              "landing_visited": 1
+            }
+          }
+        }
+      }
+    },
+    {
+      "case_id": "I-6",
+      "description": "Raw URL-shaped string embedded as a VALUE under a non-forbidden key. PR#14b validator rejects raw-URL KEYS via FORBIDDEN_PII_KEYS, but does not claim general value-shape scanning. PR#14f fixture privacy value scan must reject this.",
+      "expected_reject_reason_family": "pr14f_fixture_privacy_value_scan",
+      "candidate_patch_or_bad_fragment": {
+        "payload_candidate": {
+          "fit_like_inputs": {
+            "site_mapping_version": "https://example.test/pricing"
+          }
+        }
+      }
+    },
+    {
+      "case_id": "I-7",
+      "description": "Query-string-shaped string embedded as a VALUE under a non-forbidden key. PR#14b validator does not claim general value-shape scanning. PR#14f fixture privacy value scan must reject this.",
+      "expected_reject_reason_family": "pr14f_fixture_privacy_value_scan",
+      "candidate_patch_or_bad_fragment": {
+        "payload_candidate": {
+          "timing_like_inputs": {
+            "timing_bucket": "utm_source=test&utm_campaign=demo"
+          }
+        }
+      }
+    },
+    {
+      "case_id": "I-8",
+      "description": "Email-shape string embedded as a VALUE under a non-forbidden key. PR#14b validator rejects email-shape KEYS via FORBIDDEN_PII_KEYS, but does not claim general value-shape scanning. PR#14f fixture privacy value scan must reject this.",
+      "expected_reject_reason_family": "pr14f_fixture_privacy_value_scan",
+      "candidate_patch_or_bad_fragment": {
+        "payload_candidate": {
+          "fit_like_inputs": {
+            "category_template": "sample.user@example.test"
+          }
+        }
+      }
+    },
+    {
+      "case_id": "I-9",
+      "description": "Full session_id KEY present anywhere in candidate. session_id is in FORBIDDEN_PII_KEYS — PR#14b recursive key scan rejects today.",
+      "expected_reject_reason_family": "pr14b_validator_forbidden_keys",
+      "candidate_patch_or_bad_fragment": {
+        "payload_candidate": {
+          "intent_like_inputs": {
+            "session_id": "ses_0123456789abcdef0123456789abcdef"
+          }
+        }
+      }
+    },
+    {
+      "case_id": "I-10",
+      "description": "Forbidden AMS runtime KEY 'ProductDecision' appears in payload. PR#14b recursive AMS-reserved-name scan rejects today via FORBIDDEN_AMS_PAYLOAD_KEYS.",
+      "expected_reject_reason_family": "pr14b_validator_forbidden_keys",
+      "candidate_patch_or_bad_fragment": {
+        "payload_candidate": {
+          "ProductDecision": "any-value-here"
+        }
+      }
+    },
+    {
+      "case_id": "I-11",
+      "description": "Forbidden AMS runtime KEY 'ProductFeatures' appears in payload. PR#14b recursive AMS-reserved-name scan rejects today via FORBIDDEN_AMS_PAYLOAD_KEYS.",
+      "expected_reject_reason_family": "pr14b_validator_forbidden_keys",
+      "candidate_patch_or_bad_fragment": {
+        "payload_candidate": {
+          "ProductFeatures": {
+            "any_subfield": "any-value-here"
+          }
+        }
+      }
+    },
+    {
+      "case_id": "I-12",
+      "description": "AMS Fit reason-code namespace string 'FIT.PRICE_VISITED' appears as a string VALUE. PR#14b recursive ^(FIT|INTENT|WINDOW)\\.[A-Z][A-Z0-9_]*$ value scan rejects today.",
+      "expected_reject_reason_family": "pr14b_validator_reason_namespace_string",
+      "candidate_patch_or_bad_fragment": {
+        "payload_candidate": {
+          "fit_like_inputs": {
+            "category_template": "FIT.PRICE_VISITED"
+          }
+        }
+      }
+    },
+    {
+      "case_id": "I-13",
+      "description": "AMS Intent reason-code namespace string 'INTENT.HIGH' appears as a string VALUE. PR#14b recursive ^(FIT|INTENT|WINDOW)\\.[A-Z][A-Z0-9_]*$ value scan rejects today.",
+      "expected_reject_reason_family": "pr14b_validator_reason_namespace_string",
+      "candidate_patch_or_bad_fragment": {
+        "payload_candidate": {
+          "timing_like_inputs": {
+            "timing_bucket": "INTENT.HIGH"
+          }
+        }
+      }
+    },
+    {
+      "case_id": "I-14",
+      "description": "AMS Window reason-code namespace string 'WINDOW.IN_WINDOW' appears as a string VALUE. PR#14b recursive ^(FIT|INTENT|WINDOW)\\.[A-Z][A-Z0-9_]*$ value scan rejects today.",
+      "expected_reject_reason_family": "pr14b_validator_reason_namespace_string",
+      "candidate_patch_or_bad_fragment": {
+        "payload_candidate": {
+          "timing_like_inputs": {
+            "timing_bucket": "WINDOW.IN_WINDOW"
+          }
+        }
+      }
+    },
+    {
+      "case_id": "I-15",
+      "description": "Negative integer count where a non-negative integer is required (poi_count = -1).",
+      "expected_reject_reason_family": "pr14b_validator_numeric",
+      "candidate_patch_or_bad_fragment": {
+        "payload_candidate": {
+          "intent_like_inputs": {
+            "poi_count": -1
+          }
+        }
+      }
+    },
+    {
+      "case_id": "I-16",
+      "description": "Fractional value where an integer count is required (unique_poi_count = 2.5).",
+      "expected_reject_reason_family": "pr14b_validator_numeric",
+      "candidate_patch_or_bad_fragment": {
+        "payload_candidate": {
+          "intent_like_inputs": {
+            "unique_poi_count": 2.5
+          }
+        }
+      }
+    },
+    {
+      "case_id": "I-17",
+      "description": "mapping_coverage_percent outside the [0, 100] range (set to 150).",
+      "expected_reject_reason_family": "pr14b_validator_numeric",
+      "candidate_patch_or_bad_fragment": {
+        "payload_candidate": {
+          "fit_like_inputs": {
+            "mapping_coverage_percent": 150
+          }
+        }
+      }
+    },
+    {
+      "case_id": "I-18",
+      "description": "Customer-facing / verdict KEY present in payload (customer_facing: true). PR#14b recursive forbidden-key scan rejects today via FORBIDDEN_PII_KEYS.",
+      "expected_reject_reason_family": "pr14b_validator_forbidden_keys",
+      "candidate_patch_or_bad_fragment": {
+        "payload_candidate": {
+          "fit_like_inputs": {
+            "customer_facing": true
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,69 @@
+{
+  "fixture_id": "buyerrecon-candidate-valid-v0.1",
+  "fixture_version": "v0.1",
+  "fixture_status": "valid_candidate",
+  "fixture_notes": "BuyerRecon-side, internal-only, non-authoritative. Mirrors the PR#14b bridge candidate contract verbatim. Surfaces and conversion_proximity keys are drawn from the v0.1 universal-surface taxonomy and the ALLOWED_CONVERSION_PROXIMITY_INDICATORS allowlist. AMS Go struct compatibility is unproven until a future AMS-side fixture test passes. See ./README.md for boundary, posture, and the precise PR#14b versus PR#14f scope split.",
+  "product_features_namespace_candidate": {
+    "bridge_contract_version": "productfeatures-namespace-bridge-contract-v0.1",
+    "bridge_payload_version": "productfeatures-namespace-candidate-v0.1",
+    "generated_from_observer_version": "product-context-timing-observer-v0.1",
+    "product_context_profile_version": "pcp-v0.1",
+    "universal_surface_taxonomy_version": "ust-v0.1",
+    "category_template_version": "generic_b2b-v0.1",
+    "buying_role_lens_version": "brl-v0.1-deferred",
+    "site_mapping_version": "site_map-v0.1-baseline",
+    "excluded_mapping_version": "excl_map-v0.1-baseline",
+    "timing_window_model_version": "tw-v0.1",
+    "freshness_decay_model_version": "fd-v0.1",
+    "source_evidence_versions": {
+      "poi_observation_versions": ["poi-observation-v0.1"],
+      "poi_input_versions": ["poi-core-input-v0.1"],
+      "poi_sequence_versions": ["poi-sequence-v0.1"]
+    },
+    "ams_product_layer_reference_version": "BUYERRECON_PRODUCT_LAYER_ALGORITHM_SPEC_v2_0",
+    "namespace_key_candidate": "buyerrecon",
+    "payload_candidate": {
+      "fit_like_inputs": {
+        "surface_distribution": {
+          "demo_request": 1,
+          "homepage": 1,
+          "pricing": 1,
+          "unknown": 1
+        },
+        "mapping_coverage_percent": 75,
+        "unknown_surface_count": 1,
+        "excluded_surface_count": 0,
+        "category_template": "generic_b2b",
+        "site_mapping_version": "site_map-v0.1-baseline"
+      },
+      "intent_like_inputs": {
+        "poi_count": 4,
+        "unique_poi_count": 4,
+        "pricing_signal_present": true,
+        "comparison_signal_present": false,
+        "conversion_proximity_indicators": {
+          "comparison_visited": 0,
+          "demo_request_visited": 1,
+          "pricing_visited": 1
+        }
+      },
+      "timing_like_inputs": {
+        "hours_since_last_qualifying_activity_or_null": 6.5,
+        "buyerrecon_actionability_band": "hot_now",
+        "timing_bucket": "<=24h",
+        "progression_depth": 3,
+        "freshness_decay_model_version": "fd-v0.1",
+        "sales_motion": "sales_led",
+        "primary_conversion_goal": "request_diagnostic"
+      }
+    },
+    "preview_metadata": {
+      "internal_only": true,
+      "non_authoritative": true,
+      "not_customer_facing": true,
+      "does_not_execute_ams_product_layer": true,
+      "does_not_create_product_decision": true,
+      "exact_ams_struct_compatibility_unproven_until_fixture": true
+    }
+  }
+}
