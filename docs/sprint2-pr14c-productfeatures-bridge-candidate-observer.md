@@ -187,6 +187,177 @@ Render production deploy remains **BLOCKED** by A0 P-4. PR#14c only proves stagi
 
 ---
 
+## Hetzner staging proof — PASS
+
+**Date.** 2026-05-15. **Server.** `/opt/buyerrecon-backend`.
+**Branch.** `sprint2-architecture-contracts-d4cc2bf`.
+**HEAD.** `4b3b1b64defc61f6ae95106b59d3834e32e93b39` (short `4b3b1b6`).
+**Final working tree.** Clean (after restoring server-side
+`package-lock.json` changes caused by `npm install`; see operator
+notes).
+
+### Static validation on server
+
+| Check | Result |
+| --- | --- |
+| `npx tsc --noEmit` | PASS |
+| `npm run check:scoring-contracts` | PASS |
+| `npm test -- tests/v1/product-features-bridge-candidate-observer.test.ts` | **30 / 30** PASS |
+| `npm test -- tests/v1/product-features-namespace-bridge.test.ts` | **116 / 116** PASS |
+| `npm test -- tests/v1/product-context-timing-observer.test.ts` | **82 / 82** PASS |
+| `npm test` (full suite) | **51 files / 2941 tests** PASS |
+| `git diff --check` | PASS |
+| No-DB smoke: `env -u DATABASE_URL npm run observe:product-features-bridge-candidate` | exit `2` with controlled `DATABASE_URL is required …` error; no full URL leak; no secret leak |
+
+### Staging environment
+
+| Var | Value |
+| --- | --- |
+| `OBS_WORKSPACE_ID` | `buyerrecon_staging_ws` |
+| `OBS_SITE_ID` | `buyerrecon_com` |
+| `OBS_WINDOW_HOURS` | `720` |
+| DB | `127.0.0.1:5432/buyerrecon_staging` |
+
+### Observer run
+
+**Command.**
+
+```bash
+OBS_WORKSPACE_ID=buyerrecon_staging_ws \
+OBS_SITE_ID=buyerrecon_com \
+OBS_WINDOW_HOURS=720 \
+  npm run observe:product-features-bridge-candidate
+```
+
+**Exit.** `0`.
+
+**Source readiness.** `fail_closed = no`.
+
+**Row counts scanned.**
+
+| Counter | Value |
+| --- | --- |
+| `poi_rows_scanned` | 8 |
+| `poi_sequence_rows_scanned` | 8 |
+| unique sessions seen | 8 |
+
+**PR#13b preview pipeline (inherited).**
+
+| Counter | Value |
+| --- | --- |
+| `preview_accepted_rows` | 2 |
+| `preview_rejected_rows` | 6 |
+| reject reason `stage0_excluded_session` | 6 |
+
+**Bridge candidate generation.**
+
+| Counter | Value |
+| --- | --- |
+| `candidate_inputs_seen` | 2 |
+| `candidates_built` | 2 |
+| `candidates_rejected` | 0 |
+| `namespace_key_candidate_distribution.buyerrecon` | 2 |
+| `bridge_contract_version_distribution.productfeatures-namespace-bridge-contract-v0.1` | 2 |
+| `bridge_payload_version_distribution.productfeatures-namespace-candidate-v0.1` | 2 |
+
+**Candidate feature summary.**
+
+| Field | Value |
+| --- | --- |
+| `surface_distribution_aggregate.homepage` | 2 |
+| `actionability_band_distribution.warm_recent` | 2 |
+| `conversion_proximity_indicator_distribution.pricing_visited` | 0 |
+| `conversion_proximity_indicator_distribution.comparison_visited` | 0 |
+| `conversion_proximity_indicator_distribution.demo_request_visited` | 0 |
+| `progression_depth_bucket.1` | 2 |
+| `mapping_coverage_percent` (min / max / avg) | 100.0% / 100.0% / 100.0% |
+| `hours_since_last_qualifying_activity` (min / max / avg) | 93.4 / 93.5 / 93.45 |
+
+**Sample candidates.** Internal-only sample candidates emitted.
+Each sample carried all six `true` flags
+(`internal_only`, `non_authoritative`, `not_customer_facing`,
+`does_not_execute_ams_product_layer`, `does_not_create_product_decision`,
+`exact_ams_struct_compatibility_unproven_until_fixture`).
+
+**Privacy posture confirmed in the rendered output.**
+
+- No full session IDs (truncated `prefix(8)…suffix(4)` only).
+- No raw URLs.
+- No query strings.
+- No email / person / company / enrichment fields.
+- No `FIT.*` / `INTENT.*` / `WINDOW.*` output.
+- No AMS Product Layer runtime execution.
+- No `ProductDecision`.
+- No customer output.
+
+### Pre / Post count proof (observer wrote nothing)
+
+| Table | Before | After |
+| --- | --- | --- |
+| `accepted_events` | 16 | 16 |
+| `ingest_requests` | 16 | 16 |
+| `rejected_events` | 0 | 0 |
+| `poi_observations_v0_1` | 8 | 8 |
+| `poi_sequence_observations_v0_1` | 8 | 8 |
+| `risk_observations_v0_1` | 2 | 2 |
+| `scoring_output_lane_a` | 0 | 0 |
+| `scoring_output_lane_b` | 0 | 0 |
+
+Every monitored table unchanged across the observer run.
+
+### Regression — adjacent observers still PASS
+
+**`npm run observe:product-context-timing` (PR#13b):**
+- `source_readiness.fail_closed = no`
+- `poi_rows_scanned = 8`
+- `poi_sequence_rows_scanned = 8`
+- `rows_accepted_into_preview = 2`
+- `rows_rejected_from_preview = 6`
+- reject reason `stage0_excluded_session = 6`
+- read-only proof block all true
+
+**`npm run observe:poi-table` (PR#11c):**
+- `rows_in_table = 8`
+- `total_anomalies = 0`
+
+**`npm run observe:poi-sequence-table` (PR#12d):**
+- `rows_in_table = 8`
+- `total_anomalies = 0`
+
+### Boundary confirmations
+
+- No Render.
+- No production DB.
+- No migration.
+- No `schema.sql` change.
+- No DB writes.
+- No `psql` mutation.
+- No collector change.
+- No Lane A / Lane B writes or output.
+- No Trust / Policy output.
+- No customer output.
+- No AMS Product Layer runtime execution.
+- No `ProductDecision`.
+- No durable bridge table.
+
+### Operator notes
+
+- One harmless shell typo prior to the observer run produced
+  `OBS_WINDOW_HO: command not found`. The shell rejected the bad
+  variable assignment before any node process started. No DB or code
+  was touched.
+- `npm install` on the server modified `package-lock.json` by
+  removing optional dependency libc metadata in the lockfile output.
+  That server-side `package-lock.json` change was inspected and
+  restored. Final server working tree was clean.
+
+### Result
+
+PR#14c **PASSES Hetzner staging proof** under all constraints.
+PR#14c is now ready for chain close.
+
+---
+
 ## §6 Rollback path
 
 Forward-only at the file level. To revert PR#14c:
