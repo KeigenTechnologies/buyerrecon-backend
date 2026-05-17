@@ -22,6 +22,7 @@
     "observe:poi-sequence-table": "tsx scripts/poi-sequence-table-observation-report.ts",
     "observe:product-context-timing": "tsx scripts/product-context-timing-observation-report.ts",
     "observe:product-features-bridge-candidate": "tsx scripts/product-features-bridge-candidate-observation-report.ts",
+    "observe:evidence-review-snapshot": "tsx scripts/evidence-review-snapshot-report.ts",
     "extract:session-features": "tsx scripts/extract-session-features.ts",
     "extract:behavioural-features": "tsx scripts/extract-behavioural-features.ts",
     "seed": "tsx scripts/seed-configs.ts",
