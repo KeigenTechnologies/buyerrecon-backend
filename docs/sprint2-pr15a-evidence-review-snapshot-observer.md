@@ -292,8 +292,127 @@ Exit codes:
 | `npm test` (full suite) | **53 files / 3089 tests** PASS |
 | No-DB smoke: `env -u DATABASE_URL npm run observe:evidence-review-snapshot` | exit `2`, controlled stderr `DATABASE_URL is required (host + db name will be printed; full URL is never printed)`, no full URL leaked |
 
-Hetzner staging proof is deferred to a separate proof PR (mirrors
-the PR#12d / PR#13b / PR#14c cadence).
+Hetzner staging proof is recorded below under "Hetzner staging
+proof — PASS" (PR#15b, docs-only proof closure, mirrors the
+PR#12d / PR#13b / PR#14c cadence).
+
+---
+
+## Hetzner staging proof — PASS
+
+**Date.** 2026-05-17. **Server.** `/opt/buyerrecon-backend`.
+**Branch.** `sprint2-architecture-contracts-d4cc2bf`.
+**HEAD.** `a3cd369` — `Sprint 2 PR#15a: add evidence review
+snapshot observer (#2)`.
+**Final server working tree.** Clean (after restoring server-side
+`package-lock.json` changes caused by `npm install`).
+
+### Staging environment
+
+| Field | Value |
+| --- | --- |
+| `OBS_WORKSPACE_ID` | `buyerrecon_staging_ws` |
+| `OBS_SITE_ID` | `buyerrecon_com` |
+| `OBS_WINDOW_HOURS` | `720` |
+| Database | Hetzner staging — `buyerrecon_staging` on `127.0.0.1` (masked at the observer boundary) |
+
+### Static validation on server
+
+| Check | Result |
+| --- | --- |
+| `npx tsc --noEmit` | PASS |
+| `npm test -- tests/v1/evidence-review-snapshot.test.ts` | **43 / 43** PASS (24 base groups + 8 Codex-blocker A–H + sanitizer unit + IPv4 / IPv6 / JWT / session-id / token-prefix coverage) |
+| `npm test` (full suite) | PASS |
+| `git diff --check` | clean |
+
+### Observer run
+
+```bash
+OBS_WORKSPACE_ID=buyerrecon_staging_ws \
+OBS_SITE_ID=buyerrecon_com \
+OBS_WINDOW_HOURS=720 \
+  npm run observe:evidence-review-snapshot
+```
+
+**Readiness bucket.** `READY_FOR_MANUAL_REVIEW`.
+
+### Source-availability counts (in 720h window, observer reads)
+
+| Table | Rows in window |
+| --- | --- |
+| `accepted_events` | 16 |
+| `rejected_events` | 0 |
+| `ingest_requests` | 16 |
+| `session_features` | 8 |
+| `session_behavioural_features_v0_2` | 16 |
+| `stage0_decisions` | 8 |
+| `risk_observations_v0_1` | 2 |
+| `poi_observations_v0_1` | 8 |
+| `poi_sequence_observations_v0_1` | 8 |
+
+### Lane A candidate observations (evidence-review inputs, NOT scores)
+
+| Field | Value |
+| --- | --- |
+| `rejected_event_count` | 0 |
+| `stage0_excluded_count` | 6 |
+| `risk_observation_rows_with_evidence` | 2 |
+
+### Lane B internal observations (internal learning only, NOT customer-facing)
+
+| Field | Value |
+| --- | --- |
+| `poi_observation_rows` | 8 |
+| `poi_sequence_observation_rows` | 8 |
+| `session_features_coverage_rows` | 8 |
+| `session_behavioural_features_coverage_rows` | 16 |
+| `stage0_eligible_count` | 2 |
+
+### Evidence gaps surfaced
+
+- `missing_productfeatures_observations`: **yes** (expected — the
+  PR#14c ProductFeatures observer is CLI-only and writes no
+  durable table; re-run that observer if product-context coverage
+  is required for the engagement).
+- All other gap booleans: false for this window.
+
+### Forbidden-output scans
+
+| Scan | Result |
+| --- | --- |
+| `grep -Ei "token_hash\|ip_hash\|user_agent\|raw_payload\|canonical_jsonb\|postgres://\|authorization\|bearer\|cookie"` | **PASS** (zero matches) |
+| `grep -E "https?://[^ ]*\?"` (URLs with query strings) | **PASS** (zero matches) |
+| `grep -E "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"` (email-shape) | **PASS** (zero matches) |
+
+### Pre / Post DB counts (observer wrote nothing)
+
+| Table | Before | After |
+| --- | --- | --- |
+| `accepted_events` | 16 | 16 |
+| `rejected_events` | 0 | 0 |
+| `ingest_requests` | 16 | 16 |
+| `session_features` | 8 | 8 |
+| `session_behavioural_features_v0_2` | 16 | 16 |
+| `stage0_decisions` | 8 | 8 |
+| `risk_observations_v0_1` | 2 | 2 |
+
+Every monitored table unchanged across the observer run.
+
+### Operator notes
+
+- `npm install` on the server modified `package-lock.json` by
+  removing optional-dependency metadata. The server-side
+  `package-lock.json` change was inspected and restored. Final
+  server working tree clean.
+
+### Result
+
+PR#15a **PASSES Hetzner staging proof** under all constraints:
+read-only, no DB writes, all monitored tables Pre = Post, no
+forbidden tokens / URLs / emails surfaced, readiness =
+`READY_FOR_MANUAL_REVIEW`. The observer is ready to support
+Helen's first Phase-1 £1,250 BuyerRecon Evidence Review
+engagement.
 
 ---
 
