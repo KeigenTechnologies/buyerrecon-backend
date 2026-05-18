@@ -1,6 +1,6 @@
 # BuyerRecon Sprint 2 PR#17j — Production Collector Deployment / Operator Proof Runbook
 
-Status: **runbook authoring is docs-only AND production collector service start is DEFERRED**. Authoring of PR#17j performs no execution. **Even after** Codex PASS, merge, and a Helen final GO, the production collector **service start is BLOCKED** until the `initDb()` startup-compatibility risk identified in §1.1 / §9.1 is closed by a separately approved PR or by a separately approved operator preflight. Until that closure, Helen's final GO may authorise **deployment-prerequisite preparation and preflight planning only** — not a production service start.
+Status: **runbook authoring was docs-only; the §1.1 / §9.1 `initDb()` startup-compatibility BLOCKER is CLOSED by PR#17k**. Sprint 2 PR#17k merged a small code change (`shouldSkipDbInit()` helper in `src/db/client.ts`, guarded `initDb()` call in `src/server.ts`) plus pure unit + source-shape tests. The production collector service start is therefore **no longer deferred by §1.1 / §9.1** — it may proceed under a Helen final GO **provided the production service env sets the exact literal `SKIP_DB_INIT=true`** so runtime schema bootstrap is skipped and `buyerrecon_prod_collector_app` is not asked to run DDL. Runtime role privilege broadening remains explicitly prohibited.
 
 Base branch: `sprint2-architecture-contracts-d4cc2bf` (latest known: `dd42862` — PR#17i merged, "document schema baseline policy").
 
@@ -19,9 +19,11 @@ The runbook covers two kinds of work, with a hard boundary between them:
 
 PR#17j also covers what the eventual successful deployment will need to verify when it does happen: service health (`GET /health`), log / secret scan, DB-target verification without DSN disclosure, zero-traffic preservation, rollback. These are documented as future verification posture, not as steps the operator may take under PR#17j alone.
 
-### 1.1 Hard pre-execution gate — production collector service start is BLOCKED
+### 1.1 Hard pre-execution gate — CLOSED by PR#17k
 
-**Production collector service start is not approved by PR#17j until the `initDb()` startup-compatibility risk is closed.**
+**Status: CLOSED.** The Sprint 2 PR#17k merge added `shouldSkipDbInit()` to `src/db/client.ts` and guarded the `initDb()` call in `src/server.ts:start()`; when the production service env sets the exact literal `SKIP_DB_INIT=true`, runtime schema bootstrap is skipped and `buyerrecon_prod_collector_app` is never asked to run DDL. The historical gate text is preserved below for context. The successor deployment PR (PR#17j-deploy / PR#17l) must confirm `SKIP_DB_INIT=true` in the production env as part of its proof; until then, production collector service start remains procedurally gated by a separate Helen final-GO message scoped to deployment.
+
+**(Historical — pre-PR#17k.) Production collector service start is not approved by PR#17j until the `initDb()` startup-compatibility risk is closed.**
 
 The risk in precise terms:
 
@@ -32,13 +34,13 @@ The risk in precise terms:
 - **Idempotent DDL such as `CREATE EXTENSION IF NOT EXISTS`, `CREATE TABLE IF NOT EXISTS`, and `CREATE INDEX IF NOT EXISTS` may still require ownership / `CREATE` schema privileges depending on the deployed Postgres version and the existing object ownership.** Even when the target object already exists, some PostgreSQL paths still perform privilege checks; behaviour is not guaranteed to be a clean no-op under a least-privilege non-DDL role.
 - **PR#17j must therefore not "start the service to see what happens".** A startup failure on `initDb()` against `buyerrecon_prod_collector_app` is not an ordinary schema-drift signal once the operator has tried to start production; it conflates schema-state and privilege-state in a way that can mask real issues, and an unsuccessful boot leaks restart noise and operator-fix temptation into the production change window.
 
-Therefore PR#17j **defers production service start** until **one** of the following resolution paths (see §24) closes the risk:
+**Closure path taken: Path A (code change), shipped in PR#17k.**
 
-- **Path A — Code/runbook PR that gates or bypasses runtime `initDb()` for production** (for example, a code change that makes `initDb()` a no-op when an env flag like `SKIP_INIT_DB=1` is set, or that runs schema bootstrap only when the connected role is a migrator). Approved separately, with its own review.
-- **Path B — Operator preflight that proves `initDb()` startup succeeds under `buyerrecon_prod_collector_app` without new privileges and without writes**, performed outside production traffic and recorded in its own proof PR. The preflight must demonstrate clean idempotent execution of every DDL statement in `src/db/schema.sql` under exactly the deployed runtime role with the deployed grants.
-- **Path C — Deployment strategy that starts the service using a safe startup path that does not execute schema bootstrap under the runtime role** (for example, ahead-of-time schema bootstrap by the migrator role, with the runtime service started against a build whose `initDb()` is not invoked).
+- **Path A — Code/runbook PR that gates or bypasses runtime `initDb()` for production.** **TAKEN by PR#17k.** PR#17k added `shouldSkipDbInit(env = process.env)` to `src/db/client.ts` (strict equality with the literal `"true"` — not broad truthiness) and guarded the `initDb()` call inside `src/server.ts:start()`. When `SKIP_DB_INIT=true` the service emits a single safe log line (`Database schema bootstrap skipped by SKIP_DB_INIT=true`) and skips `pool.query(schema)`; otherwise default behavior is unchanged.
+- **Path B — Operator preflight that proves `initDb()` startup succeeds under `buyerrecon_prod_collector_app` without new privileges and without writes** — **not needed**; Path A closes the risk by avoiding the DDL call at runtime entirely. Path B remains available as a future option if any future runtime change reintroduces a bootstrap path.
+- **Path C — Deployment strategy that starts the service using a safe startup path that does not execute schema bootstrap under the runtime role** — **complementary to Path A**; the production deployment will use `SKIP_DB_INIT=true` so the runtime never runs schema bootstrap, and the schema lifecycle remains operator-managed (`src/db/schema.sql` baseline + `migrations/002_*.sql` through `016_*.sql`).
 
-Until Path A, B, or C is closed by a separately approved PR or preflight, **the only execution PR#17j authorises is deployment-prerequisite preparation and preflight planning** (§10 phase 0).
+PR#17j Phase 1 service start (§10) is therefore **no longer §1.1-blocked**. It remains procedurally gated by the standard PR#17j-deploy / PR#17l Helen final-GO message (per §2) which must explicitly confirm `SKIP_DB_INIT=true` is set in the production env.
 
 PR#17j is also explicit about what it does **not** do, ever, regardless of merge or GO state:
 
@@ -75,15 +77,15 @@ Governing rules:
 - **Helen's final GO must explicitly state target and allowed scope.** A general "go ahead" or "looks good" is **not** a final GO; ambiguous wording is a stop-the-line condition (§22).
 - **If the GO is ambiguous, do not execute.** Ask for an explicit GO message in the expected shape below.
 
-**Expected Helen final-GO wording while the §1.1 `initDb()` gate remains OPEN (verbatim, or unambiguous equivalent):**
+**The §1.1 `initDb()` gate is CLOSED by PR#17k.** The current active Helen final-GO wording for the deployment PR (PR#17j-deploy / PR#17l) is therefore:
+
+> "I approve executing PR#17j operator runbook now. Scope: production collector deployment / health / logging / DB-target verification only. The production service env must set `SKIP_DB_INIT=true` (the exact literal). No ThinLayer cutover. No DNS change. No Track A. No Playwright. No live production traffic generation. No customer-facing output."
+
+**(Historical, pre-PR#17k.) While the §1.1 gate was OPEN, the only GO wording allowed was scoped to deployment-prerequisite preparation and preflight planning:**
 
 > "I approve executing PR#17j operator runbook now. Scope: deployment-prerequisite preparation and `initDb()` startup-compatibility preflight planning only. No production collector service start. No ThinLayer cutover. No DNS change. No Track A. No Playwright. No live production traffic generation. No customer-facing output."
 
-**Expected Helen final-GO wording once the §1.1 `initDb()` gate has been CLOSED by a separately approved Path A / B / C (per §24):**
-
-> "I approve executing PR#17j operator runbook now. Scope: production collector deployment / health / logging / DB-target verification only. No ThinLayer cutover. No DNS change. No Track A. No Playwright. No live production traffic generation. No customer-facing output."
-
-Until the §1.1 gate is closed by a separately approved PR or preflight, the second wording above must **not** be issued; even if issued, the operator must stop and request the gate-aware first wording. The operator may not broaden scope beyond what the final-GO message authorises.
+The operator may not broaden scope beyond what the final-GO message authorises. If the recorded GO message diverges from the active wording above (for example: it adds "and cut `buyerrecon.com` over", or omits the `SKIP_DB_INIT=true` requirement), the operator must stop and request an explicit, scope-correct GO message.
 
 If the recorded GO message diverges from one of the two scopes above (for example: it adds "and cut `buyerrecon.com` over"), the operator must stop and request an explicit, scope-correct GO message.
 
@@ -259,36 +261,38 @@ PR#17j authoring inspected the repo to pin a deploy primitive without inventing 
   - On success: `createApp({ pool, v1Loaded, allowed_origins })` is constructed and bound to `PORT`.
   - On failure: `start().catch` logs the error and `process.exit(1)`. Logs must not include raw env values.
 
-### 9.1 `initDb()` startup-compatibility risk (BLOCKER for production service start)
+### 9.1 `initDb()` startup-compatibility risk — CLOSED by PR#17k
 
-This sub-section formally records the risk that gates production service start under PR#17j (and refers back to §1.1):
+**Status: CLOSED.** PR#17k shipped the Path A code change (see §1.1). The historical risk description below is retained for context. Production deployment must set `SKIP_DB_INIT=true` (the exact literal) in `<PRODUCTION_ENV_FILE>` so the runtime never runs schema bootstrap; the production schema lifecycle remains operator-managed (PR#17f baseline + `migrations/002–016` per PR#17g / PR#17h; PR#17i schema policy).
+
+**(Historical — pre-PR#17k.)** This sub-section formally records the risk that gates production service start under PR#17j (and refers back to §1.1):
 
 - `src/server.ts:25-29` calls `await initDb()` before `app.listen(PORT, …)` runs.
 - `initDb()` (defined in `src/db/client.ts:11-15`) reads `join(__dirname, 'schema.sql')` and sends the **entire file** through `pool.query(schema)`.
 - `src/db/schema.sql` (canonical per PR#17i) contains DDL — `CREATE EXTENSION IF NOT EXISTS pgcrypto`, multiple `CREATE TABLE IF NOT EXISTS …`, multiple `CREATE INDEX IF NOT EXISTS …`, and other schema statements.
 - Production runtime role: `buyerrecon_prod_collector_app`. Per PR#17h §13: non-superuser, no `createdb`, no `createrole`, no role memberships; per PR#17f §10 / §11 grant boundaries: runtime roles do **not** receive DDL.
 - **Even `IF NOT EXISTS` DDL is not guaranteed to be a clean no-op under a least-privilege non-DDL role.** Depending on Postgres version, schema ownership, and the precise grant set, some `IF NOT EXISTS` paths still perform privilege checks (for example, `CREATE EXTENSION IF NOT EXISTS` may require superuser or specific extension-grant policy; `CREATE TABLE IF NOT EXISTS` may interact with default privileges or table-ownership ACLs). Behaviour under `buyerrecon_prod_collector_app` is **not proven** and must not be assumed.
-- Therefore the BLOCKER (per §1.1):
+- The pre-PR#17k posture (still in force as policy, even now that the gate is closed):
   - PR#17j does **not** approve broadening `buyerrecon_prod_collector_app` privileges (no DDL grants, no membership in a DDL group role).
   - PR#17j does **not** approve giving DDL grants to the runtime collector role under any circumstances.
-  - PR#17j does **not** approve service start if `initDb()` still runs under `buyerrecon_prod_collector_app` and compatibility has not been proven.
-  - PR#17j does **not** treat an `initDb()` failure as ordinary "schema drift" — the failure mode here mixes schema state with role-privilege state, and "drift" framing would invite the wrong fix (broadening the role).
+  - PR#17j does **not** approve service start if the production service env does **not** set `SKIP_DB_INIT=true` (per the §1.1 closure and the active §2 GO wording).
+  - PR#17j does **not** treat an `initDb()` failure as ordinary "schema drift" — the failure mode mixes schema state with role-privilege state, and "drift" framing would invite the wrong fix (broadening the role).
   - PR#17j does **not** authorise "start the service to see what happens".
 
-Resolution paths (see §24 for the corresponding next-PR slots):
+Resolution paths (recorded for context; PR#17k took Path A — see §24):
 
-- **Path A — Code/runbook PR that gates or bypasses runtime `initDb()` for production.** Examples: an env-flag-driven skip (`SKIP_INIT_DB`), or making `initDb()` conditional on connected role, or relocating schema bootstrap to an explicit migrator-only entrypoint. Requires its own review and merge.
-- **Path B — Operator preflight that proves `initDb()` startup succeeds under `buyerrecon_prod_collector_app` without new privileges and without writes.** Performed outside production traffic; recorded in its own proof PR. Must exercise every DDL statement in `src/db/schema.sql` as the deployed runtime role with the deployed grants, and demonstrate clean idempotent execution.
-- **Path C — Deployment strategy that starts the service using a safe startup path that does not execute schema bootstrap under the runtime role.** Example: schema bootstrap is performed ahead of time by the migrator role; the runtime service is started against a build whose `initDb()` is not invoked (either via flag or via a startup wrapper).
+- **Path A — Code/runbook PR that gates or bypasses runtime `initDb()` for production.** **TAKEN by PR#17k**: `SKIP_DB_INIT=true` skips runtime schema bootstrap; the runtime never runs schema DDL under `buyerrecon_prod_collector_app`.
+- **Path B — Operator preflight that proves `initDb()` startup succeeds under `buyerrecon_prod_collector_app` without new privileges and without writes.** Not needed in light of Path A; remains available if a future change reintroduces a bootstrap path.
+- **Path C — Deployment strategy that starts the service using a safe startup path that does not execute schema bootstrap under the runtime role.** Complementary to Path A; the production deployment will set `SKIP_DB_INIT=true` so the runtime never bootstraps schema, and the schema lifecycle stays operator-managed.
 
-The §10 service deployment phase, the §11 health check, the §12 DB target verification (insofar as it depends on a running service), the §13 log/secret scan (insofar as it depends on a running service), and the §14 zero-traffic post-deployment check all remain **DEFERRED** until Path A, B, or C is closed.
+The §10 service deployment phase, the §11 health check, the §12 DB target verification (running-service variants), the §13 log/secret scan, and the §14 zero-traffic post-deployment check are **no longer §1.1-deferred**. They remain procedurally gated by the active §2 GO wording for the deployment PR (PR#17j-deploy / PR#17l), which must include the `SKIP_DB_INIT=true` confirmation.
 
 ### Chosen strategy (template only — operator confirms at execution time)
 
-The runbook does **not** pin one strategy; the operator uses whichever of the two existing primitives is consistent with the production host's existing practice. **Until §1.1 / §9.1 is closed, neither strategy may be used to start the production service.** Both strategies remain available to support deployment-prerequisite preparation (e.g. confirming the build path, validating the env-file shape) without process start.
+The runbook does **not** pin one strategy; the operator uses whichever of the two existing primitives is consistent with the production host's existing practice. **The §1.1 / §9.1 BLOCKER has been closed by PR#17k**, so either strategy may be used for the production service start under the active §2 GO wording, provided `<PRODUCTION_ENV_FILE>` includes `SKIP_DB_INIT=true`.
 
-- **Strategy A — Node + process manager.** Operator: builds (`npm ci --omit=dev` + `npm run build`) on the build host (or on production host if that is the established practice), publishes the build artifact to `<PRODUCTION_APP_DIR>/releases/<release-id>/`, flips a `current` symlink, restarts `<PRODUCTION_SERVICE_NAME>` via `<PRODUCTION_PROCESS_MANAGER>` so it runs `node dist/server.js` with the production env file `<PRODUCTION_ENV_FILE>`. **Service start step is BLOCKED under PR#17j until §1.1 / §9.1 closure.**
-- **Strategy B — Docker image.** Operator: builds the production image via the repo's `Dockerfile`, pushes to the approved registry (no public registry that would expose images), pulls on the production host, runs as a non-root user with `<PRODUCTION_ENV_FILE>` mounted or `--env-file` referenced. **`docker run` against the production data plane is BLOCKED under PR#17j until §1.1 / §9.1 closure.**
+- **Strategy A — Node + process manager.** Operator: builds (`npm ci --omit=dev` + `npm run build`) on the build host (or on production host if that is the established practice), publishes the build artifact to `<PRODUCTION_APP_DIR>/releases/<release-id>/`, flips a `current` symlink, restarts `<PRODUCTION_SERVICE_NAME>` via `<PRODUCTION_PROCESS_MANAGER>` so it runs `node dist/server.js` with the production env file `<PRODUCTION_ENV_FILE>` (which **must** include `SKIP_DB_INIT=true`).
+- **Strategy B — Docker image.** Operator: builds the production image via the repo's `Dockerfile`, pushes to the approved registry (no public registry that would expose images), pulls on the production host, runs as a non-root user with `<PRODUCTION_ENV_FILE>` mounted or `--env-file` referenced. `<PRODUCTION_ENV_FILE>` **must** include `SKIP_DB_INIT=true`.
 
 Both strategies must satisfy:
 
@@ -296,7 +300,7 @@ Both strategies must satisfy:
 - **build does not embed secrets** (env is read at process startup, not baked into the image / artifact),
 - **no real DATABASE_URL or pepper value lands in any build artifact or build log**,
 - **`dist/db/schema.sql` is always the build's freshly-copied artifact from `src/db/schema.sql`** (per PR#17i; do not commit a `dist/db/schema.sql`; do not edit it in place),
-- **neither strategy starts the production service while §1.1 / §9.1 is OPEN.**
+- **`SKIP_DB_INIT=true` (exact literal) is present in `<PRODUCTION_ENV_FILE>`** so runtime schema bootstrap is skipped and `buyerrecon_prod_collector_app` is never asked to run DDL.
 
 ---
 
@@ -320,23 +324,25 @@ The §1.1 / §9.1 BLOCKER does **not** prevent the operator from completing the 
 8. **Pre-stage rollback levers** (per §16) so they are ready for the day Phase 1 is unblocked.
 9. **Outline the `initDb()` startup-compatibility preflight plan** (Path B candidate): which non-production target will host the preflight, which exact role and grant set will be used, which DDL statements will be exercised, what categorical PASS / FAIL output is expected, and how the preflight will avoid any write to `accepted_events` / `rejected_events` / `ingest_requests` / `scoring_output_lane_a` / `scoring_output_lane_b`. The plan is recorded in the proof report; the preflight itself is **not** executed under PR#17j (it requires its own approved successor PR — see §24).
 
-### Phase 1 — Production collector service start (BLOCKED under PR#17j)
+### Phase 1 — Production collector service start (§1.1 / §9.1 BLOCKER closed by PR#17k)
 
-> **DEFERRED. RUN ONLY AFTER (a) merge + Helen final GO, AND (b) the §1.1 / §9.1 `initDb()` startup-compatibility BLOCKER is closed by a separately approved Path A / B / C PR or preflight.**
+> **RUN ONLY AFTER (a) merge + Helen final GO (active §2 wording), AND (b) `<PRODUCTION_ENV_FILE>` confirmed to set `SKIP_DB_INIT=true` (exact literal).**
 
-While the BLOCKER is OPEN, the operator may not perform any of the steps below under PR#17j. They are documented here so the eventual deployment PR (the successor that runs after §1.1 closure) can reference exactly the verification posture this runbook expects.
+PR#17k closed the §1.1 / §9.1 BLOCKER (Path A). Phase 1 steps below may now run under the active §2 GO wording. The operator must confirm `SKIP_DB_INIT=true` before any service start; if the env value is missing or different from the exact literal `"true"` (e.g. `"false"`, `"1"`, `"TRUE"`, empty), do not start the service — fix the env first.
 
-1. **Start or restart the production collector service** via the chosen process manager — **BLOCKED**.
-2. **Verify service process is running** (categorical PASS / FAIL: process present, expected user, expected start time) — **BLOCKED**.
-3. **Verify logs have no secrets** (§13) — **BLOCKED**.
-4. **Verify health endpoint (§11)** — **BLOCKED**.
-5. **Verify service DB target is `buyerrecon_production` without printing the DB URL (§12)** — **BLOCKED** (insofar as it depends on a running service; the parallel one-shot DB introspection variant of §12 remains available under Phase 0 because it does not require the service to be running).
+1. **Confirm `<PRODUCTION_ENV_FILE>` includes `SKIP_DB_INIT=true`** (exact literal). Categorical PASS / FAIL recorded; value never echoed in shareable artefacts.
+2. **Start or restart the production collector service** via the chosen process manager.
+3. **Verify the safe "schema bootstrap skipped" log line** is present at startup: `Database schema bootstrap skipped by SKIP_DB_INIT=true` (or an equivalent emitted by PR#17k's guard). Categorical PASS / FAIL; the line is the only env-derived output expected at this step and contains no DSN / token / pepper / private IP.
+4. **Verify service process is running** (categorical PASS / FAIL: process present, expected user, expected start time).
+5. **Verify logs have no secrets** (§13).
+6. **Verify health endpoint (§11).**
+7. **Verify service DB target is `buyerrecon_production` without printing the DB URL (§12)** — the parallel one-shot introspection variant remains valid; running-service introspection becomes available now that the service is up.
 
-The operator does not execute any step of Phase 1 under PR#17j. If the operator finds themselves about to run a Phase 1 step under PR#17j scope, that is a §22 stop-the-line.
+If a step fails, follow §16 / §17. **A failure of step 1 (missing or wrong `SKIP_DB_INIT`) is a §22 stop-the-line — do not start the service to "see what happens", and do not broaden `buyerrecon_prod_collector_app` grants to compensate.**
 
-### Command templates (placeholders only; **the `restart`/`docker run` steps below are Phase 1 — BLOCKED under PR#17j until §1.1 / §9.1 closure**)
+### Command templates (placeholders only; **the `restart` / `docker run` steps below are Phase 1 — allowed under the active §2 GO wording for the deployment PR, provided `SKIP_DB_INIT=true` is in `<PRODUCTION_ENV_FILE>`**)
 
-The build / env / artefact-staging parts of these templates are Phase 0 (allowed under PR#17j with a gate-aware GO per §2). The service-start parts are Phase 1 (DEFERRED).
+The build / env / artefact-staging parts of these templates are Phase 0 (preparation). The service-start parts are Phase 1 (now enabled post-PR#17k closure).
 
 Strategy A (Node + process manager) skeleton:
 
@@ -617,22 +623,24 @@ The proof report is committed as `PR#17j-proof` (or `PR#17k`) per §24.
 
 ## 21. Success criteria
 
-PR#17j's success criteria are scoped to the BLOCKED posture described in §1.1 / §9.1. While the §1.1 / §9.1 BLOCKER is OPEN, PR#17j is considered successful if **all** of the following hold:
+PR#17j's success criteria reflect that the §1.1 / §9.1 BLOCKER has been **closed by PR#17k**. The successor deployment PR (PR#17j-deploy / PR#17l) executes Phase 1 of §10 under the active §2 GO wording. PR#17j-deploy is considered successful if **all** of the following hold:
 
-- **The runbook captures deployment prerequisites** (PR#17h state re-affirmed per §8; build / package strategy chosen categorically per §9; env-file shape and vault sourcing posture per §7; rollback levers pre-staged per §16).
-- **The `initDb()` startup-compatibility risk is explicitly identified** (per §1.1 and §9.1) and acknowledged in any proof artefact PR#17j produces.
-- **Production collector service start is deferred** (Phase 1 in §10 is not executed) until §1.1 / §9.1 is closed by a separately approved Path A / B / C PR or operator preflight.
+- **`SKIP_DB_INIT=true` (exact literal) is present in `<PRODUCTION_ENV_FILE>`** (per §1.1 closure / PR#17k). Confirmed before any service start.
+- **The runtime does not run `initDb()` at startup** — verified categorically by the presence of the PR#17k safe log line `Database schema bootstrap skipped by SKIP_DB_INIT=true` (or by the absence of any schema-bootstrap DB activity from the runtime role).
+- **Production collector service is running** (`<PRODUCTION_SERVICE_NAME>` is up, non-root user, restart-on-failure configured per host practice).
+- **Health endpoint passes** (`GET /health` returns the expected shape per §11).
+- **Service target is `buyerrecon_production`** (per §12 verification, without DSN disclosure).
+- **Service uses `buyerrecon_prod_collector_app`** (per §12 verification, without password disclosure).
 - **No runtime role privilege broadening** (no DDL grant, no `createdb` / `createrole` / superuser, no DDL group membership for `buyerrecon_prod_collector_app`).
-- **No deployment execution approved yet** — Phase 1 service start remains a future activity governed by a successor PR.
-- **Zero-traffic counts preserved** (per §14 — production rows on `ingest_requests` / `accepted_events` / `rejected_events` / `scoring_output_lane_a` / `scoring_output_lane_b` remain 0; `site_write_tokens` remains 5; all `last_used_at` remain NULL).
-- **No Lane A/B writes** (per PR#17g; row counts remain 0).
+- **Logs contain no secrets / tokens / hashes / prefixes / peppers / DSNs / private IPs** (per §13).
+- **No staging DB target.**
+- **Zero-traffic counts preserved** (per §14) unless a separately approved smoke is in Helen's final-GO scope.
+- **No Lane A/B writes** (per PR#17g).
 - **No customer-facing output.**
-- **Rollback path documented and confirmed available** for both Phase 0 (env / artefact rollback) and Phase 1 (service stop / config restore — pre-staged but not exercised under PR#17j) per §16.
-- **Proof report created** (per §18) with the BLOCKED posture, the chosen Path A / B / C candidate for closure, and PR#17j's Phase 0 outcomes only.
+- **Rollback path documented and confirmed available** for both Phase 0 (env / artefact rollback) and Phase 1 (service stop / config restore) per §16.
+- **Proof report created** (per §18) covering the closed §1.1 / §9.1 gate, the `SKIP_DB_INIT=true` confirmation, and the running-service verification results.
 
-**After the §1.1 / §9.1 BLOCKER is closed by a separately approved Path A / B / C PR (per §24), the *successor* deployment PR — not PR#17j itself — will additionally verify:** production collector service is running (non-root, restart-on-failure); `GET /health` returns the expected shape (§11); service target is `buyerrecon_production` via running-service introspection (§12 Phase 1 variants); logs contain no secrets / tokens / hashes / prefixes / peppers / DSNs / private IPs (§13); no staging DB target; zero-traffic counts preserved post-start; no Lane A/B writes; no customer-facing output; rollback path exercised in test if appropriate; proof closure for the deployment.
-
-If any item in the BLOCKED-posture criteria above is not satisfied, PR#17j's execution is not a success; the operator either follows §16 / §17 or escalates per Helen's direction.
+If any item is not satisfied, PR#17j-deploy is not a success; the operator either follows §16 / §17 or escalates per Helen's direction.
 
 ---
 
@@ -652,10 +660,10 @@ Stop and re-plan if any of the following appears at any point during authoring, 
 - **`accepted_events` / `rejected_events` / `ingest_requests` row counts change unexpectedly** during default-scope execution.
 - **Lane A/B table receives rows.**
 - **Customer-facing output appears.**
-- **Attempted Phase 1 production service start while the §1.1 / §9.1 BLOCKER is OPEN** (per §10 Phase 1: BLOCKED under PR#17j).
-- **`initDb()` failure on a future Phase 1 service start** (per §1.1 / §9.1 / §17). Treat as conflated schema-and-privilege incident; **do not broaden role grants**; route the fix through a Path A / B / C closure PR.
+- **Attempted Phase 1 production service start without `SKIP_DB_INIT=true` in `<PRODUCTION_ENV_FILE>`** (the §1.1 closure relies on the env flag being set; missing or non-`"true"` value re-introduces the §1.1 risk).
+- **`initDb()` execution observed on a Phase 1 service start** despite `SKIP_DB_INIT=true` being expected (regression of the PR#17k guard). Treat as conflated schema-and-privilege incident; **do not broaden role grants**; investigate the guard regression.
 - **Proposed broadening of `buyerrecon_prod_collector_app` privileges** (DDL grant, `createdb`, `createrole`, superuser, DDL group membership) as a workaround for any operational issue.
-- **`SKIP_INIT_DB` / Path A / Path C wiring is proposed inline as part of PR#17j** without a separate approved code PR. PR#17j is docs-only and does not ship code changes; any Path A / C closure must come via its own approved PR.
+- **Proposed change to the PR#17k guard semantics** (e.g. broad truthiness, accepting `SKIP_DB_INIT=1`, accepting `TRUE`/`True`/`yes`) outside of a separately approved PR — the guard is strict-equality with the literal `"true"` by design.
 - **Operator uncertainty exists** about whether the runbook is proceeding sanely.
 
 Stop-the-line means: do not continue, follow §16 / §17, and request a follow-up decision from Helen before any further action.
@@ -667,11 +675,11 @@ Stop-the-line means: do not continue, follow §16 / §17, and request a follow-u
 PR#17j explicitly does **not** approve any of the following:
 
 - execution of any runbook step **before** gates 1–4 in §2 are satisfied (draft PR → Codex review PASS → merged → Helen final GO recorded),
-- **production collector service start (Phase 1 in §10) while the §1.1 / §9.1 `initDb()` startup-compatibility BLOCKER is OPEN**,
+- **production collector service start (Phase 1 in §10) without `SKIP_DB_INIT=true` in `<PRODUCTION_ENV_FILE>`** (the §1.1 / §9.1 BLOCKER is closed by PR#17k *conditional on* this env value being set),
 - **broadening `buyerrecon_prod_collector_app` privileges** in any form (DDL grant, `createdb`, `createrole`, superuser, DDL group membership) — neither as a fix for an `initDb()` failure nor for any other reason,
 - **granting DDL to the runtime collector role** under any circumstances,
-- **starting the service "to see what happens"** under PR#17j scope (the only authorised paths to a Phase 1 start are via §1.1 Path A / B / C closure PRs),
-- **treating an `initDb()` failure as ordinary schema drift** after attempting a Phase 1 start; the response is rollback + Path A / B / C closure, not privilege broadening,
+- **starting the service "to see what happens"** without the `SKIP_DB_INIT=true` confirmation (the PR#17k guard is the only authorised path to a Phase 1 start),
+- **treating an `initDb()` failure as ordinary schema drift** after attempting a Phase 1 start; the response is rollback and re-check of `SKIP_DB_INIT` / the PR#17k guard regression, not privilege broadening,
 - ThinLayer `endpointUrl` cutover on any live site,
 - any DNS change,
 - `buyerrecon.com` canary cutover,
@@ -700,13 +708,8 @@ These remain for explicitly-scoped successor PRs.
 
 PR#17j recommends the following successor PRs, each tightly scoped:
 
-- **PR#17j-1 (or PR#17k) — Production `initDb()` startup-compatibility closure** (the §1.1 / §9.1 BLOCKER). This PR must close the BLOCKER via **one** of the §1.1 paths:
-  - **Path A** — a small code change that gates or bypasses runtime `initDb()` for production (e.g. `SKIP_INIT_DB` env flag, role-aware bootstrap, or a separate migrator-only entrypoint). Requires its own review.
-  - **Path B** — an operator preflight proof that `initDb()` startup succeeds under `buyerrecon_prod_collector_app` without new privileges and without writes, performed outside production and recorded in its own proof PR.
-  - **Path C** — a deployment strategy / runbook change that starts the production service via a safe startup path that does not execute schema bootstrap under the runtime role.
-  Until this PR (or an equivalent) merges, PR#17j Phase 1 (production service start) remains DEFERRED.
-- **PR#17j-deploy (or PR#17l) — Actual production collector deployment and operator proof.** Only after PR#17j-1 / PR#17k closes the §1.1 BLOCKER. Executes Phase 1 of §10 and records the running-service variants of §11, §12, §13, §14. Only if Helen explicitly approves with the corresponding final-GO message (the second wording in §2).
-- **PR#17j-proof (or another suitable slot) — PR#17j Phase 0 proof closure** if Helen authorises Phase 0 (preparation / preflight planning only) execution before §1.1 closure. Records the §18 fields scoped to BLOCKED posture.
+- **PR#17k — Production `initDb()` startup-compatibility closure** (the §1.1 / §9.1 BLOCKER). **MERGED.** Added `shouldSkipDbInit()` helper to `src/db/client.ts` (strict equality with literal `"true"`); guarded the `initDb()` call in `src/server.ts:start()`; added pure unit + source-shape tests in `tests/db-client-skip-init.test.ts`; created `docs/sprint2-pr17k-initdb-startup-compatibility.md`. **Path A taken.**
+- **PR#17j-deploy (or PR#17l) — Actual production collector deployment and operator proof.** Now unblocked by PR#17k closure. Executes Phase 1 of §10 and records the running-service variants of §11, §12, §13, §14, including the `SKIP_DB_INIT=true` env confirmation and the safe "schema bootstrap skipped" log line. Only if Helen explicitly approves with the active §2 final-GO wording.
 - **Future `buyerrecon.com` canary endpoint cutover execution** following PR#17d's runbook — only after Phase 1 is successfully completed in PR#17j-deploy, and only if Helen explicitly approves with the corresponding final-GO message.
 - **Future Track A `B_analytics_only` execution proof** following PR#17e's plan — only if Helen explicitly approves with the corresponding final-GO message.
 - **Future low-dwell / refresh-loop / adversarial CTA Track A plans** — only after the first `B_analytics_only` proof passes and is reviewed.
@@ -723,11 +726,11 @@ PR#17j recommends the following successor PRs, each tightly scoped:
 PR#17j is accepted if and only if:
 
 - exactly **one docs file** is added: `docs/sprint2-pr17j-production-collector-deployment-operator-proof.md`,
-- the document's **status is clearly stated as "runbook authoring is docs-only AND production collector service start is DEFERRED"** (top-of-doc status line; §1 / §1.1 / §2),
-- the **`initDb()` startup-compatibility risk is explicitly identified** in §1.1 / §9.1, with the precise mechanics (`src/server.ts:25-29` → `initDb()` → `src/db/schema.sql` → `pool.query` against `buyerrecon_prod_collector_app`) and the explicit statement that idempotent DDL is not guaranteed to be a clean no-op under a least-privilege non-DDL role,
-- **production collector service start is gated as DEFERRED / BLOCKED** until §1.1 / §9.1 closure via a separately approved Path A / B / C PR or preflight (per §10 Phase 1 / §24),
+- the document's **status reflects the §1.1 / §9.1 BLOCKER as closed by PR#17k** (top-of-doc status line; §1 / §1.1 / §2),
+- the **`initDb()` startup-compatibility risk is explicitly identified and resolved** in §1.1 / §9.1 (Path A: PR#17k's `SKIP_DB_INIT=true` guard), with the precise mechanics preserved as historical context,
+- **production collector service start is no longer §1.1-deferred** but **remains procedurally gated** by the active §2 final-GO wording that explicitly requires `SKIP_DB_INIT=true` in `<PRODUCTION_ENV_FILE>` (per §10 Phase 1 / §24),
 - **no runtime role privilege broadening** is approved (no DDL grant, no `createdb` / `createrole` / superuser, no DDL group membership for `buyerrecon_prod_collector_app`) — §1.1, §9.1, §17, §22, §23,
-- **no deployment execution is approved yet** — the only Phase 0 work Helen's final GO may authorise is deployment-prerequisite preparation and preflight planning (per §2 first GO wording, §10 Phase 0),
+- **deployment execution is approved for the successor PR (PR#17j-deploy / PR#17l)** under the active §2 GO wording; PR#17j itself merely documents the runbook,
 - **no execution occurs during PR authoring** — no DB connection, no role / token / secret creation or rotation, no migration run, no deploy, no DNS change, no `endpointUrl` change, no Render / Hetzner / AMS / Track A / Playwright touch, no traffic generation,
 - **no code / runtime / schema changes** — no edits under `src/`, `scripts/`, `migrations/`, `package.json`, tests, or any non-`docs/` file,
 - **no secrets** (real or fake-but-credible) appear in the doc — no DB URLs, no tokens, no token hashes, no token prefixes, no role passwords, no peppers, no private IPs, no certificate material,
@@ -737,8 +740,8 @@ PR#17j is accepted if and only if:
 - **rollback is included** (§16), with Phase 0 (env / artefact rollback) and Phase 1 (service stop / config restore — DEFERRED) variants clearly separated,
 - **output-gate restrictions are included** (§19),
 - **no cutover or Track A execution is approved** (§5, §20, §23),
-- **recommended next PRs include the `initDb()` closure PR before the actual deployment proof PR** (§24 — PR#17j-1 / PR#17k for closure; PR#17j-deploy / PR#17l for the actual deployment).
+- **recommended next PRs include the actual deployment proof PR after the closed `initDb()` gate** (§24 — PR#17k closed the gate; PR#17j-deploy / PR#17l executes the deployment under the active §2 GO wording).
 
 ---
 
-End of PR#17j runbook authoring. **Authoring is docs-only. Production collector service start is DEFERRED until the §1.1 / §9.1 `initDb()` startup-compatibility BLOCKER is closed by a separately approved PR or preflight.**
+End of PR#17j runbook authoring. **Authoring is docs-only. The §1.1 / §9.1 `initDb()` startup-compatibility BLOCKER has been closed by PR#17k. Production collector service start is procedurally gated by the active §2 final-GO wording, which requires `SKIP_DB_INIT=true` in the production env.**

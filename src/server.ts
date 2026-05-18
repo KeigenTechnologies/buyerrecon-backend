@@ -13,7 +13,7 @@
  */
 
 import 'dotenv/config';
-import pool, { initDb } from './db/client.js';
+import pool, { initDb, shouldSkipDbInit } from './db/client.js';
 import { loadV1ConfigFromEnv } from './collector/v1/config.js';
 import { createApp } from './app.js';
 
@@ -22,7 +22,15 @@ const allowed_origins = (process.env.ALLOWED_ORIGINS ?? '').split(',').filter(Bo
 
 async function start() {
   const v1Loaded = loadV1ConfigFromEnv();
-  await initDb();
+  // Sprint 2 PR#17k — production-safe skip. Production runtime roles are
+  // intentionally non-DDL (per PR#17f / PR#17h); the production schema
+  // lifecycle is operator-managed (baseline + migrations 002–016). When
+  // SKIP_DB_INIT=true, do not run schema.sql DDL through the runtime role.
+  if (shouldSkipDbInit()) {
+    console.log('Database schema bootstrap skipped by SKIP_DB_INIT=true');
+  } else {
+    await initDb();
+  }
   const app = createApp({ pool, v1Loaded, allowed_origins });
   app.listen(PORT, () => console.log(`br-collector listening on :${PORT}`));
 }
