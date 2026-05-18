@@ -1,5 +1,19 @@
 -- buyerrecon-backend/src/db/schema.sql
 -- Truth Pipeline schema per spec v1.1
+--
+-- CANONICAL SCHEMA SOURCE (Sprint 2 PR#17i policy):
+--   * This file is the single canonical schema baseline for operator /
+--     production baseline use, and for test / dev `initDb()` bootstrap.
+--   * Migrations under `migrations/` are the ordered evolution path
+--     applied AFTER this baseline.
+--   * `dist/db/schema.sql` is NOT an independent source of truth. It is
+--     a build artifact produced from this file by the Dockerfile
+--     (`COPY src/db/schema.sql dist/db/schema.sql`) and is gitignored.
+--     Any local `dist/db/schema.sql` on an operator machine is a
+--     possibly-stale build leftover and MUST NOT be used as a
+--     production baseline. Always baseline from THIS file.
+--   * See docs/sprint2-pr17i-schema-baseline-hygiene.md for the full
+--     src/dist schema policy and the PR#17h follow-up closure.
 
 -- UUID generation: gen_random_uuid() is built-in on PostgreSQL 14+.
 -- Fly.io managed PostgreSQL is 16. For portability on older versions:
