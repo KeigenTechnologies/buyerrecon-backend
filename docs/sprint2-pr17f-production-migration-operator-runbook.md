@@ -13,7 +13,7 @@ PR branch: `buyerrecon-sprint2-pr17f-production-migration-operator-runbook`
 PR#17f defines the **execution-approved operator runbook** for preparing the Sprint 2 production data plane:
 
 - creating or confirming the Sprint 2 production database identity,
-- applying the **existing repo migrations** (`migrations/002_*.sql` through `migrations/015_*.sql`) to that production DB,
+- applying the **existing repo migrations** (`migrations/002_*.sql` through `migrations/016_*.sql`, where `016_scoring_output_lane_grant_safety.sql` is the Sprint 2 PR#17g Lane A/B grant-safety correction; see §7) to that production DB,
 - creating or confirming the production DB roles, with least-privilege grants,
 - creating or confirming production **workspace/site rows** for the five live sites,
 - provisioning production **`site_write_tokens`** for those sites, with all raw token material held only in the approved operator vault,
@@ -111,7 +111,7 @@ Anything in this list that is later required is delivered in a separate, explici
 After gates 1–4 in §2 are satisfied, the operator executing PR#17f's runbook **may**:
 
 - create or confirm the Sprint 2 production DB identity (per §6),
-- apply the **existing repo migrations** (`migrations/002_*.sql` through `migrations/015_*.sql`) to the production DB, **in numeric order** (per §7, §8),
+- apply the **existing repo migrations** (`migrations/002_*.sql` through `migrations/016_*.sql`, with `016_scoring_output_lane_grant_safety.sql` required to land the PR#17g Lane A/B grant-safety correction before the production migration phase is considered complete) to the production DB, **in numeric order** (per §7, §8),
 - create or confirm the production DB roles (per §10),
 - apply least-privilege grants to those roles (per §11),
 - create or confirm the production workspace / site rows for the five live sites (per §12),
@@ -189,8 +189,19 @@ Constraints on migration sources:
   12. `migrations/013_risk_observations_v0_1.sql`
   13. `migrations/014_poi_observations_v0_1.sql`
   14. `migrations/015_poi_sequence_observations_v0_1.sql`
+  15. `migrations/016_scoring_output_lane_grant_safety.sql` *(Sprint 2 PR#17g — Lane A/B grant-safety correction)*
 
-  The operator re-verifies the order at execution time against the merged state of `migrations/` and applies whatever is present in numeric order. Any migration not listed above that exists at execution time (because additional approved migrations were merged after PR#17f) is applied in its own numeric position.
+  The operator re-verifies the order at execution time against the merged state of `migrations/` and applies whatever is present in numeric order. Any migration not listed above that exists at execution time (because additional approved migrations were merged after PR#17g) is applied in its own numeric position.
+
+  **About migration `016_scoring_output_lane_grant_safety.sql` (PR#17g):** migration `011_scoring_output_lanes.sql` grants `SELECT, INSERT, UPDATE` on `scoring_output_lane_a` and `scoring_output_lane_b` to `buyerrecon_scoring_worker`. Those grants constitute durable Lane A/B writer privileges, which PR#17f §11 and §22 explicitly forbid. Migration 016 is the **safety correction** that:
+
+  - `REVOKE ALL` on `scoring_output_lane_a` and `scoring_output_lane_b` from `buyerrecon_scoring_worker`,
+  - re-asserts (idempotently) `GRANT ALL` to `buyerrecon_migrator` for future approved DDL,
+  - re-asserts (idempotently) `GRANT SELECT` to `buyerrecon_internal_readonly` for internal verification / preview only,
+  - re-asserts (idempotently) `REVOKE ALL` from `buyerrecon_customer_api` as defence-in-depth,
+  - includes post-migration `has_table_privilege` assertions that fail the migration if `buyerrecon_scoring_worker` still has any of `SELECT/INSERT/UPDATE/DELETE` on either lane table, if `buyerrecon_customer_api` has `SELECT` on either lane table, if `buyerrecon_internal_readonly` is missing `SELECT` on either lane table, or if `buyerrecon_internal_readonly` has any of `INSERT/UPDATE/DELETE` on either lane table.
+
+  PR#17f execution **must apply migration 016 after migration 015** before the production migration phase is considered complete. The production migration phase is **not** considered complete if 016 has not been applied — the production DB would otherwise carry the migration-011 durable Lane A/B writer grant that PR#17f forbids. **Durable Lane A/B writers remain deferred to a later explicitly approved output-gate PR** (not PR#17g, not PR#17f). PR#17g does not introduce a Lane A/B writer; it removes one that the migration-011 carry-over would otherwise install.
 - **Migration status must be captured before and after.** "Before" snapshot is taken **immediately** prior to applying any migration; "after" snapshot is taken once the last migration in the approved order has been applied (or, on failure, immediately after the failure).
 - **Schema drift check is required before applying migrations.** The operator inspects the production DB to confirm it is in the expected pre-migration state: no unexpected pre-existing Sprint 2 tables, no foreign objects from a non-canonical migration, no half-applied migration leftover from another environment.
 - **If any migration fails, stop immediately.** Do not partially continue. Do not attempt to "skip" a failed migration. Do not edit a migration mid-flight. Record the failed migration filename, the failure message (masked of any secret-like content), the line/object on which it failed (if visible), and the database state observed at failure.
@@ -230,7 +241,9 @@ Command template (placeholders only; **RUN ONLY AFTER MERGE + HELEN FINAL GO**):
 # Run one file at a time, capture stdout/stderr, mask any secret-like content, and record outcome.
 psql "<MASKED_DATABASE_URL>" -v ON_ERROR_STOP=1 -f migrations/002_event_contract_v2.sql
 psql "<MASKED_DATABASE_URL>" -v ON_ERROR_STOP=1 -f migrations/003_ingest_requests.sql
-# ... continue in numeric order through migrations/015_poi_sequence_observations_v0_1.sql ...
+# ... continue in numeric order through migrations/015_poi_sequence_observations_v0_1.sql,
+# then apply migrations/016_scoring_output_lane_grant_safety.sql (PR#17g Lane A/B grant-safety
+# correction) before considering the migration phase complete ...
 ```
 
 - `<MASKED_DATABASE_URL>` is sourced from the approved operator vault. It is **not** pasted into repo, chat, PR, or terminal transcripts that are shared.
@@ -329,7 +342,7 @@ Production workspace / site identities to be provisioned or confirmed (only if H
 
 ### 12.1 Identity surface in the current migration set
 
-PR#17f must align with what the **approved migration set actually defines**. In `migrations/002_*.sql` through `migrations/015_*.sql`, there is **no dedicated workspace table** and **no dedicated site table**. Workspace / site identity is represented by **server-side `workspace_id` and `site_id` text values stored as metadata columns on `site_write_tokens`** (from `migrations/006_site_write_tokens.sql`).
+PR#17f must align with what the **approved migration set actually defines**. In `migrations/002_*.sql` through `migrations/016_*.sql`, there is **no dedicated workspace table** and **no dedicated site table**. Workspace / site identity is represented by **server-side `workspace_id` and `site_id` text values stored as metadata columns on `site_write_tokens`** (from `migrations/006_site_write_tokens.sql`).
 
 Concretely, the `site_write_tokens` table carries:
 
@@ -346,7 +359,7 @@ This is the **canonical identity surface** for production workspace / site under
 
 ### 12.2 What PR#17f does and does not provision
 
-- **PR#17f does not create dedicated workspace or site tables**, because no such tables exist in the approved migration set (`migrations/002_*.sql` through `migrations/015_*.sql`).
+- **PR#17f does not create dedicated workspace or site tables**, because no such tables exist in the approved migration set (`migrations/002_*.sql` through `migrations/016_*.sql`).
 - **The operator must not `INSERT INTO <WORKSPACE_TABLE>` or `INSERT INTO <SITE_TABLE>`** as part of PR#17f execution. Doing so would invent surfaces the migration set has not approved, which is forbidden by §7 ("do not invent migrations", "do not modify `schema.sql`") and §25 stop-the-line.
 - **Workspace and site identity is provisioned via the `site_write_tokens` identity-metadata path** (per §13). When the operator provisions a production token for a site (per Helen's final GO), the corresponding `workspace_id` and `site_id` values are written as columns on the `site_write_tokens` row for that token. This is how production identity becomes resolvable server-side.
 - **If a later approved migration introduces dedicated workspace / site tables**, the operator handles those tables under that later migration's own runbook, not under PR#17f. The placeholder template below is gated explicitly on that condition.
@@ -363,7 +376,7 @@ This is the **canonical identity surface** for production workspace / site under
 
 ### 12.4 Default execution path — identity via `site_write_tokens` metadata
 
-For the current `migrations/002_*.sql` through `migrations/015_*.sql` set, identity provisioning happens **as part of `site_write_tokens` provisioning in §13**, not as a separate workspace/site table operation. The operator:
+For the current `migrations/002_*.sql` through `migrations/016_*.sql` set, identity provisioning happens **as part of `site_write_tokens` provisioning in §13**, not as a separate workspace/site table operation. The operator:
 
 1. selects production `workspace_id` and `site_id` text values (per Helen's final GO scope; values held in the operator vault, never pasted into repo/chat/PR),
 2. generates each raw token locally and places it in the vault,
@@ -375,11 +388,11 @@ The actual `INSERT` template lives in §13 (`site_write_tokens` provisioning) an
 
 ### 12.5 Conditional template — only if dedicated workspace/site tables exist from an approved migration at execution time
 
-The template below is **not** executed under the current `migrations/002_*.sql` through `migrations/015_*.sql` set. It is included only as a guarded placeholder for a hypothetical future state in which a later approved migration has introduced dedicated workspace and site tables.
+The template below is **not** executed under the current `migrations/002_*.sql` through `migrations/016_*.sql` set. It is included only as a guarded placeholder for a hypothetical future state in which a later approved migration has introduced dedicated workspace and site tables.
 
 ```
 -- CONDITIONAL: execute ONLY IF, at execution time, a later approved migration has
--- introduced dedicated workspace/site tables. Under migrations/002–015 as approved
+-- introduced dedicated workspace/site tables. Under migrations/002–016 as approved
 -- at PR#17f authoring time, these tables do NOT exist and these inserts MUST NOT run.
 -- Replace placeholders from the operator vault; no real values in repo/chat/PR.
 
@@ -581,10 +594,17 @@ Verifications (each is categorical PASS/FAIL with masked output in the proof rep
   - `risk_observations_v0_1` (from `013_*.sql`),
   - `poi_observations_v0_1` (from `014_*.sql`),
   - `poi_sequence_observations_v0_1` (from `015_*.sql`),
-  - plus any additional approved migrations merged after PR#17f at execution time.
-- **Schema version / migration records captured.** Categorical record of "all expected migrations applied".
+  - PR#17g Lane A/B grant-safety correction applied (from `016_scoring_output_lane_grant_safety.sql`) — no new tables; verifies via the grant checks below,
+  - plus any additional approved migrations merged after PR#17g at execution time.
+- **Schema version / migration records captured.** Categorical record of "all expected migrations applied, including 016".
 - **Role memberships checked.** Production role families exist; staging roles are not present in the production DB.
 - **Table privileges checked.** Each role family's grants match §11; no broader grants than required.
+- **Lane A/B grant boundary verified (PR#17g).** Categorical PASS confirmation that:
+  - `buyerrecon_scoring_worker` has **no** `SELECT`, `INSERT`, `UPDATE`, or `DELETE` on `scoring_output_lane_a` or `scoring_output_lane_b`,
+  - `buyerrecon_customer_api` has **no** `SELECT` on `scoring_output_lane_a` or `scoring_output_lane_b`,
+  - `buyerrecon_internal_readonly` has `SELECT` on both lane tables and **no** `INSERT`/`UPDATE`/`DELETE` on either,
+  - `buyerrecon_migrator` retains `ALL` on both lane tables for future approved DDL.
+  Migration 016's own post-migration assertions raise `EXCEPTION` if any of the above is wrong; this verification step re-confirms the post-migration state categorically and records PASS / FAIL in the proof report. **No durable Lane A/B writer may be granted under PR#17f / PR#17g.**
 - **Workspace / site rows checked.** Each authorised site has a workspace_id / site_id row; mapping is auditable.
 - **Token safe metadata checked.** Per §13: counts, site association at categorical level, active/disabled status, created/disabled timestamps where safe. **No raw token / hash / prefix exposed.**
 - **Collector ledger tables available.** `ingest_requests`, `accepted_events`, `rejected_events` exist and are writable by the collector writer role and readable by the internal readonly role.
@@ -733,7 +753,7 @@ PR#17d and PR#17e remain governed by their own future execution PRs.
 After execution (gate 5), PR#17f is considered successful if **all** of the following hold:
 
 - The **production DB exists** and is demonstrably separate from `buyerrecon_staging` and from the Render legacy DB.
-- The **existing migrations** (`migrations/002_*.sql` through `migrations/015_*.sql`, plus any additional approved migrations merged after PR#17f at execution time) have been **applied successfully and in numeric order**.
+- The **existing migrations** (`migrations/002_*.sql` through `migrations/016_*.sql`, plus any additional approved migrations merged after PR#17f at execution time) have been **applied successfully and in numeric order**.
 - The **exact deployed table names** are verified in the production DB (per §9 and §17).
 - **Roles** are created / confirmed with **least-privilege** grants per §10 and §11.
 - **Grants** are verified per §11; no broader grants than required.
@@ -824,7 +844,7 @@ PR#17f is accepted if and only if:
 - **no secrets** (real or fake-but-credible) appear in the doc — no DB URLs, no tokens, no token hashes, no token prefixes, no role passwords, no peppers, no private IPs, no certificate material,
 - **production / staging separation is explicit** (§6, §10, §11, §15),
 - **Render legacy separation is explicit** (§6, §16),
-- **migration order / proof posture is included** (§7, §8, §17), referencing the existing `migrations/002_*.sql` through `migrations/015_*.sql` set without inventing or editing migrations,
+- **migration order / proof posture is included** (§7, §8, §17), referencing the existing `migrations/002_*.sql` through `migrations/016_*.sql` set without inventing or editing migrations,
 - **role / grant posture is included** (§10, §11), with worker grants split by ownership and no durable Lane A/B writers,
 - **site / token provisioning posture is included** (§12, §13), with no raw token material in the doc,
 - **exact table naming discipline is included** (§9), naming `session_behavioural_features_v0_2` and the `_v0_1` observation tables,
