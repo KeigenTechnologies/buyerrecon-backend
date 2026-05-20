@@ -679,6 +679,27 @@ This subsection logs each Helen-approved execution attempt against this runbook.
 | Optional input | a staging-only `GATE2_DATABASE_URL` if §8 DB verification is desired (otherwise §7 HTTP outcome alone carries the verdict). If `GATE2_DATABASE_URL` is set to a placeholder literal, §4.2.1 / §8.0 treats it as MISSING and skips §8. |
 | Boundary affirmations for Attempt 2 | No production deploy. No `/var/www` edit. No `endpointUrl` re-flip. No production traffic. No production DB query. No staging DB query (skipped at §8.0). No DB grant change. No Nginx / systemctl / DNS change. No Track A. No Playwright. No customer-facing output. No Lane A/B writer. No AMS Trust / Pass 1 / Pass 2. The 26 production `ingest_requests` canary evidence rows remain preserved. PR#17q column-level grants remain the runtime steady state. **Gate 2 fixture acceptance has not passed.** |
 
+#### 9.1.3 Token provisioning preflight — 2026-05-20 (BLOCKED at fail-closed Step 3)
+
+This is **not** an execution attempt against the §7 / §8 runbook — it is a precursor recording the categorical state of the **staging site-write token provisioning pre-condition** that Attempt 2 identified as the missing input. The findings are docs-only; no DB mutation, no token generation, no production action.
+
+| Item | Value |
+|---|---|
+| Repo state | branch `buyerrecon-sprint2-pr17x-gate2-controlled-fixture-execution`, base `6da2d96` (PR#17x merged as #27) |
+| Source mechanism (auth hash path) | `hashSiteWriteToken(token, pepper) = HMAC-SHA256(token, pepper).hex()` — defined at `src/auth/workspace.ts:36–44`, called by the collector at `src/collector/v1/auth-route.ts:84`. Pepper is read from the env var `SITE_WRITE_TOKEN_PEPPER`. |
+| `site_write_tokens` table shape | `src/db/schema.sql:311–320` — columns `token_id UUID PK`, `token_hash TEXT NOT NULL UNIQUE`, `workspace_id TEXT NOT NULL`, `site_id TEXT NOT NULL`, `label TEXT`, `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`, `disabled_at TIMESTAMPTZ`, `last_used_at TIMESTAMPTZ`. Active-row index on `(token_hash) WHERE disabled_at IS NULL`. |
+| Existing token-creation script in repo (`scripts/*.ts`) | **NOT FOUND.** `find scripts -name "*token*"` returns empty. No npm `package.json` script for token creation. PR#17m runbook explicitly states "No token creation" (it's a docs-only secret-recovery runbook); PR#17c is planning-only. Token provisioning has historically been an operator-run ad-hoc SQL pattern using the exported `hashSiteWriteToken` primitive — no checked-in mechanised script exists. |
+| Raw-token recoverability from DB | **NOT RECOVERABLE.** The `token_hash` column stores only HMAC-SHA256 output; raw tokens are never persisted. If an existing staging token's raw value is not in an external secret store, it cannot be recovered — a new staging token must be provisioned. |
+| Step 2 env-var presence (Claude Code session at this time, categorical only, no values) | `DATABASE_URL`: **MISSING** · `TEST_DATABASE_URL`: **MISSING** · `STAGING_DATABASE_URL`: **MISSING** · `SITE_WRITE_TOKEN_PEPPER`: **MISSING** · `IP_HASH_PEPPER`: **MISSING** · `GATE2_DATABASE_URL`: **MISSING** · `GATE2_WORKSPACE_ID`: **MISSING** · `GATE2_SITE_ID`: **MISSING** · `GATE2_COLLECTOR_URL`: **MISSING** · `GATE2_SITE_WRITE_TOKEN`: **MISSING** |
+| Step 3 fail-closed checks | **FAIL on multiple axes:** (1) no staging DB URL available — `STAGING_DATABASE_URL` and `GATE2_DATABASE_URL` both MISSING; (2) no token pepper available — `SITE_WRITE_TOKEN_PEPPER` MISSING, so the HMAC hash that the collector's auth-route would later compute against the candidate token cannot be replicated; (3) no checked-in token-creation script exists — writing one ad-hoc would introduce a new code path not reviewed by the same chain that approved PR#17v / PR#17w. |
+| Step 4 token-recovery check | **NOT EXECUTED** — Step 3 fail-closed gate must pass first; without a DB URL the recovery query cannot run. The task brief also notes that even if recovery surfaced a row, the raw token is not in DB (`token_hash` is one-way), so recovery alone cannot produce `GATE2_SITE_WRITE_TOKEN`. |
+| Step 5 token creation | **NOT EXECUTED.** No DB mutation. No raw token generated. No `token_hash` computed. No `INSERT INTO site_write_tokens` issued. No `/tmp` export file created. |
+| Step 6 categorical post-creation verification | **NOT EXECUTED** (no creation occurred). |
+| Token-provisioning verdict | **BLOCKED — staging token provisioning prerequisites missing.** |
+| Categorical reason | Three independent fail-closed gates fired: (a) no staging DB access in this session, (b) no `SITE_WRITE_TOKEN_PEPPER` in this session, (c) no canonical token-creation script in the repo. Per Step 3 of the task brief and Helen's GO, the correct action is to **STOP, not mutate the DB, and provide a safe manual operator runbook** — recorded as a new appendix §15 below — for an authorised operator with staging access to provision the token outside this Claude Code session. |
+| Boundary affirmations for this preflight | No production DB. No production token. No production `SITE_WRITE_TOKEN_PEPPER` read or referenced. No `buyerrecon.com` production traffic. No Render legacy `/collect` call. No `INSERT` / `UPDATE` / `DELETE` / `GRANT` / `REVOKE` against any DB. No `/var/www` edit. No Nginx / systemctl / DNS change. No Track A. No Playwright. No customer-facing output. No Lane A/B writer. No AMS Trust / Pass 1 / Pass 2. The 26 production `ingest_requests` canary evidence rows remain preserved. PR#17q column-level grants remain the runtime steady state. No raw token, no `token_hash`, no pepper, no DSN appears anywhere in this entry, in the diff, in chat, in commit messages, or in any captured artefact derived from this preflight. |
+| Next required operator action | An authorised operator with staging access executes the §15 appendix runbook (or equivalent operator-side procedure) to provision one staging-only `site_write_tokens` row bound to (`workspace_id = buyerrecon_staging_ws`, `site_id = buyerrecon_com`, `label = pr17x_gate2_fixture`) and hand the raw token off via a `chmod 600` `/tmp/pr17x_gate2_token_export.sh` file. The operator then sources that file in the Gate 2 execution shell and re-runs §6 → §7 → §8 of this runbook (Attempt 3 will log to a new §9.1.4 entry). |
+
 Subsequent execution attempts (under operator-provisioned staging env or via an authorised operator running §6 → §7 → §8 directly) append their own `9.1.N` block to this log, preserving the audit trail.
 
 ---
@@ -805,4 +826,197 @@ These are the operator-runbook commands. **They are not run by Claude Code in th
 - **No raw payloads, raw tokens, token prefixes / suffixes, token hashes, peppers, DSNs, passwords, certificate / private-key material, private IPs, host bodies, or raw customer data** appear anywhere in this doc.
 - **Production posture during the BLOCKED state:** unchanged from PR#17w §11.3. `buyerrecon-production-collector.service` `active` on `PORT=3073`; `nginx.service` `active` with PR#17o's `location = /v1/event` route; `buyerrecon.com` ThinLayer `endpointUrl` on Render legacy `https://buyerrecon-backend.onrender.com/collect`; `br-probe-init.js` on Render `apiBase`; production event tables at `ingest_requests=26` / `accepted_events=0` / `rejected_events=0` / `site_write_tokens_used=1` (PR#17u-confirmed evidence preserved); Lane A/B at `0` rows; PR#17g grant safety intact; PR#17q column-level grants intact; staging service untouched; Render legacy collector remains the live capture path for ThinLayer traffic on all five canary sites.
 
-End of PR#17x. **Verdict: BLOCKED — awaiting staging operator inputs. Runbook §6–§8 is ready for execution under explicit Helen GO with staging `GATE2_COLLECTOR_URL` and `GATE2_SITE_WRITE_TOKEN` (and optionally `GATE2_DATABASE_URL`). Once executed, the verdict transitions per §10.**
+---
+
+## 15. Appendix: safe staging token provisioning runbook (operator-only)
+
+**This appendix is invoked when §9.1.3 records the token-provisioning preflight as BLOCKED.** It defines the manual operator pattern for provisioning **one** staging-only `site_write_tokens` row bound to (`workspace_id = buyerrecon_staging_ws`, `site_id = buyerrecon_com`, `label = pr17x_gate2_fixture`) and handing off the raw token to the Gate 2 execution shell without ever printing it.
+
+**Operator-only.** This runbook is not for Claude Code execution. It is for an authorised operator in a shell that already has staging access (staging `DATABASE_URL` and staging `SITE_WRITE_TOKEN_PEPPER` provisioned by the staging deploy's secret-management process). The procedure performs **one** staging DB insert and writes the raw token to a local-only `chmod 600` file in `/tmp/`.
+
+### 15.1 Fail-closed preconditions (every line must pass before any DB mutation)
+
+The operator runs the §15.2 step-by-step **only if every check below passes**. If any check fails, STOP. Do not mutate the DB. Re-engage Helen.
+
+```bash
+# All checks are categorical only. Never echo a value of any of these vars.
+
+# 1. STAGING DB URL must be set and clearly staging — not production.
+[ -n "${STAGING_DATABASE_URL}" ] || { echo "FAIL: STAGING_DATABASE_URL missing"; exit 1; }
+case "${STAGING_DATABASE_URL}" in
+  *buyerrecon_production*|*"_prod"*|*"prod_collector"*) echo "FAIL: DSN appears production-like — STOP"; exit 1;;
+  *staging*|*"_test"*|*localhost*|*127.0.0.1*)          : ;;
+  *)                                                    echo "FAIL: DSN not clearly staging — STOP"; exit 1;;
+esac
+
+# 2. Token pepper must be set under the CANONICAL runtime env-var name
+#    `SITE_WRITE_TOKEN_PEPPER`. This is the name the app actually reads at
+#    `src/collector/v1/config.ts` (env.SITE_WRITE_TOKEN_PEPPER) and that
+#    `src/app.ts` passes through to the v1 router / auth-route path, which
+#    calls `hashSiteWriteToken(token, pepper)` at `src/auth/workspace.ts:36`.
+#
+#    The operator's secret manager may expose a *staging-specific* secret
+#    name (e.g. `STAGING_SITE_WRITE_TOKEN_PEPPER`) — if so, the operator
+#    MUST first confirm locally that the staging-named secret's value is
+#    the exact value the staging collector loads as `SITE_WRITE_TOKEN_PEPPER`,
+#    then rename it into the canonical env slot before running this runbook:
+#
+#        export SITE_WRITE_TOKEN_PEPPER="${STAGING_SITE_WRITE_TOKEN_PEPPER}"
+#
+#    Do NOT use production's `SITE_WRITE_TOKEN_PEPPER` here.
+[ -n "${SITE_WRITE_TOKEN_PEPPER}" ] || { echo "FAIL: SITE_WRITE_TOKEN_PEPPER missing (the canonical runtime env-var name); export it from your staging-pepper secret before continuing"; exit 1; }
+
+# 3. Workspace + site boundary must be exact strings.
+WORKSPACE_ID="buyerrecon_staging_ws"
+SITE_ID="buyerrecon_com"
+LABEL="pr17x_gate2_fixture"
+
+echo "preflight: OK (staging DSN classified, pepper present, boundary fixed)"
+```
+
+If any line prints `FAIL`, the operator stops here. **No DB mutation.** **No token generation.**
+
+### 15.2 One-shot provisioning command (all token-bearing operations in-memory, never echoed)
+
+```bash
+# Generate the raw token: 32 cryptographically strong bytes, hex-encoded (64-char string).
+# The variable RAW_TOKEN is set in-memory only — NEVER echoed, NEVER printed.
+RAW_TOKEN=$(openssl rand -hex 32)
+
+# Compute the HMAC-SHA256 hash via the canonical exported function from
+# `src/auth/workspace.ts`, invoked inline via the LOCAL tsx binary so neither
+# the token nor the pepper crosses argv, and so no package-manager network
+# / install behavior runs while secrets are live in env.
+#
+# Fail-closed precondition: a local `tsx` MUST already be installed (via the
+# repo's `npm install`). `npx -y` / `npm exec` / any auto-install path is
+# explicitly forbidden here — it would fetch and execute package-manager
+# tooling at the same moment the raw token and pepper sit in this process's
+# environment, expanding the trust boundary of the secret-bearing step.
+[ -x ./node_modules/.bin/tsx ] || { unset RAW_TOKEN; echo "FAIL: local tsx missing; do not use npx auto-install for secret-bearing hashing — run \`npm install\` first, then retry"; exit 1; }
+
+TOKEN_HASH=$(
+  RAW_TOKEN="${RAW_TOKEN}" \
+  PEPPER="${SITE_WRITE_TOKEN_PEPPER}" \
+  ./node_modules/.bin/tsx -e '
+    import { hashSiteWriteToken } from "./src/auth/workspace";
+    const t = process.env.RAW_TOKEN || "";
+    const p = process.env.PEPPER || "";
+    if (!t || !p) { process.stderr.write("missing inputs\n"); process.exit(2); }
+    process.stdout.write(hashSiteWriteToken(t, p));
+  '
+)
+[ -n "${TOKEN_HASH}" ] || { unset RAW_TOKEN TOKEN_HASH; echo "FAIL: hash not computed"; exit 1; }
+
+# Insert the row into site_write_tokens via psql -v bound variables.
+# The raw token is NEVER passed to psql. Only the hash is.
+psql "${STAGING_DATABASE_URL}" -tA \
+  -v token_hash="${TOKEN_HASH}" \
+  -v workspace="${WORKSPACE_ID}" \
+  -v site="${SITE_ID}" \
+  -v label="${LABEL}" \
+  -c "
+INSERT INTO public.site_write_tokens (token_hash, workspace_id, site_id, label)
+VALUES (:'token_hash', :'workspace', :'site', :'label')
+RETURNING token_id;
+" >/dev/null
+INSERT_RC=$?
+
+# Clear the hash from memory immediately after insert. The hash is not a secret
+# in the same way the token is, but no need to keep it around.
+unset TOKEN_HASH
+
+if [ "${INSERT_RC}" != "0" ]; then
+  unset RAW_TOKEN
+  echo "FAIL: insert failed (rc=${INSERT_RC}). No row created."
+  exit 1
+fi
+
+# Hand off the raw token via a chmod 600 /tmp file — outside git, outside chat,
+# outside terminal history. The file's only consumer is the Gate 2 execution
+# shell, which sources it once and then shreds it.
+EXPORT_FILE=/tmp/pr17x_gate2_token_export.sh
+umask 077
+printf 'export GATE2_SITE_WRITE_TOKEN=%q\n' "${RAW_TOKEN}" > "${EXPORT_FILE}"
+chmod 600 "${EXPORT_FILE}"
+
+# Wipe the in-memory copy.
+unset RAW_TOKEN
+
+# Categorical confirmation only — never echo file contents.
+echo "token provisioning: COMPLETE"
+echo "export file:       ${EXPORT_FILE}"
+echo "export file mode:  $(stat -c '%a' "${EXPORT_FILE}" 2>/dev/null || stat -f '%Lp' "${EXPORT_FILE}")"
+echo "raw token printed: no"
+echo "token_hash printed: no"
+echo "pepper printed:    no"
+echo "DSN printed:       no"
+```
+
+### 15.3 Categorical post-creation verification (read-only, no token data selected)
+
+```bash
+psql "${STAGING_DATABASE_URL}" -tA \
+  -v workspace="${WORKSPACE_ID}" \
+  -v site="${SITE_ID}" \
+  -v label="${LABEL}" \
+  -c "
+SELECT count(*) AS active_token_rows
+FROM public.site_write_tokens
+WHERE workspace_id = :'workspace'
+  AND site_id      = :'site'
+  AND label        = :'label'
+  AND disabled_at IS NULL;
+"
+```
+
+Expected output: a single integer `1` (the row just created).
+
+**Do NOT** `SELECT token_hash`. **Do NOT** `SELECT *`. **Do NOT** dump raw payload columns. The only safe column to surface from `site_write_tokens` is `count(*)` and metadata booleans like `(disabled_at IS NULL)`.
+
+### 15.4 Hand-off + Gate 2 execution
+
+The operator opens (or re-uses) a Gate 2 execution shell, sets the other Attempt 2 SETs, sources the export file, and runs §6 → §7 → §8:
+
+```bash
+# In the Gate 2 execution shell:
+export GATE2_COLLECTOR_URL='<staging collector URL ending in /v1/event>'
+export GATE2_WORKSPACE_ID='buyerrecon_staging_ws'
+export GATE2_SITE_ID='buyerrecon_com'
+# (optionally) export GATE2_DATABASE_URL='<staging DSN, clearly staging>'
+source /tmp/pr17x_gate2_token_export.sh   # populates GATE2_SITE_WRITE_TOKEN
+
+# Now §6 → §7 → §8 of this runbook is runnable. Attempt 3 will log to §9.1.4.
+```
+
+### 15.5 After Gate 2 — shred the export file
+
+```bash
+shred -u /tmp/pr17x_gate2_token_export.sh 2>/dev/null || rm -f /tmp/pr17x_gate2_token_export.sh
+unset GATE2_SITE_WRITE_TOKEN
+```
+
+The `shred -u` invocation overwrites the file before unlinking it (GNU coreutils); the `rm -f` fallback handles macOS / BSD shells. After this step, the raw token exists only in the operator's shell history if the operator typed it manually — which §15.2 explicitly avoids by using `openssl rand` + `printf '%q'` only.
+
+### 15.6 What §15 explicitly forbids
+
+- **No production DB.** §15.1 fail-closes on production-like DSN patterns.
+- **No production token.** The newly-generated token is bound to `buyerrecon_staging_ws` / `buyerrecon_com` on the staging DB only.
+- **No production `SITE_WRITE_TOKEN_PEPPER`.** §15.2 reads from the canonical env-var name `SITE_WRITE_TOKEN_PEPPER` (the same name `src/collector/v1/config.ts` reads and `src/app.ts` passes to the v1 auth path). The operator's secret manager may expose the staging value under a staging-specific name (e.g. `STAGING_SITE_WRITE_TOKEN_PEPPER`); if so, the operator MUST rename it into the canonical env slot (`export SITE_WRITE_TOKEN_PEPPER="${STAGING_SITE_WRITE_TOKEN_PEPPER}"`) **only after confirming locally** that the staging-named secret's value is the exact value the staging collector loads as `SITE_WRITE_TOKEN_PEPPER`. The pepper value used must be the staging collector's pepper, never production's. The canonical runtime variable name remains `SITE_WRITE_TOKEN_PEPPER`.
+- **No raw token in commits / docs / chat / terminal output.** §15.2 uses `printf '%q'` to write the token to a `chmod 600` file and `unset RAW_TOKEN` immediately after. The final report from §15.2 is categorical only.
+- **No `token_hash` printed or committed.** §15.2 captures the hash into a shell var, passes it to `psql -v`, then `unset`s it.
+- **No DSN echoed.** All `psql` invocations use `"${STAGING_DATABASE_URL}"` directly without shell-trace.
+- **No DB grant change.** §15.2 only INSERTs into `site_write_tokens`. No `GRANT` / `REVOKE`. The operator's staging role must already have INSERT privilege on `site_write_tokens` — if not, this is a Helen-GO precondition before running §15, not an opportunity to broaden grants ad-hoc.
+- **No production traffic.** §15 contains no `curl`, no HTTP request, no Render-legacy call.
+- **No `/var/www` edit.** §15 is filesystem-local to the operator's shell.
+- **No Nginx / systemctl / DNS / Track A / Playwright.** None.
+- **No customer-facing output. No Lane A/B writer. No AMS Trust / Pass 1 / Pass 2.**
+- **The 26 production `ingest_requests` canary evidence rows remain preserved.** §15 does not touch any production DB.
+
+### 15.7 Why no `scripts/create-site-write-token.ts` is committed in PR#17x
+
+PR#17x is explicitly scoped to docs-only (per §2.2 / §11). Introducing a code-path script for token creation would (a) require its own Codex / Helen review for the secret-handling pattern, (b) require its own test coverage in `tests/`, (c) belong in a separate PR with that scope. The §15.2 / §15.3 inline pattern uses the **already-checked-in primitive** `hashSiteWriteToken` from `src/auth/workspace.ts:36` (PR#4 / Sprint 1) via the **locally-installed** `./node_modules/.bin/tsx` binary (gated by an `[ -x ./node_modules/.bin/tsx ]` fail-closed check), which is a one-shot evaluation that does not commit any new code path to the repo and does not invoke any package-manager network / auto-install path while secrets are in env. `npx -y` / `npm exec` / any auto-install pattern is explicitly forbidden in §15.2 — if local `tsx` is not installed, the operator runs `npm install` *before* secrets enter the shell, then retries §15.2. If a hardened, reviewed token-creation script is desired for future re-use, that is a separate PR (proposed e.g. `scripts/create-staging-site-write-token.ts` with its own tests and Codex review); for this PR the inline pattern is the boundary.
+
+---
+
+End of PR#17x. **Verdict: BLOCKED — awaiting staging operator inputs. Runbook §6–§8 is ready for execution under explicit Helen GO with staging `GATE2_COLLECTOR_URL` and `GATE2_SITE_WRITE_TOKEN` (and optionally `GATE2_DATABASE_URL`). §15 documents the operator-only safe provisioning pattern for the missing `GATE2_SITE_WRITE_TOKEN`. Once executed, the verdict transitions per §10.**
