@@ -8,7 +8,9 @@ PR#17x is the Gate 2 step under `docs/ops/cutover-hard-gates.md`: a controlled n
 2. The staging collector's runtime DB role (mirroring the PR#17q grant matrix) can execute the actual SQL path without `permission denied` or `storage_failure`.
 3. No production endpoint is contacted, no production token is used, no production DB is touched, no `/var/www` file is edited.
 
-PR#17x is currently **BLOCKED** because no `GATE2_*` staging environment variables are configured in this Claude Code session. The runbook is published as a docs-only artefact with **fully filled-in pre-flight preconditions, fixture body, staging POST plan, and verification queries**, ready for an operator to execute under explicit Helen GO once staging credentials are available.
+PR#17x is currently **BLOCKED** because no `GATE2_*` staging environment variables have been provisioned in any Claude Code session to date. The runbook is published as a docs-only artefact with **fully filled-in pre-flight preconditions, fixture body, staging POST plan, and verification queries**, ready for an operator to execute under explicit Helen GO once staging credentials are available.
+
+**Execution-attempt log:** §9.1 records each Helen-approved execution attempt. **Attempt 1** (2026-05-20, this branch's amendment) was started under Helen's explicit Gate 2 execution GO but blocked at preflight §6.2 because the Claude Code session had no `GATE2_*` env vars provisioned — no HTTP request was issued, no DB query was run, no token was read, no production action was taken. The verdict therefore remains **BLOCKED — awaiting staging operator inputs**; the §9.1.1 entry is the categorical audit trail for Attempt 1.
 
 > **Gate 2 fixture acceptance is not production deploy.**
 > **EndpointUrl update is not event-capture proof.**
@@ -120,6 +122,26 @@ The runbook fail-closes **before** issuing any HTTP request or DB query if any o
 - The token value must **never** be printed, echoed, logged, included in a curl command line (use a header file or `--header @file` pattern), pasted into chat, committed to this repo, captured in CI logs, or recorded in any §9 result block.
 - The token's first/last bytes, length, hash, or fingerprint must not be recorded anywhere. PR#17u's PR#17m operator hygiene posture applies to staging too.
 - The token must be a staging-issued token; production tokens are out of scope and disqualified from this PR.
+
+### 4.2.1 Placeholder / sentinel-value rule (treat as MISSING and BLOCKED)
+
+The following sentinel patterns must be **treated as MISSING** wherever they appear in `GATE2_*` env vars, and the corresponding fail-closed gate must fire as if the variable were empty:
+
+| Variable | Sentinel patterns (case-insensitive, exact or `*` substring match) treated as MISSING |
+|---|---|
+| `GATE2_SITE_WRITE_TOKEN` | empty string · `PASTE_STAGING_TOKEN_HERE` · `TODO` · `CHANGEME` · `change-me` · `placeholder` · `REPLACE_ME` · `xxx` · `xxxx` · any value starting with `<` and ending with `>` (e.g. `<token>`) · any value beginning with `EXAMPLE_` |
+| `GATE2_DATABASE_URL` | empty string · `PASTE_STAGING_DATABASE_URL_HERE` · `TODO` · `CHANGEME` · `placeholder` · `postgres://example…` · any URL whose host contains `example.com` |
+| `GATE2_COLLECTOR_URL` | empty string · `PASTE_STAGING_URL_HERE` · `TODO` · `CHANGEME` · `placeholder` · any URL whose host contains `example.com` |
+| `GATE2_WORKSPACE_ID` / `GATE2_SITE_ID` | empty string · `PASTE_STAGING_WORKSPACE_ID_HERE` / `PASTE_STAGING_SITE_ID_HERE` · `TODO` · `CHANGEME` · `placeholder` |
+
+If any `GATE2_*` value matches a sentinel pattern, the runbook treats it as MISSING for all downstream §6.2 / §6.6 / §8.0 / §7 / §8 gating. The §9.1.N audit-log entry records `MISSING (sentinel)` for that variable, so the audit trail is honest about why the value was rejected without revealing what the sentinel literal was.
+
+Concretely:
+
+- If `GATE2_SITE_WRITE_TOKEN = "PASTE_STAGING_TOKEN_HERE"` (or any other sentinel), §6.2 treats `GATE2_SITE_WRITE_TOKEN` as MISSING and fail-closes — no POST, no token-shape check (§6.5 cannot exempt a sentinel).
+- If `GATE2_DATABASE_URL = "PASTE_STAGING_DATABASE_URL_HERE"` (or any other sentinel), §8.0 treats it as MISSING and §8 is skipped entirely — no DB query.
+
+This prevents an operator from accidentally proceeding with a copy-pasted placeholder that would otherwise pass an `is-non-empty` check.
 
 ### 4.3 DB safety (optional verification step)
 
@@ -605,6 +627,59 @@ Under no circumstance does any §8 query touch `buyerrecon_production` or any pr
 | §8.5 Lane A/B grant safety re-affirmation | **NOT EXECUTED** (carried forward from PR#17g grant-safety posture: production Lane A/B rows remain `0`; staging unchanged) |
 
 The operator runs §6 → §7 → §8 under explicit Helen GO and appends results into this section (or amends this PR with an additional commit). The verdict in §1 transitions to PASS / PASS WITH NON-BLOCKING NOTES / FAIL accordingly.
+
+### 9.1 Execution-attempt log
+
+This subsection logs each Helen-approved execution attempt against this runbook. Each attempt records the categorical preflight outcome and, if execution proceeded, the categorical §7 / §8 results. No raw token, no raw payload, no raw response body is recorded — only categorical fields permitted by the §4.5 output-safety rule.
+
+#### 9.1.1 Attempt 1 — 2026-05-20 (Claude Code session under explicit Helen GO for PR#17x execution)
+
+| Item | Value |
+|---|---|
+| Attempting branch | `buyerrecon-sprint2-pr17x-gate2-controlled-fixture-execution` (created from `sprint2-architecture-contracts-d4cc2bf` at `6da2d96` — PR#17x merged) |
+| §6.2 env-var presence (categorical only, no values printed) | `GATE2_COLLECTOR_URL`: **MISSING** · `GATE2_SITE_WRITE_TOKEN`: **MISSING** · `GATE2_DATABASE_URL`: **MISSING** · `GATE2_WORKSPACE_ID`: **MISSING** · `GATE2_SITE_ID`: **MISSING** |
+| §6.2 minimum-env required to proceed to §7 (`GATE2_COLLECTOR_URL` + `GATE2_SITE_WRITE_TOKEN`) | **FAIL** — both required env vars missing |
+| §6.3 endpoint safety check | **NOT REACHED** (skipped because §6.2 failed) |
+| §6.4 fixture body assertions | **NOT REACHED** |
+| §6.5 token-shape sanity check | **NOT REACHED** |
+| §6.6 DSN sanity check | **NOT REACHED** |
+| §7 controlled staging POST | **NOT EXECUTED** — preflight §6.2 blocked it at the first gate; no HTTP request was issued |
+| §7.1 `curl` invocation | **NOT EXECUTED** |
+| §7.2 response redaction check | **NOT EXECUTED** |
+| §7.3 `request_id` extraction | **NOT REACHED** — no response to parse |
+| §7.4 expected categorical outcomes | **NOT REACHED** |
+| §8 staging DB verification (all four required env vars) | **NOT EXECUTED** — `GATE2_DATABASE_URL`, `GATE2_WORKSPACE_ID`, `GATE2_SITE_ID` all missing; `GATE2_REQUEST_ID` could not be derived because §7 did not run |
+| §8.1 pre-counts | **NOT EXECUTED** |
+| §8.2 post-counts | **NOT EXECUTED** |
+| §8.3 deterministic row lookup | **NOT EXECUTED** |
+| §8.4 accepted-event verification | **NOT EXECUTED** |
+| §8.5 Lane A/B staging counts | **NOT EXECUTED** (staging not queried; production posture for Lane A/B carried forward from PR#17g / PR#17q without being re-queried — PR#17x makes no production-DB claim) |
+| Attempt 1 verdict | **BLOCKED — staging execution not run** |
+| Categorical reason | The Claude Code session under which this execution attempt was made did not have any `GATE2_*` env var provisioned. Per §6.2 / §8.0 fail-closed preconditions and Helen's GO ("Do not execute POST if: `GATE2_COLLECTOR_URL` is missing"), no HTTP request was issued, no DB query was run, no token was read, no production action was taken. The runbook in §1 / §10.3 therefore remains BLOCKED — awaiting staging operator inputs. |
+| Boundary affirmations for Attempt 1 | No production deploy. No `/var/www` edit. No `endpointUrl` re-flip. No production traffic. No production DB query. No DB grant change. No Nginx / systemctl / DNS change. No Track A. No Playwright. No customer-facing output. No Lane A/B writer. No AMS Trust / Pass 1 / Pass 2. The 26 production `ingest_requests` canary evidence rows remain preserved. PR#17q column-level grants remain the runtime steady state. **Gate 2 fixture acceptance has not passed.** |
+
+#### 9.1.2 Attempt 2 — 2026-05-20 (manual operator preflight after switching to `buyerrecon-backend`)
+
+| Item | Value |
+|---|---|
+| Attempting context | Helen-as-operator ran a manual preflight inside the `buyerrecon-backend` working tree on this branch, with partial env-var provisioning. The runbook's audit log captures the operator's reported preflight state verbatim — no shell session of Claude Code performed the §6 / §7 / §8 commands. |
+| §6.2 env-var presence (operator-reported, categorical only, no values printed) | `GATE2_COLLECTOR_URL`: **SET** · `GATE2_SITE_WRITE_TOKEN`: **MISSING** · `GATE2_DATABASE_URL`: **MISSING** · `GATE2_WORKSPACE_ID`: **SET** · `GATE2_SITE_ID`: **SET** |
+| §6.2 minimum-env required to proceed to §7 (`GATE2_COLLECTOR_URL` AND `GATE2_SITE_WRITE_TOKEN`) | **FAIL** — `GATE2_SITE_WRITE_TOKEN` is missing; the bearer-token slot is unfilled, so no authenticated POST can be constructed |
+| §6.3 endpoint safety check | **NOT REACHED** (skipped because §6.2 failed). `GATE2_COLLECTOR_URL` presence alone is not sufficient to advance — a URL without a paired token cannot be POSTed against and §6.2 fails closed before any URL pattern checks would even run. |
+| §6.4 fixture body assertions | **NOT REACHED** |
+| §6.5 token-shape sanity check | **NOT REACHED** (no token to inspect; length-bucket check is moot when the variable is empty) |
+| §6.6 DSN sanity check | **NOT REACHED** (no `GATE2_DATABASE_URL` to classify; §8 would be skipped even if §7 had run) |
+| §7 controlled staging POST | **NOT EXECUTED** — preflight §6.2 blocked it; no `curl`, no HTTP request, no token read, no body shipped, no temporary header file created |
+| §7.3 `request_id` extraction | **NOT REACHED** — no response to parse |
+| §8 staging DB verification | **NOT EXECUTED** — §8.0 four-env fail-closed gate triggers on missing `GATE2_DATABASE_URL`; `GATE2_REQUEST_ID` could not be derived because §7 did not run; even though `GATE2_WORKSPACE_ID` and `GATE2_SITE_ID` are SET, all four of `{GATE2_DATABASE_URL, GATE2_WORKSPACE_ID, GATE2_SITE_ID, GATE2_REQUEST_ID}` are required by §8.0 and not all four are present |
+| §8.1 pre-counts / §8.2 post-counts / §8.3 deterministic row lookup / §8.4 accepted-event verification / §8.5 Lane A/B staging counts | all **NOT EXECUTED** |
+| Attempt 2 verdict | **BLOCKED — staging execution not run** |
+| Categorical reason | `GATE2_SITE_WRITE_TOKEN` is missing in the operator's shell. Per §6.2 / Helen's GO ("Do not execute POST if: `GATE2_SITE_WRITE_TOKEN` is missing"), the fail-closed gate fired before any §6.3 / §7 / §8 step could run. The doc records this attempt as a no-op preflight so the audit trail is complete. |
+| Next required input | a **real staging-only `GATE2_SITE_WRITE_TOKEN`** (issued for the staging Sprint 2 collector — must be **staging-issued**, not a production token, not a placeholder, not a literal like `PASTE_STAGING_TOKEN_HERE` / `TODO` / `CHANGEME`; see §4.2.1 placeholder rule). |
+| Optional input | a staging-only `GATE2_DATABASE_URL` if §8 DB verification is desired (otherwise §7 HTTP outcome alone carries the verdict). If `GATE2_DATABASE_URL` is set to a placeholder literal, §4.2.1 / §8.0 treats it as MISSING and skips §8. |
+| Boundary affirmations for Attempt 2 | No production deploy. No `/var/www` edit. No `endpointUrl` re-flip. No production traffic. No production DB query. No staging DB query (skipped at §8.0). No DB grant change. No Nginx / systemctl / DNS change. No Track A. No Playwright. No customer-facing output. No Lane A/B writer. No AMS Trust / Pass 1 / Pass 2. The 26 production `ingest_requests` canary evidence rows remain preserved. PR#17q column-level grants remain the runtime steady state. **Gate 2 fixture acceptance has not passed.** |
+
+Subsequent execution attempts (under operator-provisioned staging env or via an authorised operator running §6 → §7 → §8 directly) append their own `9.1.N` block to this log, preserving the audit trail.
 
 ---
 
