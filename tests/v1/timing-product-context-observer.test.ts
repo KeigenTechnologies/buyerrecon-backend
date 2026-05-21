@@ -33,11 +33,14 @@ import { describe, expect, it } from 'vitest';
 import {
   AMS_RESERVED_NAMES_FORBIDDEN,
   AMS_RESERVED_REASON_NAMESPACES_FORBIDDEN,
+  ANOMALY_KINDS_ALLOWED,
   buildSessionCandidate,
   buildTimingBandDistribution,
   classifyTimingBand,
   computeConfidenceCap,
   CONFIDENCE_CAPS_ALLOWED,
+  COUNT_SESSION_BEHAVIOURAL_FEATURES_V0_2_SQL,
+  COUNT_SESSION_FEATURES_SQL,
   countSyntheticFixtureRows,
   groupAcceptedEventsBySession,
   isSyntheticFixtureRow,
@@ -92,14 +95,19 @@ interface StubQueryShape {
 }
 
 interface StubScript {
-  readonly presence:   Record<string, boolean>;
-  readonly accepted:   readonly StubQueryShape[];
-  readonly ingest:     readonly StubQueryShape[];
-  readonly rejected:   readonly StubQueryShape[];
-  readonly counts:     Partial<Record<string, number>>;
+  readonly presence:    Record<string, boolean>;
+  readonly accepted:    readonly StubQueryShape[];
+  readonly ingest:      readonly StubQueryShape[];
+  readonly rejected:    readonly StubQueryShape[];
+  readonly counts:      Partial<Record<string, number>>;
   readonly tokenLabels: readonly string[];
-  readonly laneA:      number;
-  readonly laneB:      number;
+  readonly laneA:       number;
+  readonly laneB:       number;
+  /**
+   * If the SQL contains any of these substrings, the stub throws.
+   * Used to exercise optional_source_count_query_failed anomaly paths.
+   */
+  readonly throwOnSqlSubstring?: readonly string[];
 }
 
 interface StubClient {
@@ -109,6 +117,12 @@ interface StubClient {
 function makeStubClient(script: StubScript): StubClient {
   return {
     async query<T extends StubQueryShape>(sql: string, params?: readonly unknown[]): Promise<{ rows: T[] }> {
+      for (const needle of script.throwOnSqlSubstring ?? []) {
+        if (sql.includes(needle)) {
+          // Reserved-example error message — never includes DSN / token / pepper.
+          throw new Error('stub-injected query failure');
+        }
+      }
       if (sql === SELECT_TABLE_PRESENT_TO_REGCLASS_SQL) {
         const fq = (params?.[0] as string) ?? '';
         return { rows: [{ present: Boolean(script.presence[fq]) }] as unknown as T[] };
@@ -496,6 +510,110 @@ describe('K. SQL constants are SELECT-only', () => {
       expect(forbidden.test(m)).toBe(false);
     }
   });
+
+  it('K.2 session_behavioural_features_v0_2 SQL uses canonical last_seen_at (not last_refreshed_at)', () => {
+    // Negative — the schema/query drift Codex caught must not regress.
+    expect(COUNT_SESSION_BEHAVIOURAL_FEATURES_V0_2_SQL).not.toMatch(/last_refreshed_at/);
+    // Positive — the query references the canonical column.
+    expect(COUNT_SESSION_BEHAVIOURAL_FEATURES_V0_2_SQL).toMatch(/last_seen_at/);
+  });
+
+  it('K.3 entire query.ts module does not mention last_refreshed_at anywhere', () => {
+    const querySrc = readFileSync(join(MODULE_DIR, 'query.ts'), 'utf8');
+    expect(querySrc).not.toMatch(/last_refreshed_at/);
+  });
+
+  it('K.4 session_behavioural_features_v0_2.last_seen_at column exists in canonical schema.sql', () => {
+    const schemaSrc = readFileSync(join(REPO_ROOT, 'src', 'db', 'schema.sql'), 'utf8');
+    // Locate the CREATE TABLE block for session_behavioural_features_v0_2
+    // and confirm last_seen_at is declared inside it.
+    const blockMatch = schemaSrc.match(/CREATE TABLE IF NOT EXISTS session_behavioural_features_v0_2[\s\S]*?\);/);
+    expect(blockMatch).not.toBeNull();
+    expect(blockMatch![0]).toMatch(/\blast_seen_at\b\s+TIMESTAMPTZ/);
+    // And the bug column does not exist.
+    expect(blockMatch![0]).not.toMatch(/\blast_refreshed_at\b/);
+  });
+
+  it('K.5 session_features.last_seen_at column also exists (timing pattern parity)', () => {
+    const schemaSrc = readFileSync(join(REPO_ROOT, 'src', 'db', 'schema.sql'), 'utf8');
+    const blockMatch = schemaSrc.match(/CREATE TABLE IF NOT EXISTS session_features[\s\S]*?\);/);
+    expect(blockMatch).not.toBeNull();
+    expect(blockMatch![0]).toMatch(/\blast_seen_at\b\s+TIMESTAMPTZ/);
+    // The session_features count SQL also references last_seen_at — parity check.
+    expect(COUNT_SESSION_FEATURES_SQL).toMatch(/last_seen_at/);
+  });
+});
+
+describe('M. optional_source_count_query_failed anomaly', () => {
+  it('M.1 anomaly kind is declared in ANOMALY_KINDS_ALLOWED', () => {
+    expect(ANOMALY_KINDS_ALLOWED).toContain('optional_source_count_query_failed');
+  });
+
+  it('M.2 a failing optional count query produces optional_source_count_query_failed (not silent zero)', async () => {
+    const client = makeStubClient({
+      presence: ALL_PRESENT,
+      accepted: [{ session_id: 'sess_real_aaaaaa_bbbb', workspace_id: 'ws_commercial', site_id: 'site_commercial', schema_key: 'app.page_view', received_at: new Date('2026-05-21T11:55:00Z') }],
+      ingest: [], rejected: [],
+      counts: { session_features: 5 },
+      tokenLabels: [], laneA: 0, laneB: 0,
+      // Force the session_behavioural_features_v0_2 count query to throw.
+      throwOnSqlSubstring: ['FROM public.session_behavioural_features_v0_2'],
+    });
+    const report = await runTimingProductContextObserver({
+      client: client as never, options: mkOpts(), database_host: 'host.staging', database_name: 'db_staging',
+    });
+    const failures = report.anomalies.filter((a) => a.kind === 'optional_source_count_query_failed');
+    expect(failures.length).toBeGreaterThanOrEqual(1);
+    expect(failures.map((f) => f.detail)).toContain('public.session_behavioural_features_v0_2');
+    // Failure must not leak SQL error text or anything DSN/token/secret-shaped.
+    for (const f of failures) {
+      expect(f.detail).not.toMatch(/Bearer |Authorization:|token_hash|SITE_WRITE_TOKEN_PEPPER|DATABASE_URL=|BEGIN PRIVATE KEY|BEGIN CERTIFICATE/);
+      expect(f.detail).not.toMatch(/stub-injected/);  // ensure we did not propagate the stub exception message
+    }
+  });
+
+  it('M.3 Lane A/B count failure surfaces optional_source_count_query_failed (not optional_source_missing)', async () => {
+    const client = makeStubClient({
+      presence: ALL_PRESENT,
+      accepted: [], ingest: [], rejected: [],
+      counts: {},
+      tokenLabels: [], laneA: 0, laneB: 0,
+      throwOnSqlSubstring: ['FROM public.scoring_output_lane_a', 'FROM public.scoring_output_lane_b'],
+    });
+    const report = await runTimingProductContextObserver({
+      client: client as never, options: mkOpts(), database_host: 'host.staging', database_name: 'db_staging',
+    });
+    const failures = report.anomalies.filter((a) => a.kind === 'optional_source_count_query_failed');
+    expect(failures.map((f) => f.detail)).toContain('public.scoring_output_lane_a');
+    expect(failures.map((f) => f.detail)).toContain('public.scoring_output_lane_b');
+  });
+});
+
+describe('N. site_write_tokens absent → optional_source_missing anomaly', () => {
+  it('N.1 emits optional_source_missing with source detail when site_write_tokens is absent', async () => {
+    const presence = { ...ALL_PRESENT, 'public.site_write_tokens': false };
+    const client = makeStubClient({
+      presence, accepted: [], ingest: [], rejected: [], counts: {}, tokenLabels: [], laneA: 0, laneB: 0,
+    });
+    const report = await runTimingProductContextObserver({
+      client: client as never, options: mkOpts(), database_host: 'host.staging', database_name: 'db_staging',
+    });
+    const missing = report.anomalies.filter((a) => a.kind === 'optional_source_missing');
+    expect(missing.map((m) => m.detail)).toContain('public.site_write_tokens');
+  });
+
+  it('N.2 site_write_tokens label probe failure surfaces optional_source_count_query_failed (distinct from missing)', async () => {
+    const client = makeStubClient({
+      presence: ALL_PRESENT,
+      accepted: [], ingest: [], rejected: [], counts: {}, tokenLabels: [], laneA: 0, laneB: 0,
+      throwOnSqlSubstring: ['FROM public.site_write_tokens'],
+    });
+    const report = await runTimingProductContextObserver({
+      client: client as never, options: mkOpts(), database_host: 'host.staging', database_name: 'db_staging',
+    });
+    const failures = report.anomalies.filter((a) => a.kind === 'optional_source_count_query_failed');
+    expect(failures.map((f) => f.detail)).toContain('public.site_write_tokens');
+  });
 });
 
 /* --------------------------------------------------------------------------
@@ -550,8 +668,10 @@ describe('Z. timing band distribution aggregation', () => {
 
 describe('Z. report metadata + DSN parsing', () => {
   it('Z.2 parseDatabaseUrl never echoes user/password', () => {
-    expect(parseDatabaseUrl('postgres://user:secretpw@host.staging:5432/db_staging?sslmode=require'))
-      .toEqual({ host: 'host.staging:5432', name: 'db_staging' });
+    // Reserved example string per RFC 2606 — example.invalid is guaranteed
+    // never to resolve, and the user/password tokens are obviously synthetic.
+    expect(parseDatabaseUrl('postgres://example_user:example_password@example.invalid:5432/example_db?sslmode=require'))
+      .toEqual({ host: 'example.invalid:5432', name: 'example_db' });
     expect(parseDatabaseUrl(undefined)).toEqual({ host: '<unset>', name: '<unset>' });
     expect(parseDatabaseUrl('not a url')).toEqual({ host: '<unparseable>', name: '<unparseable>' });
   });

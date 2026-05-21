@@ -144,8 +144,8 @@ SELECT count(*)::bigint AS n
   FROM public.session_behavioural_features_v0_2
  WHERE workspace_id = $3
    AND site_id      = $4
-   AND last_refreshed_at >= $1
-   AND last_refreshed_at <  $2
+   AND last_seen_at >= $1
+   AND last_seen_at <  $2
 `;
 
 export const COUNT_POI_OBSERVATIONS_SQL = `

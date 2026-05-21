@@ -175,23 +175,48 @@ export async function runTimingProductContextObserver(
         }
       }
     } catch {
-      // If the site_write_tokens query fails for any reason, treat label
-      // detection as unknown — DO NOT propagate token_hash / etc. errors.
-      // The synthetic_control_exclusion counts remain conservative.
+      // If the site_write_tokens query fails for any reason, surface a
+      // categorical anomaly. Never propagate the SQL error message —
+      // exceptions from the pg driver may contain DSN / token / hash /
+      // pepper / payload material the observer is contractually forbidden
+      // from emitting.
       anomalies.push({
-        kind:     'optional_source_missing',
+        kind:     'optional_source_count_query_failed',
         severity: 'warn',
-        detail:   'site_write_tokens label probe failed; label-match count reported as 0',
+        detail:   'public.site_write_tokens',
       });
     }
+  } else {
+    // Absence (rather than failure) is its own categorical anomaly per
+    // PR#18b §3 / §5.
+    anomalies.push({
+      kind:     'optional_source_missing',
+      severity: 'info',
+      detail:   'public.site_write_tokens',
+    });
   }
 
   // ===== 4. Optional-source counts (count-only, presence-guarded) =====
-  const sessionFeaturesCount      = present.session_features                  ? await countOptional(client, COUNT_SESSION_FEATURES_SQL, options)                : 0;
-  const sessionBehV02Count        = present.session_behavioural_features_v0_2 ? await countOptional(client, COUNT_SESSION_BEHAVIOURAL_FEATURES_V0_2_SQL, options) : 0;
-  const poiObsCount               = present.poi_observations_v0_1             ? await countOptional(client, COUNT_POI_OBSERVATIONS_SQL, options)                : 0;
-  const poiSeqObsCount            = present.poi_sequence_observations_v0_1    ? await countOptional(client, COUNT_POI_SEQUENCE_OBSERVATIONS_SQL, options)       : 0;
-  const riskObsCount              = present.risk_observations_v0_1            ? await countOptional(client, COUNT_RISK_OBSERVATIONS_SQL, options)               : 0;
+  const sfRes        = present.session_features                  ? await countOptional(client, COUNT_SESSION_FEATURES_SQL, options)                  : { count: 0, failed: false };
+  const sbV02Res     = present.session_behavioural_features_v0_2 ? await countOptional(client, COUNT_SESSION_BEHAVIOURAL_FEATURES_V0_2_SQL, options) : { count: 0, failed: false };
+  const poiObsRes    = present.poi_observations_v0_1             ? await countOptional(client, COUNT_POI_OBSERVATIONS_SQL, options)                  : { count: 0, failed: false };
+  const poiSeqObsRes = present.poi_sequence_observations_v0_1    ? await countOptional(client, COUNT_POI_SEQUENCE_OBSERVATIONS_SQL, options)         : { count: 0, failed: false };
+  const riskObsRes   = present.risk_observations_v0_1            ? await countOptional(client, COUNT_RISK_OBSERVATIONS_SQL, options)                 : { count: 0, failed: false };
+
+  // Surface query-failure anomalies BEFORE the missing-table anomalies so
+  // a failure on a present table is not silently swallowed under a
+  // "missing" reading downstream.
+  if (sfRes.failed)        anomalies.push({ kind: 'optional_source_count_query_failed', severity: 'warn', detail: 'public.session_features' });
+  if (sbV02Res.failed)     anomalies.push({ kind: 'optional_source_count_query_failed', severity: 'warn', detail: 'public.session_behavioural_features_v0_2' });
+  if (poiObsRes.failed)    anomalies.push({ kind: 'optional_source_count_query_failed', severity: 'warn', detail: 'public.poi_observations_v0_1' });
+  if (poiSeqObsRes.failed) anomalies.push({ kind: 'optional_source_count_query_failed', severity: 'warn', detail: 'public.poi_sequence_observations_v0_1' });
+  if (riskObsRes.failed)   anomalies.push({ kind: 'optional_source_count_query_failed', severity: 'warn', detail: 'public.risk_observations_v0_1' });
+
+  const sessionFeaturesCount = sfRes.count;
+  const sessionBehV02Count   = sbV02Res.count;
+  const poiObsCount          = poiObsRes.count;
+  const poiSeqObsCount       = poiSeqObsRes.count;
+  const riskObsCount         = riskObsRes.count;
 
   // Log optional-source-missing anomalies (info severity unless the
   // operator opted into `require_timing_product_context`, in which case
@@ -215,33 +240,38 @@ export async function runTimingProductContextObserver(
 
   // ===== 5. Lane A/B anomaly counts (expected 0 / 0 per PR#18b §9) =====
   let laneACount = 0;
+  let laneBCount = 0;
   let laneBDarkObserved = false;
+  let laneAFailed = false;
+  let laneBFailed = false;
   try {
     const a = await client.query<QueryRow>(COUNT_SCORING_OUTPUT_LANE_A_SQL, [options.workspace_id, options.site_id]);
     laneACount = bigintToNumber(a.rows[0]?.n);
   } catch {
-    anomalies.push({ kind: 'optional_source_missing', severity: 'info', detail: 'public.scoring_output_lane_a count probe failed' });
+    laneAFailed = true;
+    anomalies.push({ kind: 'optional_source_count_query_failed', severity: 'warn', detail: 'public.scoring_output_lane_a' });
   }
   try {
     const b = await client.query<QueryRow>(COUNT_SCORING_OUTPUT_LANE_B_SQL, [options.workspace_id, options.site_id]);
-    const laneBCount = bigintToNumber(b.rows[0]?.n);
+    laneBCount = bigintToNumber(b.rows[0]?.n);
     if (laneBCount > 0) laneBDarkObserved = true;
-    if (laneACount > 0) {
-      anomalies.push({
-        kind:     'unexpected_lane_a_row_count_nonzero',
-        severity: 'warn',
-        detail:   `scoring_output_lane_a count is ${laneACount}; PR#18b §9 expects 0`,
-      });
-    }
-    if (laneBCount > 0) {
-      anomalies.push({
-        kind:     'unexpected_lane_b_row_count_nonzero',
-        severity: 'warn',
-        detail:   `scoring_output_lane_b count is ${laneBCount}; PR#18b §9 expects 0 (Lane B stays dark)`,
-      });
-    }
   } catch {
-    anomalies.push({ kind: 'optional_source_missing', severity: 'info', detail: 'public.scoring_output_lane_b count probe failed' });
+    laneBFailed = true;
+    anomalies.push({ kind: 'optional_source_count_query_failed', severity: 'warn', detail: 'public.scoring_output_lane_b' });
+  }
+  if (!laneAFailed && laneACount > 0) {
+    anomalies.push({
+      kind:     'unexpected_lane_a_row_count_nonzero',
+      severity: 'warn',
+      detail:   `scoring_output_lane_a count is ${laneACount}; PR#18b §9 expects 0`,
+    });
+  }
+  if (!laneBFailed && laneBCount > 0) {
+    anomalies.push({
+      kind:     'unexpected_lane_b_row_count_nonzero',
+      severity: 'warn',
+      detail:   `scoring_output_lane_b count is ${laneBCount}; PR#18b §9 expects 0 (Lane B stays dark)`,
+    });
   }
 
   // ===== 6. Per-session candidate construction =====
@@ -376,12 +406,20 @@ async function fetchRejectedEvents(client: PgQueryable, o: ObserverRunOptions): 
   return res.rows.map(toRejectedEventRow);
 }
 
-async function countOptional(client: PgQueryable, sql: string, o: ObserverRunOptions): Promise<number> {
+async function countOptional(
+  client: PgQueryable,
+  sql:    string,
+  o:      ObserverRunOptions,
+): Promise<{ count: number; failed: boolean }> {
   try {
     const res = await client.query<QueryRow>(sql, [o.window_start, o.window_end, o.workspace_id, o.site_id]);
-    return bigintToNumber(res.rows[0]?.n);
+    return { count: bigintToNumber(res.rows[0]?.n), failed: false };
   } catch {
-    return 0;
+    // Categorical failure flag. The caller surfaces an
+    // `optional_source_count_query_failed` anomaly with the source name.
+    // The SQL error message is NEVER returned or logged — pg driver
+    // exceptions may carry DSN / token / hash / pepper / payload material.
+    return { count: 0, failed: true };
   }
 }
 

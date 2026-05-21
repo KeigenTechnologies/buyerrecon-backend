@@ -213,6 +213,7 @@ export interface ProductContextSessionCandidate {
 export const ANOMALY_KINDS_ALLOWED = [
   'required_source_missing',
   'optional_source_missing',
+  'optional_source_count_query_failed',
   'unexpected_lane_a_row_count_nonzero',
   'unexpected_lane_b_row_count_nonzero',
   'synthetic_exclusion_filter_empty',
