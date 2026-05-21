@@ -21,6 +21,7 @@
     "run:poi-sequence-worker": "tsx scripts/run-poi-sequence-worker.ts",
     "observe:poi-sequence-table": "tsx scripts/poi-sequence-table-observation-report.ts",
     "observe:product-context-timing": "tsx scripts/product-context-timing-observation-report.ts",
+    "observe:timing-product-context": "tsx scripts/timing-product-context-observation-report.ts",
     "observe:product-features-bridge-candidate": "tsx scripts/product-features-bridge-candidate-observation-report.ts",
     "observe:evidence-review-snapshot": "tsx scripts/evidence-review-snapshot-report.ts",
     "observe:lane-ab-preview": "tsx scripts/lane-ab-preview-report.ts",
