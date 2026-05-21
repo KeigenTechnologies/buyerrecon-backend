@@ -1,6 +1,6 @@
 # BuyerRecon Sprint 2 PR#17x — Gate 2 Controlled Fixture Dry-Run (Staging-Only)
 
-Status: **docs-only operator runbook. Verdict: BLOCKED — awaiting staging operator inputs.**
+Status: **operator runbook executed end-to-end against the Hetzner staging host. Verdict: PASS — Gate 2 controlled fixture acceptance only. See §9.1.4 for the Attempt 3 audit trail.**
 
 PR#17x is the Gate 2 step under `docs/ops/cutover-hard-gates.md`: a controlled non-customer fixture dry-run against a **staging** Sprint 2 collector, using the artefact contract established by AMS PR#17v (merged) and the website-side artefact update from PR#17w (merged). It proves — under non-production conditions only — that:
 
@@ -8,9 +8,9 @@ PR#17x is the Gate 2 step under `docs/ops/cutover-hard-gates.md`: a controlled n
 2. The staging collector's runtime DB role (mirroring the PR#17q grant matrix) can execute the actual SQL path without `permission denied` or `storage_failure`.
 3. No production endpoint is contacted, no production token is used, no production DB is touched, no `/var/www` file is edited.
 
-PR#17x is currently **BLOCKED** because no `GATE2_*` staging environment variables have been provisioned in any Claude Code session to date. The runbook is published as a docs-only artefact with **fully filled-in pre-flight preconditions, fixture body, staging POST plan, and verification queries**, ready for an operator to execute under explicit Helen GO once staging credentials are available.
+PR#17x's Gate 2 controlled fixture dry-run has now been **executed end-to-end** by Helen-as-operator on the Hetzner staging host (Attempt 3, 2026-05-21) under explicit Helen GO. Preflight §6.1–§6.6 passed categorically with no STOP, §7 returned HTTP `200` against the staging `/v1/event` endpoint, and §8 deterministic DB verification confirmed `ingest +1 / accepted +1 / rejected +0` against the bound `GATE2_REQUEST_ID` with `auth_status = ok`, `http_status = 200`, `reject_reason_code = NULL`, and `endpoint = /v1/event`. Staging Lane A/B counts remained at `0` / `0`. The PASS verdict is recorded against §10.1 (Gate 2 PASS criteria) only; it does **not** approve any subsequent gate, production action, customer-facing surface, or Lane A/B writer (see §11 and the hard-boundary block immediately below).
 
-**Execution-attempt log:** §9.1 records each Helen-approved execution attempt. **Attempt 1** (2026-05-20, this branch's amendment) was started under Helen's explicit Gate 2 execution GO but blocked at preflight §6.2 because the Claude Code session had no `GATE2_*` env vars provisioned — no HTTP request was issued, no DB query was run, no token was read, no production action was taken. The verdict therefore remains **BLOCKED — awaiting staging operator inputs**; the §9.1.1 entry is the categorical audit trail for Attempt 1.
+**Execution-attempt log:** §9.1 records each Helen-approved execution attempt. **Attempt 1** (2026-05-20) was blocked at preflight §6.2 because the Claude Code session had no `GATE2_*` env vars provisioned. **Attempt 2** (2026-05-20) was blocked at preflight §6.2 because the operator's shell had no `GATE2_SITE_WRITE_TOKEN`. A **token-provisioning preflight** (2026-05-20) recorded the staging token-provisioning prerequisites and produced the §15 appendix. **Attempt 3** (2026-05-21) executed §15.4 → §6 → §7 → §8 manually by Helen-as-operator on the Hetzner staging host under explicit Helen GO and returned **PASS** for Gate 2 controlled fixture acceptance only. The categorical audit trails are at §9.1.1 (Attempt 1), §9.1.2 (Attempt 2), §9.1.3 (token-provisioning preflight), and §9.1.4 (Attempt 3 — PASS).
 
 > **Gate 2 fixture acceptance is not production deploy.**
 > **EndpointUrl update is not event-capture proof.**
@@ -29,31 +29,33 @@ PR branch: `buyerrecon-sprint2-pr17x-gate2-controlled-fixture-dry-run`
 
 ## 1. Status / verdict
 
-**BLOCKED — awaiting staging operator inputs.**
+**PASS — Gate 2 controlled fixture acceptance only.**
 
-This Claude Code session has **no `GATE2_*` environment variables set**. Per Helen's GO and the task brief's hard-stop lines, PR#17x must not invent a result, must not hit production, must not use production token/endpoint/DB, and must not deploy. The doc is therefore published as a runbook that will transition to one of the four approved verdict states (`PASS` / `PASS WITH NON-BLOCKING NOTES` / `BLOCKED` / `FAIL`) once a staging-environment operator executes it under explicit Helen GO.
+Attempt 3 (2026-05-21) executed the runbook end-to-end on the Hetzner staging host under explicit Helen GO. Preflight §6.1–§6.6 passed categorically with no STOP, §7 returned HTTP `200` with a token-clean response, and §8 deterministic verification confirmed `ingest +1 / accepted +1 / rejected +0`, exactly one row returned for the bound `GATE2_REQUEST_ID`, `auth_status = ok`, `http_status = 200`, `reject_reason_code = NULL`, `endpoint = /v1/event`, and staging Lane A/B counts unchanged at `0` / `0`. No production endpoint was contacted, no production DB was queried, no `/var/www` file was edited, no DB grant was changed, no `endpointUrl` was re-flipped, no Track A / Playwright run was triggered, no customer-facing output was produced, and no raw token / Authorization header / `request_id` UUID value / raw response body / DSN / pepper / `token_hash` was printed. The PASS verdict is scoped to §10.1 (Gate 2 PASS criteria) only.
 
-The transition criteria are recorded in §10 below.
+The transition criteria are recorded in §10 below. The §9.1.4 entry is the categorical audit trail for Attempt 3.
 
-### What is in scope of this BLOCKED state
+### What is in scope of this PASS verdict
 
-- Docs-only runbook with §1–§14 fully populated.
-- Fixture body shape categorically defined in §5 (byte-shape-equivalent to AMS PR#17v mapper output).
-- Fail-closed preconditions enumerated in §4 / §6.
-- Staging POST plan in §7.
-- Staging DB verification plan in §8.
-- No script committed in this PR; if a fixture script is later useful, it will be added in an amendment under its own Codex review and explicit Helen GO. Until then, the §7 and §8 commands are intended for operator execution from a shell where the staging env vars resolve.
+- Gate 2 controlled fixture acceptance against the staging Sprint 2 `/v1/event` endpoint, executed end-to-end on Attempt 3 (§9.1.4).
+- Preflight §6.1–§6.6 satisfied with no STOP (env-var presence, endpoint safety, fixture body assertions, token-shape sanity, staging-class DSN sanity).
+- §7 staging POST returned HTTP `200` with token-clean response; a deterministic `request_id` was extracted into `GATE2_REQUEST_ID` for §8 binding (UUID value never printed).
+- §8 staging DB verification confirmed `ingest +1 / accepted +1 / rejected +0`, with `auth_status = ok`, `http_status = 200`, `reject_reason_code = NULL`, `endpoint = /v1/event` for the bound `GATE2_REQUEST_ID`.
+- Staging Lane A/B counts observed at `0` / `0` (no Lane A/B writer enabled by PR#17x).
+- Operator-side cleanup: `/tmp/pr17x_gate2_token_export.sh` shredded / removed, fixture file removed, response file removed, `GATE2_SITE_WRITE_TOKEN` env unset.
+- Docs-only runbook with §1–§15 populated remains the canonical operator artefact; the §9.1.4 entry is the live audit trail.
 
-### What is NOT in scope of this BLOCKED state
+### What is NOT in scope of this PASS verdict
 
-- No staging POST has been issued.
-- No staging DB query has been run.
-- No production action of any kind.
-- No bundle deploy to any host.
-- No endpointUrl re-flip anywhere.
-- No `mode: 'sprint2_v1_event'` activation in any production init.
-- The 26 `ingest_requests` evidence rows from the post-PR#17q canary remain preserved.
-- PR#17q column-level grants stand untouched.
+- No production endpoint was contacted; `https://buyerrecon.com/v1/event` and `https://buyerrecon-backend.onrender.com/collect` remain untouched by PR#17x.
+- No production DB was queried; the 26 production `ingest_requests` evidence rows from the post-PR#17q canary remain preserved.
+- No bundle deploy to any production host. No `/var/www` edit.
+- No `endpointUrl` re-flip on `buyerrecon.com`; ThinLayer `endpointUrl` remains on Render legacy.
+- No website ThinSDK activation of `sprint2_v1_event` mode; no `buyerrecon.com` production artefact / config mode flip. (The staging Sprint 2 `/v1/event` POST in Attempt 3 was a controlled non-customer fixture against the staging collector, not a production-side ThinSDK mode activation; the latter remains a Gate 4 PR C step gated by its own explicit Helen GO per §12.)
+- No DB grant change. PR#17q column-level grants on `buyerrecon_prod_collector_app` stand untouched.
+- No Nginx / systemctl / DNS change.
+- No Track A invocation, no Playwright run, no customer-facing output, no Lane A/B writer, no AMS Trust Core exposure, no Pass 1 implementation, no Pass 2 implementation.
+- **The Gate 2 PASS does not pre-authorise Gate 3, Gate 4 PR B / PR C / PR D / PR E, or any future transport-selection change. Each remains separately gated by its own explicit Helen GO (§12).**
 
 ---
 
@@ -699,6 +701,37 @@ This is **not** an execution attempt against the §7 / §8 runbook — it is a p
 | Categorical reason | Three independent fail-closed gates fired: (a) no staging DB access in this session, (b) no `SITE_WRITE_TOKEN_PEPPER` in this session, (c) no canonical token-creation script in the repo. Per Step 3 of the task brief and Helen's GO, the correct action is to **STOP, not mutate the DB, and provide a safe manual operator runbook** — recorded as a new appendix §15 below — for an authorised operator with staging access to provision the token outside this Claude Code session. |
 | Boundary affirmations for this preflight | No production DB. No production token. No production `SITE_WRITE_TOKEN_PEPPER` read or referenced. No `buyerrecon.com` production traffic. No Render legacy `/collect` call. No `INSERT` / `UPDATE` / `DELETE` / `GRANT` / `REVOKE` against any DB. No `/var/www` edit. No Nginx / systemctl / DNS change. No Track A. No Playwright. No customer-facing output. No Lane A/B writer. No AMS Trust / Pass 1 / Pass 2. The 26 production `ingest_requests` canary evidence rows remain preserved. PR#17q column-level grants remain the runtime steady state. No raw token, no `token_hash`, no pepper, no DSN appears anywhere in this entry, in the diff, in chat, in commit messages, or in any captured artefact derived from this preflight. |
 | Next required operator action | An authorised operator with staging access executes the §15 appendix runbook (or equivalent operator-side procedure) to provision one staging-only `site_write_tokens` row bound to (`workspace_id = buyerrecon_staging_ws`, `site_id = buyerrecon_com`, `label = pr17x_gate2_fixture`) and hand the raw token off via a `chmod 600` `/tmp/pr17x_gate2_token_export.sh` file. The operator then sources that file in the Gate 2 execution shell and re-runs §6 → §7 → §8 of this runbook (Attempt 3 will log to a new §9.1.4 entry). |
+
+#### 9.1.4 Attempt 3 — 2026-05-21 (Helen-as-operator end-to-end execution on the Hetzner staging host — PASS)
+
+This is the Gate 2 — Production-Role Dry Run execution against the staging Sprint 2 `/v1/event` collector, run manually by Helen-as-operator on the Hetzner staging host (`/opt/buyerrecon-backend`) under explicit Helen GO. No Claude Code session executed any §6 / §7 / §8 shell command, no `curl` against production, no `psql` against production. This entry records the categorical evidence reported by the operator after execution. No raw token, no `token_hash`, no token prefix / suffix, no token length value, no `token_id`, no pepper, no DSN, no Authorization header, no `request_id` UUID value, no raw payload, no raw response body, no private-key or certificate body, no env dump, and no vault content appears in this entry, in the diff, in chat, in commit messages, or in any artefact derived from this attempt.
+
+| Item | Value |
+|---|---|
+| Attempting context | Helen-as-operator ran §15.4 → §6 → §7 → §8 manually on the Hetzner staging host with the staging Sprint 2 collector reachable at the §15.4 hand-off URL (staging collector URL ending in `/v1/event`). Heredoc-style `psql -v` bound-variable substitution was used per §8 (no broken `psql -c ... :'var'` shape). Claude Code did not execute any §6 / §7 / §8 command in this attempt. |
+| Repo / host posture | Repo path present at `/opt/buyerrecon-backend`: **yes** · remote host: `hetzner_staging` · `/tmp/pr17x_gate2_token_export.sh` exists: **yes** · export file mode: **600** |
+| §15.4 token hand-off | `GATE2_SITE_WRITE_TOKEN`: **PRESENT** · token length-bucket sanity: **OK** (no length value printed) · token / `token_hash` / token prefix / token suffix / `token_id` / pepper / Authorization header: **NOT PRINTED** |
+| §6.2 env-var presence (categorical only, no values printed) | `GATE2_COLLECTOR_URL`: **SET** · `GATE2_SITE_WRITE_TOKEN`: **SET** · `GATE2_DATABASE_URL`: **SET** (staging-class DSN shape; DSN value never printed) · `GATE2_WORKSPACE_ID`: **SET** (= `buyerrecon_staging_ws`) · `GATE2_SITE_ID`: **SET** (= `buyerrecon_com`) |
+| §6.3 endpoint safety check | **PASS** — `GATE2_COLLECTOR_URL` is the staging collector URL ending in `/v1/event`; production-endpoint check returned: **no** (i.e. URL is not `https://buyerrecon.com/v1/event` and not `https://buyerrecon-backend.onrender.com/collect`). |
+| §6.4 fixture body assertions | **PASS** — no token in body, no production identifier, all 8 backend-required fields present (per §5.2). |
+| §6.5 token-shape sanity check | **PASS** — length-bucket OK; token value never printed. |
+| §6.6 DSN sanity check | **PASS** — DSN appears staging-class (DSN value never printed). |
+| Overall preflight result (§6.1–§6.6) | **PASS** |
+| Fixture preflight | **PASS** |
+| §8.1 staging DB pre-counts (bound to `GATE2_WORKSPACE_ID` / `GATE2_SITE_ID`) | `ingest_pre = 16` · `accepted_pre = 16` · `rejected_pre = 0` |
+| §7 controlled staging POST | `curl` exit-code class: **0** · HTTP status: **200** (HTTP status class: **2xx**) · response redaction check: **token-clean** · Authorization header printed: **no** · raw response body printed: **no** |
+| §7.3 `request_id` extraction | **EXTRACTED — yes** (UUID-shaped `request_id` captured into `GATE2_REQUEST_ID` for §8 binding; UUID value never printed). |
+| §8.2 staging DB post-counts and deltas (bound to `GATE2_WORKSPACE_ID` / `GATE2_SITE_ID`) | `ingest_delta = +1` · `accepted_delta = +1` · `rejected_delta = +0` |
+| §8.3 deterministic row lookup (bound by `GATE2_REQUEST_ID`, heredoc-style `psql -v`) | rows returned: **1** · `auth_status = ok` · `http_status = 200` · `reject_reason_code IS NULL` · `endpoint = /v1/event` · workspace_id matched `GATE2_WORKSPACE_ID` · site_id matched `GATE2_SITE_ID` · UUID and row payload content never printed beyond these categorical fields. |
+| §8.4 accepted-event verification | **PASS** (deterministic via `request_id` join; categorical confirmation only — no payload columns selected). |
+| §8.5 staging Lane A/B counts | `lane_a_count = 0` · `lane_b_count = 0` (no Lane A/B writer enabled by PR#17x; staging Lane A/B posture unchanged). |
+| Operator-side cleanup | `/tmp/pr17x_gate2_token_export.sh`: **removed** · fixture file: **removed** · `/tmp/pr17x-response.json`: **removed** · `GATE2_SITE_WRITE_TOKEN` env: **unset** |
+| §10.1 PASS criteria coverage | **All categorical conditions met:** §6 preflight PASS with no STOP; §7 HTTP `200`; §7 response carried no `reject_reason_code`; §8.0 four-env precondition satisfied; §8.1→§8.2 deltas = `+1 / +1 / +0`; §8.3 deterministic single-row lookup with `auth_status = ok`, `http_status = 200`, `reject_reason_code` NULL, `endpoint = /v1/event`, workspace_id / site_id bound to expected values; §8.5 staging Lane A/B unchanged at `0` / `0`; no raw secret printed anywhere; no production endpoint contacted; no production DB queried. |
+| Attempt 3 verdict | **PASS — Gate 2 controlled fixture acceptance only.** |
+| Categorical reason | The staging Sprint 2 `/v1/event` collector accepted the PR#17v-shape Sprint 2 envelope under staging token auth, the staging DB persisted the corresponding `ingest_requests` row at `auth_status = ok` / `http_status = 200` / `reject_reason_code = NULL` / `endpoint = /v1/event`, and the deterministic `request_id`-bound lookup returned exactly one row whose categorical fields match the staging boundary identifiers (`workspace_id = buyerrecon_staging_ws`, `site_id = buyerrecon_com`). The end-to-end §6 → §7 → §8 chain therefore satisfies the §10.1 PASS criteria. |
+| Boundary affirmations for Attempt 3 | production_touched: **no** · render_collect_called: **no** · endpoint_reflip: **no** · /var/www edit: **no** · DB grants changed: **no** · Track A run: **no** · Playwright run: **no** · customer-facing output: **no** · raw_token_printed: **no** · authorization_header_printed: **no** · request_id_value_printed: **no** · raw_response_body_printed: **no**. No `curl` against `https://buyerrecon.com/v1/event`. No `curl` against `https://buyerrecon-backend.onrender.com/collect`. No production DB query; the 26 production `ingest_requests` evidence rows from the post-PR#17q canary remain preserved. No Nginx / systemctl / DNS change. No AMS Trust / Pass 1 / Pass 2. No Lane A/B writer enabled. PR#17q column-level grants on `buyerrecon_prod_collector_app` remain the runtime steady state. |
+| Scope of this PASS | **§10.1 Gate 2 controlled fixture acceptance only.** Does **not** approve: production `endpointUrl` re-flip, production traffic, Track A, Playwright, customer-facing output, Lane A/B writers, AMS Trust Core exposure, Pass 1 implementation, or Pass 2 implementation. Each subsequent gate (Gate 3 runtime privilege simulation; Gate 4 PR B bundle deploy; Gate 4 PR C `endpointUrl` re-flip + `mode: 'sprint2_v1_event'` activation; Gate 4 PR D organic observation; Gate 4 PR E Track A; any future transport-selection change) remains separately gated by its own explicit Helen GO per §12. |
+| Next required Helen GO | Authorisation to advance to Gate 3 (runtime privilege simulation per `docs/ops/cutover-hard-gates.md` §5) with its own scoped runbook, fail-closed preconditions, and audit trail. |
 
 Subsequent execution attempts (under operator-provisioned staging env or via an authorised operator running §6 → §7 → §8 directly) append their own `9.1.N` block to this log, preserving the audit trail.
 
