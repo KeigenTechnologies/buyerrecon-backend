@@ -23,7 +23,7 @@ PR#17x's Gate 2 controlled fixture dry-run has now been **executed end-to-end** 
 
 Base branch: `sprint2-architecture-contracts-d4cc2bf` (latest known: `de1a148` — "Sprint 2 PR#17u: record host ThinLayer hash proof (#26)").
 
-PR branch: `buyerrecon-sprint2-pr17x-gate2-controlled-fixture-dry-run`
+PR branch: `buyerrecon-sprint2-pr17x-gate2-attempt3-execution`
 
 ---
 
@@ -259,7 +259,7 @@ Run these in the operator's shell before any §7 POST. Each is fail-closed; any 
 ```bash
 cd <buyerrecon-backend clone>
 git branch --show-current
-# Expected: buyerrecon-sprint2-pr17x-gate2-controlled-fixture-dry-run
+# Expected for Attempt 3 proof branch: buyerrecon-sprint2-pr17x-gate2-attempt3-execution
 
 git status --short --untracked-files=all
 # Expected: this docs file shows as " A" or "M"; nothing else outside docs/.
@@ -657,7 +657,7 @@ This subsection logs each Helen-approved execution attempt against this runbook.
 | §8.4 accepted-event verification | **NOT EXECUTED** |
 | §8.5 Lane A/B staging counts | **NOT EXECUTED** (staging not queried; production posture for Lane A/B carried forward from PR#17g / PR#17q without being re-queried — PR#17x makes no production-DB claim) |
 | Attempt 1 verdict | **BLOCKED — staging execution not run** |
-| Categorical reason | The Claude Code session under which this execution attempt was made did not have any `GATE2_*` env var provisioned. Per §6.2 / §8.0 fail-closed preconditions and Helen's GO ("Do not execute POST if: `GATE2_COLLECTOR_URL` is missing"), no HTTP request was issued, no DB query was run, no token was read, no production action was taken. The runbook in §1 / §10.3 therefore remains BLOCKED — awaiting staging operator inputs. |
+| Categorical reason | The Claude Code session under which this execution attempt was made did not have any `GATE2_*` env var provisioned. Per §6.2 / §8.0 fail-closed preconditions and Helen's GO ("Do not execute POST if: `GATE2_COLLECTOR_URL` is missing"), no HTTP request was issued, no DB query was run, no token was read, no production action was taken. At the time of Attempt 1, the runbook in §1 / §10.3 therefore remained BLOCKED — awaiting staging operator inputs (PR#17x has since transitioned to PASS via Attempt 3 — see §9.1.4 and §1). |
 | Boundary affirmations for Attempt 1 | No production deploy. No `/var/www` edit. No `endpointUrl` re-flip. No production traffic. No production DB query. No DB grant change. No Nginx / systemctl / DNS change. No Track A. No Playwright. No customer-facing output. No Lane A/B writer. No AMS Trust / Pass 1 / Pass 2. The 26 production `ingest_requests` canary evidence rows remain preserved. PR#17q column-level grants remain the runtime steady state. **Gate 2 fixture acceptance has not passed.** |
 
 #### 9.1.2 Attempt 2 — 2026-05-20 (manual operator preflight after switching to `buyerrecon-backend`)
@@ -1052,4 +1052,4 @@ PR#17x is explicitly scoped to docs-only (per §2.2 / §11). Introducing a code-
 
 ---
 
-End of PR#17x. **Verdict: BLOCKED — awaiting staging operator inputs. Runbook §6–§8 is ready for execution under explicit Helen GO with staging `GATE2_COLLECTOR_URL` and `GATE2_SITE_WRITE_TOKEN` (and optionally `GATE2_DATABASE_URL`). §15 documents the operator-only safe provisioning pattern for the missing `GATE2_SITE_WRITE_TOKEN`. Once executed, the verdict transitions per §10.**
+End of PR#17x. **Verdict: PASS — Gate 2 controlled fixture acceptance only. Attempt 3 satisfied §10.1; no production deploy, endpointUrl re-flip, Gate 3, Gate 4, Track A, Playwright, customer-facing output, Lane A/B writer, AMS Trust, Pass 1, or Pass 2 is approved by this proof.**
