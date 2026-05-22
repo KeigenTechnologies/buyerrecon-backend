@@ -39,6 +39,7 @@ import {
   classifyTimingBand,
   computeConfidenceCap,
   CONFIDENCE_CAPS_ALLOWED,
+  COUNT_RISK_OBSERVATIONS_SQL,
   COUNT_SESSION_BEHAVIOURAL_FEATURES_V0_2_SQL,
   COUNT_SESSION_FEATURES_SQL,
   countSyntheticFixtureRows,
@@ -541,6 +542,46 @@ describe('K. SQL constants are SELECT-only', () => {
     expect(blockMatch![0]).toMatch(/\blast_seen_at\b\s+TIMESTAMPTZ/);
     // The session_features count SQL also references last_seen_at — parity check.
     expect(COUNT_SESSION_FEATURES_SQL).toMatch(/last_seen_at/);
+  });
+
+  it('K.6 risk_observations_v0_1 SQL uses canonical created_at (not derived_at)', () => {
+    // Negative — PR#18f recorded BLOCKED / schema_mismatch because the observer
+    // referenced a non-existent derived_at column. PR#18g fixes this; the
+    // regression must not return.
+    expect(COUNT_RISK_OBSERVATIONS_SQL).not.toMatch(/derived_at/);
+    // Positive — the query references the canonical column documented by
+    // migration 013 and src/db/schema.sql.
+    expect(COUNT_RISK_OBSERVATIONS_SQL).toMatch(/created_at/);
+  });
+
+  it('K.7 query.ts COUNT_RISK_OBSERVATIONS_SQL block contains no derived_at reference', () => {
+    // POI tables legitimately use derived_at, so we cannot assert
+    // "no derived_at anywhere in query.ts". Instead, inspect the exact
+    // exported risk-observations SQL constant for the bug-class column.
+    expect(COUNT_RISK_OBSERVATIONS_SQL).not.toMatch(/\bderived_at\b/);
+    // And confirm the constant filters on risk_observations_v0_1.
+    expect(COUNT_RISK_OBSERVATIONS_SQL).toMatch(/FROM public\.risk_observations_v0_1/);
+  });
+
+  it('K.8 risk_observations_v0_1.created_at column exists in canonical schema.sql AND derived_at does not', () => {
+    const schemaSrc = readFileSync(join(REPO_ROOT, 'src', 'db', 'schema.sql'), 'utf8');
+    const blockMatch = schemaSrc.match(/CREATE TABLE IF NOT EXISTS risk_observations_v0_1[\s\S]*?\);/);
+    expect(blockMatch).not.toBeNull();
+    // Positive — created_at is the canonical timestamp column on this table.
+    expect(blockMatch![0]).toMatch(/\bcreated_at\b\s+TIMESTAMPTZ/);
+    // Negative — derived_at is NOT a column on this table (the bug Codex / PR#18f caught).
+    expect(blockMatch![0]).not.toMatch(/\bderived_at\b/);
+  });
+
+  it('K.9 migrations/013_risk_observations_v0_1.sql indexes risk_observations on created_at (not derived_at)', () => {
+    const migrationPath = join(REPO_ROOT, 'migrations', '013_risk_observations_v0_1.sql');
+    const migrationSrc  = readFileSync(migrationPath, 'utf8');
+    // The canonical workspace_site index uses created_at DESC.
+    expect(migrationSrc).toMatch(/risk_observations_v0_1_workspace_site[\s\S]*?\(workspace_id, site_id, created_at DESC\)/);
+    // The migration must not declare a derived_at column on risk_observations_v0_1.
+    const tableBlock = migrationSrc.match(/CREATE TABLE IF NOT EXISTS risk_observations_v0_1[\s\S]*?\);/);
+    expect(tableBlock).not.toBeNull();
+    expect(tableBlock![0]).not.toMatch(/\bderived_at\b/);
   });
 });
 

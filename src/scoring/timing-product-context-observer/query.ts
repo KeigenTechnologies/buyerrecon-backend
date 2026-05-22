@@ -171,8 +171,8 @@ SELECT count(*)::bigint AS n
   FROM public.risk_observations_v0_1
  WHERE workspace_id = $3
    AND site_id      = $4
-   AND derived_at   >= $1
-   AND derived_at   <  $2
+   AND created_at   >= $1
+   AND created_at   <  $2
 `;
 
 /* --------------------------------------------------------------------------
