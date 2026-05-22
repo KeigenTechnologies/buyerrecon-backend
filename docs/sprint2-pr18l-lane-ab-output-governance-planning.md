@@ -97,7 +97,7 @@ Three categorical lanes:
 ### 3.2 Lane B — AI-agent / good-bot / dark-internal observation path
 
 - **Underlying table:** `public.scoring_output_lane_b` (migration 011).
-- **Purpose:** captures declared-agent observation (declared in migration 011 as "declared-agent observation"). Field `strength` is NULL in v1 (`scoring_output_lane_b_strength_null_v1` constraint).
+- **Purpose:** captures declared-agent observation (declared in migration 011 as "declared-agent observation"). Field `verification_method_strength` is NULL in v1 (`scoring_output_lane_b_strength_null_v1` constraint).
 - **Customer visibility (v1):** **forbidden categorically and forever in v1.** Lane B remains dark / internal in v1. No customer-facing AI-agent claim, no customer-facing good-bot disclosure, no customer-visible Lane B row, no Lane B summary in any customer report.
 - **PR#18l posture:** Lane B is `lane_b_dark_internal` when Trust signalled `lane_visibility_trust = 'blocked'` (i.e. Lane B evidence present) AND no leak risk. Even then, PR#18l does NOT authorise Lane B emission or surfacing; Lane B is counted / flagged internally only for future policy review.
 
@@ -219,7 +219,7 @@ Explicit list of fields that MUST NOT exist anywhere in `LaneGovernanceCandidate
 - `customer_claim_text` / `customer_message` / `marketing_copy` / `lead_score` / `revenue_estimate` / `pipeline_estimate`.
 - `verification_score` (Lane A table column — never reproduced inside the governance candidate; the future Lane writer PR may surface it on the Lane A row itself, not on the governance candidate).
 - `evidence_band` / `action_recommendation` (Lane A table columns — same posture as `verification_score`).
-- `strength` (Lane B table column — NULL in v1 anyway per migration 011 constraint; never reproduced in the governance candidate).
+- `verification_method_strength` (Lane B table column — NULL in v1 anyway per migration 011 `scoring_output_lane_b_strength_null_v1` constraint; never reproduced in the governance candidate).
 - `ProductDecision` / `RequestedAction` / `TrustDecisionV3` (AMS canonical types — PR#14a §10 reserved-name guard).
 
 ---
@@ -357,25 +357,28 @@ PR#18l references the existing Lane tables as **read-only context**. It does NOT
 ### 10.1 Existing tables (read-only reference)
 
 - `public.scoring_output_lane_a` — defined in `migrations/011_scoring_output_lanes.sql` (lines 103–142). Holds invalid-traffic / behavioural-rubric evidence. Columns include `scoring_output_lane_a_id`, `workspace_id`, `site_id`, `session_id`, `scoring_version`, `verification_score`, `evidence_band`, `action_recommendation`, `reason_codes`, `evidence_refs`, `created_at`. Indexed by `(workspace_id, site_id, created_at DESC)`, `(workspace_id, site_id, session_id)`, `(scoring_version, created_at DESC)`. Unique natural key on the appropriate composite (see migration 011).
-- `public.scoring_output_lane_b` — defined in `migrations/011_scoring_output_lanes.sql` (lines 155–190). Holds declared-agent observation. Columns include `scoring_output_lane_b_id`, `workspace_id`, `site_id`, `session_id`, `scoring_version`, `strength` (NULL in v1 per `scoring_output_lane_b_strength_null_v1` constraint), `verification_method`, `reason_codes`, `evidence_refs`, `created_at`. Indexed by `(workspace_id, site_id, created_at DESC)`, `(workspace_id, site_id, session_id)`, `(scoring_version, created_at DESC)`. Unique natural key on the appropriate composite (see migration 011).
+- `public.scoring_output_lane_b` — defined in `migrations/011_scoring_output_lanes.sql` (lines 155–190). Holds declared-agent observation. Columns include `scoring_output_lane_b_id`, `workspace_id`, `site_id`, `session_id`, `scoring_version`, `verification_method`, `verification_method_strength` (NULL in v1 per `scoring_output_lane_b_strength_null_v1` constraint), `reason_codes`, `evidence_refs`, `created_at`. Indexed by `(workspace_id, site_id, created_at DESC)`, `(workspace_id, site_id, session_id)`, `(scoring_version, created_at DESC)`. Unique natural key on the appropriate composite (see migration 011).
 
 ### 10.2 PR#18l write / grant posture
 
 - **PR#18l does NOT INSERT, UPDATE, DELETE, or TRUNCATE either Lane table.** No DDL, no DML, no migration file.
 - **PR#18l does NOT alter Lane table schema.** No `ALTER TABLE`, no new column, no new constraint, no new index.
-- **PR#18l does NOT change Lane table grants.** PR#17f / PR#17q grant safety is the authoritative posture and stands:
-  - `buyerrecon_migrator` retains `GRANT ALL` on both Lane tables (migration 011 §3).
-  - `buyerrecon_scoring_worker` retains `GRANT SELECT, INSERT, UPDATE` on both Lane tables (migration 011 §3).
-  - `buyerrecon_internal_readonly` retains `GRANT SELECT` on both Lane tables (migration 011 §3).
-  - `buyerrecon_customer_api` retains **`REVOKE ALL`** on both Lane tables (migration 011 §3 / migration 016 grant safety) — the customer API role has zero access to either Lane table, and PR#18l does NOT change this.
-  - `PUBLIC` retains `REVOKE ALL` on both Lane tables.
-- **Customer API must not get direct Lane table access.** Migration 011 / migration 016 already enforce this with `REVOKE ALL ... FROM buyerrecon_customer_api`. PR#18l re-affirms; any future PR that proposes to grant `buyerrecon_customer_api` ANY access to either Lane table is a separately-gated PR requiring Helen GO and Codex review.
-- **Any future Lane writer must be separately planned, reviewed, tested, and gated.** The future Lane writer PR is responsible for:
-  - Defining the precise INSERT path (`buyerrecon_scoring_worker` is the writing role).
+- **PR#18l does NOT change Lane table grants.** PR#17f / PR#17q grant safety is the authoritative posture and stands. The final state established by `migrations/016_scoring_output_lane_grant_safety.sql` (which supersedes the original migration 011 §3 grant block for `buyerrecon_scoring_worker`) is:
+  - **`buyerrecon_migrator`** — the **only** role with `GRANT ALL` on `public.scoring_output_lane_a` and `public.scoring_output_lane_b` (migration 016 §3). All schema-level operations against the Lane tables are migrator-only.
+  - **`buyerrecon_internal_readonly`** — `GRANT SELECT` on both Lane tables (migration 016 §4) and **no** `INSERT` / `UPDATE` / `DELETE`. Migration 016 §6.c / §6.d assertions enforce this at apply time (`has_table_privilege` checks raise BLOCKER if INSERT/UPDATE/DELETE is ever present).
+  - **`buyerrecon_customer_api`** — **no access**, **no `SELECT`**, no DML. Migration 011 §4 originally `REVOKE`d all access; migration 016 §5 re-applies `REVOKE ALL` defensively and asserts no `SELECT` on either Lane table at apply time (migration 016 §6.b assertions raise BLOCKER if `SELECT` is ever present, citing "Hard Rule I violated" for Lane B).
+  - **`buyerrecon_scoring_worker`** — **no `SELECT`, no `INSERT`, no `UPDATE`, no `DELETE`** on `public.scoring_output_lane_a` or `public.scoring_output_lane_b`. Migration 016 §2 (`REVOKE ALL ON scoring_output_lane_a FROM buyerrecon_scoring_worker;` / `REVOKE ALL ON scoring_output_lane_b FROM buyerrecon_scoring_worker;`) removed the durable Lane A/B writer privilege that migration 011 had originally granted; migration 016 §6.a assertions enforce closure at apply time (BLOCKER raised if `SELECT` / `INSERT` / `UPDATE` / `DELETE` is ever present on either Lane table). **The doc must not imply that `buyerrecon_scoring_worker` is or will be the Lane writer role.**
+  - **`PUBLIC`** — `REVOKE ALL` on both Lane tables (migration 011 §4 baseline; not relaxed by migration 016).
+- **Customer API must not get direct Lane table access.** Migration 011 §4 / migration 016 §5 enforce this with `REVOKE ALL ... FROM buyerrecon_customer_api` plus the §6.b apply-time assertion. PR#18l re-affirms; any future PR that proposes to grant `buyerrecon_customer_api` ANY access to either Lane table is a separately-gated PR requiring Helen GO, Codex review, and a migration/proof of its own.
+- **Any future Lane writer must be separately planned, reviewed, tested, and gated.** A future Lane writer PR must define the writer role and any required grant amendment from scratch — `buyerrecon_scoring_worker` is **not** preselected by PR#18l as the writing role, and PR#18l does **not** imply or pre-authorise re-granting Lane A/B writer privilege to `buyerrecon_scoring_worker` or to any other existing role. Any Lane writer change or Lane grant change remains separately gated by:
+  - **Explicit Helen GO**, scoped to that writer PR alone (not implied by PR#18l).
+  - **Codex review** of the proposed grant amendment and writer code path.
+  - **A migration file** that supersedes the migration 016 §2 / §6.a closure, with explicit justification in its preamble.
+  - **A staging proof** that demonstrates the writer path under the new grant posture without regressing the migration 016 §6 invariants.
   - Defining idempotency / natural-key conflict handling.
   - Defining UPDATE rules (when, by which role, with what audit).
   - Defining test coverage (unit + integration + staging proof).
-  - Re-checking grant posture at the time the writer PR is opened.
+  - Re-checking the entire grant posture at the time the writer PR is opened (no carry-forward assumption from PR#18l).
   - Receiving its own explicit Helen GO scoped to that writer PR.
 
 ---
