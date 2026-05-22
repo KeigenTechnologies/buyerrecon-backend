@@ -108,7 +108,7 @@ Trust must NEVER read or accept any of the following as input — neither direct
 
 Trust is a **multi-dimensional planning layer**, not a single number. Trust v0.1 emits six categorical dimensions plus one categorical summary (§5).
 
-Each of the six dimensions uses the enum `'low' | 'medium' | 'not_usable'` — **never `'high'`**. The PR#18b §7.2 confidence-cap policy carries forward: high confidence is not emitted at the BuyerRecon planning layer in any contract this PR introduces.
+The `evidence_trust`, `timing_trust`, `product_context_trust`, and `risk_trust` dimensions use `'low' | 'medium' | 'not_usable'`. The `action_trust` and `lane_visibility_trust` dimensions use separate categorical enums: `action_trust` uses `'not_authorized' | 'planning_only'`, and `lane_visibility_trust` uses `'internal_only' | 'lane_a_preview_only' | 'blocked'`. **None of the six dimensions allows `'high'`.** The PR#18b §7.2 confidence-cap policy carries forward: high confidence is not emitted at the BuyerRecon planning layer in any contract this PR introduces.
 
 ### 4.1 `evidence_trust`
 
