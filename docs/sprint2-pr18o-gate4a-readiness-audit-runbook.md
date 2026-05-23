@@ -432,11 +432,13 @@ Stop-line: any Lane grant boolean does not match expected; any Lane row count is
 
 Categorise whether unexpected Sprint 2 production traffic has reached the production collector. **Only** count-only / category-only checks, **only** if a safe source exists, **only** with read-only DB role access already established in §5.F. No raw `request_id`. No raw `session_id`. No raw payload. No raw header. No customer data. No log lines containing identifiers.
 
+Use `ingest_requests.endpoint = '/v1/event'` as the Sprint 2 production-traffic category check. Do not use a route field; the collector ledger records endpoint.
+
 ```
 # Sprint 2 ingest activity, count only.
 psql "$DATABASE_URL" -tAc "
   SELECT COUNT(*) FROM ingest_requests
-  WHERE route = '/v1/event';
+  WHERE endpoint = '/v1/event';
 "
 
 # Sprint 2 accepted-event activity, count only.
