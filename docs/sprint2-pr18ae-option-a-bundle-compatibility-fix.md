@@ -1,4 +1,4 @@
-# Sprint 2 PR#18ae — Source reconciliation decision record
+# Sprint 2 PR#18ae — Source canonicality decision record
 
 > **Posture:** docs-only handoff. No code change. No bundle build.
 > No `endpointUrl` flip. No production traffic. No canary. No
@@ -8,57 +8,69 @@
 > No raw token, no Authorization header value, no DSN, no raw
 > payload printed.
 
-> **Verdict superseded:** an earlier draft of this PR recorded
-> `BLOCKED_SOURCE_MISSING`. That conclusion was scoped to the
-> backend repo only and is **withdrawn**. A read-only inspection
-> of `buyerrecon-website` and `KeigenTechnologies/ams` (recorded
-> in §3) located the deployed artifact and its source. The
-> current verdict is **`BLOCKED_SOURCE_RECONCILIATION_REQUIRED`**
-> (classification: **MIXED / NEEDS_DECISION**).
+> **Verdict history (two superseded, one current):**
+> - **Superseded / withdrawn:** an early draft recorded
+>   `BLOCKED_SOURCE_MISSING` (scoped to the backend repo only).
+> - **Superseded / withdrawn:** a second draft recorded
+>   `BLOCKED_SOURCE_RECONCILIATION_REQUIRED` (classification
+>   MIXED / NEEDS_DECISION), based on a **stale local AMS clone**
+>   that lacked the Sprint 2 envelope.
+> - **Current verdict:** **`AMS_SOURCE_ALREADY_CANONICAL`**. A
+>   read-only `git ls-remote origin refs/heads/main` confirmed
+>   GitHub AMS `origin/main` is at PR#17v commit `13d4900` and
+>   **already contains** the Sprint 2 ThinSDK envelope source. The
+>   earlier "missing / unreconciled" conclusions came from the
+>   stale local clone, not the true remote state.
 
 ---
 
 ## 1. Status / verdict
 
-**`BLOCKED_SOURCE_RECONCILIATION_REQUIRED`** — classification
-**MIXED / NEEDS_DECISION**.
+**`AMS_SOURCE_ALREADY_CANONICAL`** — the Sprint 2 ThinSDK envelope
+source is already canonical on GitHub AMS `origin/main`. There is
+**no source blocker**. (This supersedes the earlier
+`BLOCKED_SOURCE_RECONCILIATION_REQUIRED` / MIXED·NEEDS_DECISION
+verdict, which was drawn from a stale local clone — see header.)
 
-The ThinSDK / browser artifact is **not** globally missing. It is
-simply not owned by the backend repo. The inspection in §3
-established:
+The ThinSDK / browser artifact is **not** missing and the AMS
+source is **not** unreconciled. The inspection in §3 established:
 
 - The **backend repo is not the browser artifact source** — and
   correctly so. Nothing should be built or duplicated here.
 - **`buyerrecon-website` owns the website-repo static artifact and
-  the init/config**, and the deployed `thin-sdk.iife.js` is
+  the init/config**, and its `thin-sdk.iife.js` is
   **already Sprint 2-capable** (it carries the
   `mode: 'sprint2_v1_event'` envelope path).
-- **Canonical AMS `main` does not contain the Sprint 2 envelope
-  source.** The capability that shipped into the website
-  artifact was built from a side-clone, and the source commit is
-  not on `main`.
-- A **source-of-truth reconciliation decision** is therefore
-  required before any compatibility patch or deploy. The blocker
-  is not "no source" — it is "source exists but the canonical
-  source-of-truth is not the thing that produced the deployed
-  capability".
+- **Canonical AMS GitHub `origin/main` already contains the
+  Sprint 2 envelope source** at PR#17v commit `13d4900`
+  (confirmed read-only via `git ls-remote`). The capability that
+  shipped into the website artifact builds from this canonical
+  source.
+- The earlier "source missing / unreconciled" conclusion was an
+  artifact of a **stale local AMS clone**
+  (`…/keigentechnologies/ams`, local `main` `9bf4cc9`, ~15 commits
+  behind `origin/main`, dirty with unrelated Go WIP). Local-clone
+  staleness is **not** a source-of-truth problem.
 
-So the compatibility *capability* is present and the activation
-path is likely a small config opt-in (§5), but PR#18ae cannot
-proceed to a patch/deploy step until the AMS source-integrity
-question is resolved (§6 step 1).
+So the compatibility *capability* is present, its source is
+canonical, and the activation path is a small website config
+opt-in (§5). The remaining steps are approval-gated product
+actions (§6), **not** source blockers.
 
-### 1.1 Why `BLOCKED_SOURCE_RECONCILIATION_REQUIRED` and not `BLOCKED_SOURCE_MISSING`
+### 1.1 How the verdict was corrected twice
 
-`BLOCKED_SOURCE_MISSING` asserts the source cannot be found.
-That is now false: the deployed artifact is in
+`BLOCKED_SOURCE_MISSING` (first draft) asserted the source could
+not be found — false: the website artifact is in
 `buyerrecon-website/thinlayer/` and the SDK source tree is in
-`KeigenTechnologies/ams` at `thin/packages/thin-sdk/src/`. The
-real blocker is narrower and more specific: the **Sprint 2
-envelope source** that produced the deployed capability is only
-in the local side-clone `/Users/admin/github/keigentechnologies/ams-pr17v`
-and is **not** on canonical AMS `main`. That is a reconciliation
-problem, not an absence problem — hence the renamed verdict.
+`KeigenTechnologies/ams` at `thin/packages/thin-sdk/src/`.
+`BLOCKED_SOURCE_RECONCILIATION_REQUIRED` (second draft) then
+asserted the Sprint 2 envelope was only in the local side-clone
+`/Users/admin/github/keigentechnologies/ams-pr17v` and **not** on
+canonical AMS `main` — also false: that read came from a **stale
+local clone**. A read-only `git ls-remote origin refs/heads/main`
+returned commit `13d4900` (PR#17v), proving GitHub `origin/main`
+already carries the Sprint 2 envelope source. The correct verdict
+is therefore `AMS_SOURCE_ALREADY_CANONICAL`: nothing to reconcile.
 
 ### 1.2 What this PR is and is not
 
@@ -111,17 +123,18 @@ opened by PR#18ac §6.2 and confirmed by PR#18ad. The path is:
    `source_missing` / `unknown_not_proven`.
 3. **PR#18ae (this PR).** Was scoped by PR#18ac §6.2 step 2 as
    the Option A compatibility fix. Its first action was source
-   discovery. An earlier draft, limited to the backend repo,
-   concluded `BLOCKED_SOURCE_MISSING`. A subsequent **read-only
-   inspection of `buyerrecon-website` and AMS** (this revision,
-   §3) found the deployed artifact and source — so the verdict
-   is revised to `BLOCKED_SOURCE_RECONCILIATION_REQUIRED`. The
-   key correction: the source is **not** globally missing; it is
-   split across repos and the canonical AMS source-of-truth is
-   out of sync with the deployed capability.
-4. **PR#18af (planned).** Staging fixture dry-run. Now gated
-   behind two prerequisites (§6): an AMS source-reconciliation
-   decision, then an approved website config/artifact patch.
+   discovery. The verdict was corrected twice (§1.1): an early
+   backend-only draft concluded `BLOCKED_SOURCE_MISSING`; a
+   second draft, reading a **stale local AMS clone**, concluded
+   `BLOCKED_SOURCE_RECONCILIATION_REQUIRED`. A read-only
+   `git ls-remote` then proved GitHub AMS `origin/main` already
+   carries the Sprint 2 envelope source (commit `13d4900`), so
+   the final verdict is `AMS_SOURCE_ALREADY_CANONICAL`: the
+   source is canonical — not missing and not unreconciled.
+4. **PR#18af (planned).** Staging fixture dry-run. Gated behind a
+   single prerequisite (§6): an approved website config/artifact
+   patch. There is **no** AMS source-reconciliation prerequisite —
+   the source is already canonical.
 5. **PR#18ag … PR#18ai (planned, unapproved).** Staging soak,
    canary scope, Gate 4C `endpointUrl` flip. None in scope for
    PR#18ae; none approved.
@@ -184,33 +197,46 @@ built via `tsup`, output sha256
 and that PR#17w was an **artifact update only — no deploy, no
 `endpointUrl` flip, no Sprint 2 mode activation**.
 
-### 3.3 `KeigenTechnologies/ams` — SDK source owner (SPLIT / UNRECONCILED)
+### 3.3 `KeigenTechnologies/ams` — SDK source owner (CANONICAL ON `origin/main`)
 
 AMS is the upstream SDK source and build owner: the ThinSDK
-source tree is at `thin/packages/thin-sdk/src/` and is built
-with `tsup`. **However:**
+source tree is at `thin/packages/thin-sdk/src/` and is built with
+`tsup`. The Sprint 2 envelope source is **already canonical**:
 
-- **Canonical AMS `main`** (`/Users/admin/github/keigentechnologies/ams`,
-  HEAD `9bf4cc9`) defines `TransportMode = 'mock' | 'beacon' |
-  'fetch'` and its `createTransport` switch handles only those
-  three. It contains **no `sprint2-envelope.ts`** and **no
-  `sprint2_v1_event`** token anywhere in `thin/`. The PR#17v
-  commit `13d4900` is **not an ancestor of `main` HEAD and is
-  not present in the canonical clone at all**.
-- The **`feat/thin-layer-v1`** branch in AMS also lacks the
-  Sprint 2 envelope source.
-- The **side-clone `/Users/admin/github/keigentechnologies/ams-pr17v`**
-  **does** contain `thin/packages/thin-sdk/src/sprint2-envelope.ts`
-  and the `sprint2_v1_event` token across `types.ts`,
-  `transport.ts`, and `index.ts`. This side-clone (at commit
-  `13d4900`) is the **only** source location of the Sprint 2
-  capability that shipped into the deployed website artifact.
+- **GitHub AMS `origin/main` is at PR#17v commit `13d4900`.** A
+  read-only `git ls-remote origin refs/heads/main` returns
+  `13d49003…`. That commit added `sprint2-envelope.ts` and the
+  `sprint2_v1_event` body mode (`types.ts`, `transport.ts`,
+  `index.ts`). The canonical remote source-of-truth therefore
+  **already contains** the Sprint 2 capability that shipped into
+  the website artifact.
+- **The local clone `/Users/admin/github/keigentechnologies/ams`
+  is stale, not authoritative.** Its local `main` is `9bf4cc9`
+  and its `origin/main` tracking ref is `a6855a5` (PR#7) — ~15
+  commits behind GitHub `origin/main`, and it never fetched the
+  PR#17v merge (`13d4900` is absent from the clone's objects). It
+  also carries unrelated uncommitted Go WIP. **A stale local
+  clone is not a missing source.** The earlier drafts inspected
+  this clone and wrongly generalised "canonical AMS lacks the
+  Sprint 2 source".
+- The clone `/Users/admin/github/keigentechnologies/ams-pr17v` is
+  at `13d4900` (matches `origin/main`); its committed
+  `thin/packages/thin-sdk/dist/index.iife.js` has sha256
+  `048d1d23…`.
 
-**Source-integrity risk:** the deployed Sprint 2-capable
-artifact has **no maintained source-of-truth on canonical AMS
-`main`**. A rebuild from current `main` would **lose** the
-Sprint 2 envelope capability. This is the core reason for the
-`BLOCKED_SOURCE_RECONCILIATION_REQUIRED` verdict.
+**Provenance (three-way sha match):** the website
+`thinlayer/thin-sdk.iife.js`, the ams-pr17v committed
+`dist/index.iife.js`, and the PR#17w-recorded build output are
+all sha256 `048d1d23…`. The deployed artifact is provably the
+build of the source now canonical on `origin/main`.
+
+**No source-integrity risk remains.** Rebuilding from canonical
+`origin/main` reproduces the Sprint 2 capability. The only
+follow-up is local-clone hygiene, which is separate from
+source-of-truth: before any build from the local AMS clone,
+preserve / branch / commit the unrelated Go WIP, then `git fetch`
+and fast-forward local `main` to `origin/main`. This doc does
+**not** perform that — the dirty local clone is left untouched.
 
 ---
 
@@ -275,42 +301,42 @@ missing" is **withdrawn**. The corrected result:
 - **Activation is likely a `mode`/config opt-in**, not an SDK
   rewrite: adding `mode: 'sprint2_v1_event'` to the website's
   `ThinSDK.init({…})` call in `br-thinlayer-init.js`.
-- **But the source-of-truth is not reconciled.** The canonical
-  AMS `main` lacks the Sprint 2 envelope source (§3.3), so the
-  deployed capability has no maintained upstream. Patching the
-  website config to activate a capability whose source is
-  orphaned would lock in a maintenance/audit gap.
-- **Therefore: do not patch and do not deploy** until the source
-  reconciliation decision in §6 step 1 is made.
+- **The source-of-truth is canonical.** GitHub AMS `origin/main`
+  already contains the Sprint 2 envelope source at `13d4900`
+  (§3.3), so the capability has a maintained upstream. There is
+  no source-orphaning gap to resolve.
+- **Therefore the remaining gate is approval, not source.** Do
+  not patch the website config or deploy as part of PR#18ae; the
+  website opt-in is the next *approval-gated* product step (§6),
+  not a source-blocked one.
 
 PR#18ae makes **no** change to the website config, the AMS source,
-or the deployed artifact. It records the capability and the
-blocker only.
+or the website-repo artifact. It records the capability and
+confirms the source is canonical only.
 
 ---
 
-## 6. Next steps (revised path)
+## 6. Next steps (corrected path)
 
-The previous draft pointed directly to PR#18af (staging fixture
-dry-run). That is now **deferred** behind two prerequisites:
+There is **no AMS source-reconciliation PR**. The source is
+already canonical on `origin/main` (§3.3). The path is:
 
-### Step 1 — AMS source reconciliation decision (REQUIRED FIRST)
+### Step 1 — No AMS restore needed (source already canonical)
 
-Resolve the source-of-truth for the Sprint 2 envelope. Options:
+The Sprint 2 envelope source is on GitHub AMS `origin/main` at
+`13d4900`. **No restore / reconciliation PR is required and none
+should be created.** Two optional, separate, operator-owned
+follow-ups exist:
 
-- **Merge / restore** the PR#17v Sprint 2 envelope source
-  (`sprint2-envelope.ts` + the `sprint2_v1_event` mode in
-  `types.ts` / `transport.ts` / `index.ts`) from
-  `/Users/admin/github/keigentechnologies/ams-pr17v` (commit
-  `13d4900`) into canonical `KeigenTechnologies/ams` `main`; **or**
-- **Document a different official source-of-truth** for the
-  deployed capability and record why canonical `main` does not
-  hold it.
+- **Local-clone hygiene:** preserve / branch / commit the
+  unrelated Go WIP in the stale local AMS clone, then `git fetch`
+  and fast-forward its `main` to `origin/main`. Not done here.
+- **Reproducibility proof (only if Helen asks):** in an isolated
+  worktree off `origin/main`, run `npm ci && npm test &&
+  npm run build` in `thin/` and confirm the rebuilt
+  `dist/index.iife.js` sha256 == `048d1d23…`. No deploy.
 
-Until this is done, the deployed Sprint 2 capability has no
-maintained source and must not be activated.
-
-### Step 2 — Website config / artifact patch (only after step 1, only under approved sequence)
+### Step 2 — Website config / artifact patch (the real next product step, approval-gated)
 
 - Add `mode: 'sprint2_v1_event'` to the website's
   `br-thinlayer-init.js` `ThinSDK.init({…})` call **only under an
@@ -323,13 +349,12 @@ maintained source and must not be activated.
   capture). This sequencing question must be answered explicitly
   before any change; see §7.
 
-### Step 3 — PR#18af staging fixture dry-run (only after steps 1 + 2)
+### Step 3 — PR#18af staging fixture dry-run (only after an approved website patch)
 
-Only after source reconciliation **and** an approved website
-patch may PR#18af proceed: a staging fixture dry-run asserting a
-real bundle-emitted Sprint 2 payload satisfies the §-PR#18ad
-contract end-to-end against a staging `/v1/event`. PR#18af is not
-authorised by PR#18ae.
+Only after an approved website patch may PR#18af proceed: a
+staging fixture dry-run asserting a real bundle-emitted Sprint 2
+payload satisfies the §-PR#18ad contract end-to-end against a
+staging `/v1/event`. PR#18af is not authorised by PR#18ae.
 
 ---
 
@@ -344,9 +369,11 @@ authorised by PR#18ae.
   not (by virtue of PR#17w) on the production host.
 - **Do not duplicate or rebuild ThinSDK in the backend repo.** The
   backend is correctly not the artifact source.
-- **Do not rebuild from canonical AMS `main` until the Sprint 2
-  source is reconciled** (§3.3) — a rebuild from `main` would lose
-  the Sprint 2 envelope capability.
+- **Do not disturb the stale / dirty local AMS clone** at
+  `…/keigentechnologies/ams` (do not fetch, reset, stash, or
+  fast-forward it here; it holds unrelated Go WIP). Any rebuild
+  must use canonical `origin/main` (`13d4900`), which **already
+  contains** the Sprint 2 envelope — not the stale local `main`.
 - **Do not enable `sprint2_v1_event` mode while still pointing at
   `/collect`** unless legacy `/collect` compatibility with Sprint 2
   single-object bodies is first proven. Enabling Sprint 2 mode
@@ -418,9 +445,9 @@ PR#18ae **does not**:
 - Flip `endpointUrl` to `/v1/event`. Production endpoint category
   remains `render_legacy_collect`.
 - Enable `sprint2_v1_event` mode in the website config.
-- Merge, restore, or change any AMS source (the §6 step-1
-  reconciliation is a decision to be made, not an action taken
-  here).
+- Merge, restore, fetch, reset, stash, or otherwise change any
+  AMS clone or AMS source (none is needed — `origin/main` is
+  already canonical; the stale local clone is left untouched).
 - Build, rebuild, deploy, or hash any artifact.
 - Run any canary or generate any production traffic (no `curl`,
   no browser session, no synthetic agent against any collector).
@@ -441,28 +468,31 @@ PR#18ae **does not**:
 
 ## 11. Acceptance criteria
 
-PR#18ae is accepted as `BLOCKED_SOURCE_RECONCILIATION_REQUIRED`
-(MIXED / NEEDS_DECISION) iff all of the following hold:
+PR#18ae is accepted as `AMS_SOURCE_ALREADY_CANONICAL` iff all of
+the following hold:
 
-- [x] The withdrawn `BLOCKED_SOURCE_MISSING` verdict is explicitly
-      superseded (§1, header note).
-- [x] Source discovery records the deployed artifact + init/config
-      in `buyerrecon-website` (§3.2) and the SDK source ownership +
-      reconciliation gap in AMS (§3.3).
-- [x] The deployed artifact is recorded as Sprint 2-capable, with
-      the `legacy_array` vs `sprint2_v1_event` emission difference
-      and the FetchTransport / `application/json` / `keepalive`
-      facts (§4).
+- [x] Both superseded verdicts (`BLOCKED_SOURCE_MISSING` and
+      `BLOCKED_SOURCE_RECONCILIATION_REQUIRED`) are explicitly
+      withdrawn (§1, header note).
+- [x] Source discovery records the website-repo artifact +
+      init/config (§3.2) and that AMS `origin/main` already holds
+      the Sprint 2 envelope source at `13d4900` (§3.3).
+- [x] The website-repo artifact is recorded as Sprint 2-capable,
+      with the `legacy_array` vs `sprint2_v1_event` emission
+      difference and the FetchTransport / `application/json` /
+      `keepalive` facts (§4).
 - [x] The active `endpointUrl` is recorded as legacy `/collect`,
       no `/v1/event` wired, and the no-flip rule restated (§5.1).
-- [x] The compatibility result is "capability present, activation
-      is a config opt-in, but source not reconciled — do not
-      patch/deploy until the decision is made" (§5.2).
-- [x] The next-step path is revised to: (1) AMS source
-      reconciliation decision, (2) approved website config/artifact
-      patch, (3) PR#18af — in that order (§6).
-- [x] The source-integrity risk (rebuild from canonical `main`
-      loses Sprint 2 capability) is recorded (§3.3, §7).
+- [x] The compatibility result is "capability present, source
+      canonical, activation is an approval-gated website config
+      opt-in" (§5.2).
+- [x] The next-step path is corrected to: no AMS restore;
+      (1) optional local-clone hygiene / reproducibility proof,
+      (2) approval-gated website config patch, (3) PR#18af (§6).
+- [x] No source-integrity risk remains: a rebuild from canonical
+      `origin/main` reproduces the Sprint 2 capability; the only
+      caution is not to disturb the stale / dirty local clone
+      (§3.3, §7).
 - [x] Gate 4C remains unapproved and
       `BLOCKED_PENDING_COMPATIBILITY_PLAN` (§1.3, §5.1).
 - [x] No code changed; no tests run (none applicable); no artifact
@@ -478,12 +508,12 @@ PR#18ae is accepted as `BLOCKED_SOURCE_RECONCILIATION_REQUIRED`
 
 ## 12. Handoff: what the next-approved work must do
 
-1. **Make the AMS source-reconciliation decision (§6 step 1).**
-   Either merge/restore the PR#17v Sprint 2 envelope source from
-   `ams-pr17v` (commit `13d4900`) into canonical
-   `KeigenTechnologies/ams` `main`, or formally designate and
-   document a different source-of-truth. Record which, and the
-   resulting canonical commit, in that work's proof doc.
+1. **No AMS source-reconciliation step (§6 step 1).** The source
+   is already canonical on GitHub AMS `origin/main` at `13d4900`.
+   Do not create a restore / reconciliation PR. Optionally, and
+   operator-owned: perform local-clone hygiene (preserve the Go
+   WIP, then fetch + fast-forward the stale local `main`) and/or
+   an isolated reproducibility build — both optional.
 2. **Confirm the `/collect`-vs-`/v1/event` sequencing question
    (§5.2, §6 step 2, §7).** Determine whether the legacy
    `/collect` collector can accept Sprint 2 single-object bodies.
@@ -494,13 +524,13 @@ PR#18ae is accepted as `BLOCKED_SOURCE_RECONCILIATION_REQUIRED`
    `endpointUrl` unless the flip is jointly approved, preserve
    auth/token binding (server-derived; no client-truth shift; no
    secret printed).
-4. **Rebuild + re-verify the artifact from the reconciled source,
-   not from a side-clone.** Record local-build artifact sha256s.
-   Do not deploy.
+4. **If rebuilding, build from canonical `origin/main` (`13d4900`),
+   not from the stale local clone.** Record local-build artifact
+   sha256s (expected `048d1d23…`). Do not deploy.
 5. **Then PR#18af** — staging fixture dry-run. Not before steps
    1–4.
 6. **Carry forward §7, §8, §9, §10 verbatim.** Update only what
-   genuinely changes (the reconciliation outcome, the actual
+   genuinely changes (the source-canonicality outcome, the actual
    config patch, the staging proof).
 
-PR#18ae closes here as `BLOCKED_SOURCE_RECONCILIATION_REQUIRED`.
+PR#18ae closes here as `AMS_SOURCE_ALREADY_CANONICAL`.
