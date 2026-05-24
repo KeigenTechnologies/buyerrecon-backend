@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  CLAIM_INFERENCE_CONFIDENCE_FIELD,
   DEFAULT_EXTERNAL_OUTPUT_FLAGS,
   EXTERNAL_REPORT_FIXTURES,
+  FIXTURE_SAFE_CLAIMS,
+  SAFE_CLAIM_MINIMUM_CONFIDENCE_FIELD,
   assertCustomerSafeText,
   buildReportSnapshot,
   renderReportMarkdown,
@@ -30,6 +33,20 @@ function markdown(name: keyof typeof EXTERNAL_REPORT_FIXTURES): string {
   return renderReportMarkdown(report(name));
 }
 
+function candidate(overrides: Partial<SafeClaimEntry> = {}): SafeClaimEntry {
+  return {
+    template_id: 'safe.test.v1',
+    template_kind: 'fact',
+    copy_template: 'BuyerRecon observed a categorical evidence signal.',
+    required_placeholders: [],
+    allowed_language_tags: ['observed'],
+    forbidden_language_tags: [],
+    minimum_evidence_grade: 'E1',
+    [SAFE_CLAIM_MINIMUM_CONFIDENCE_FIELD]: null,
+    ...overrides,
+  };
+}
+
 describe('external report contracts', () => {
   it('contracts compile and default feature flags remain false', () => {
     const snapshot: ReportSnapshot = report('empty_state');
@@ -45,19 +62,52 @@ describe('external report contracts', () => {
 
   it('safe-claim validation rejects forbidden phrases', () => {
     for (const phrase of forbiddenCustomerPhrases) {
-      const candidate: SafeClaimEntry = {
-        template_id: 'safe.test.v1',
-        template_kind: 'fact',
+      const unsafe = candidate({
         copy_template: `This says ${phrase}.`,
-        required_placeholders: [],
-        allowed_language_tags: ['observed'],
-        forbidden_language_tags: [],
-        minimum_evidence_grade: 'E1',
-        minimum_evidence_confidence: null,
-      };
-      expect(validateSafeClaimEntry(candidate)).toContain('copy_template_contains_forbidden_language');
-      expect(assertCustomerSafeText(candidate.copy_template).length).toBeGreaterThan(0);
+      });
+      expect(validateSafeClaimEntry(unsafe)).toContain('copy_template_contains_forbidden_language');
+      expect(assertCustomerSafeText(unsafe.copy_template).length).toBeGreaterThan(0);
     }
+  });
+
+  it('safe-claim validation rejects unapproved non-forbidden sales phrasing', () => {
+    expect(validateSafeClaimEntry(candidate({
+      copy_template: 'This visitor is a strong sales prospect',
+    }))).toContain('copy_template_missing_allowed_language');
+  });
+
+  it('safe-claim validation accepts approved and explicit structural copy', () => {
+    expect(validateSafeClaimEntry(candidate({
+      copy_template: 'Observed activity is consistent with early buying research',
+      allowed_language_tags: ['observed', 'consistent_with'],
+    }))).toEqual([]);
+
+    expect(validateSafeClaimEntry(candidate({
+      template_kind: 'method_note',
+      copy_template: 'System status',
+      allowed_language_tags: ['structural'],
+      minimum_evidence_grade: 'E0',
+    }))).toEqual([]);
+
+    expect(validateSafeClaimEntry(candidate({
+      copy_template: 'System status',
+      allowed_language_tags: ['structural'],
+      minimum_evidence_grade: 'E0',
+    }))).toContain('copy_template_missing_allowed_language');
+  });
+
+  it('fixture safe-claim templates satisfy the same validator', () => {
+    for (const entry of Object.values(FIXTURE_SAFE_CLAIMS)) {
+      expect(validateSafeClaimEntry(entry)).toEqual([]);
+    }
+  });
+
+  it('ClaimInference emits the PR19b confidence_band contract field', () => {
+    const inference = report('single_session').session_evidence_cards[0]?.claim_block.inferences[0];
+    expect(inference).toBeDefined();
+    expect(CLAIM_INFERENCE_CONFIDENCE_FIELD).toBe('confidence_band');
+    expect(inference).toHaveProperty('confidence_band', 'low');
+    expect(inference).not.toHaveProperty('evidence_confidence');
   });
 
   it('ClaimBlock arrays are mandatory and section shapes stay disjoint', () => {

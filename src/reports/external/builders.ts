@@ -1,4 +1,5 @@
 import {
+  CLAIM_INFERENCE_CONFIDENCE_FIELD,
   DEFAULT_EXTERNAL_OUTPUT_FLAGS,
   EXTERNAL_REPORT_SCHEMA_VERSION,
   type AccountEvidenceCard,
@@ -261,7 +262,7 @@ function buildClaimBlock(input: ClaimBlockBuildInput): ClaimBlock {
         : 'safe.inference.consistent_multi_signal.v1',
       evidence_atom_ids: input.atoms.map((a) => a.atom_id),
       reason_codes: ['evidence_complete_enough_for_review'],
-      evidence_confidence: input.scope === 'account' ? 'medium' : 'low',
+      [CLAIM_INFERENCE_CONFIDENCE_FIELD]: input.scope === 'account' ? 'medium' : 'low',
       score_version_id: 'external-report-mvp-v0',
       knob_version_id: 'external-report-mvp-v0',
     }];

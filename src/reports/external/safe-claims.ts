@@ -6,6 +6,10 @@ import type {
   ClaimRecommendation,
   EvidenceGrade,
 } from './contracts.js';
+import {
+  CLAIM_INFERENCE_CONFIDENCE_FIELD,
+  SAFE_CLAIM_MINIMUM_CONFIDENCE_FIELD,
+} from './contracts.js';
 
 export type SafeClaimTemplateKind =
   | 'fact'
@@ -39,7 +43,7 @@ export interface SafeClaimEntry {
   allowed_language_tags: AllowedLanguageTag[];
   forbidden_language_tags: ForbiddenLanguageTag[];
   minimum_evidence_grade: EvidenceGrade;
-  minimum_evidence_confidence: 'low' | 'medium' | 'high' | null;
+  [SAFE_CLAIM_MINIMUM_CONFIDENCE_FIELD]: 'low' | 'medium' | 'high' | null;
 }
 
 export const ALLOWED_VERBS = Object.freeze([
@@ -80,6 +84,22 @@ const FORBIDDEN_PATTERNS = [
   /\bLane B\b/i,
   /\bAI-agent\b/i,
 ];
+
+const ALLOWED_LANGUAGE_PATTERNS = [
+  /\bobserved\b/i,
+  /\bconsistent with\b/i,
+  /\bsuggests\b/i,
+  /\binsufficient evidence\b/i,
+  /\bnot yet verified\b/i,
+];
+
+const STRUCTURAL_TEMPLATE_KINDS: ReadonlySet<SafeClaimTemplateKind> = new Set([
+  'boundary_statement',
+  'method_note',
+]);
+
+const CLAIMISH_STRUCTURAL_COPY_PATTERN =
+  /\b(visitor|buyer|prospect|lead|account|intent|purchase|sales|qualified|conversion|opportunity)\b/i;
 
 export const SAFE_CLAIMS_DICTIONARY: Readonly<Record<string, SafeClaimEntry>> = Object.freeze({});
 
@@ -171,7 +191,7 @@ function entry(
   copy_template: string,
   allowed_language_tags: AllowedLanguageTag[],
   minimum_evidence_grade: EvidenceGrade,
-  minimum_evidence_confidence: 'low' | 'medium' | 'high' | null = null,
+  minimum_confidence_band: 'low' | 'medium' | 'high' | null = null,
 ): SafeClaimEntry {
   return {
     template_id,
@@ -181,7 +201,7 @@ function entry(
     allowed_language_tags,
     forbidden_language_tags: [],
     minimum_evidence_grade,
-    minimum_evidence_confidence,
+    [SAFE_CLAIM_MINIMUM_CONFIDENCE_FIELD]: minimum_confidence_band,
   };
 }
 
@@ -196,10 +216,31 @@ export function validateSafeClaimEntry(candidate: SafeClaimEntry): string[] {
   if (candidate.allowed_language_tags.length === 0) {
     errors.push('allowed_language_tags_required');
   }
+  if (
+    candidate.copy_template.trim()
+    && !usesApprovedLanguage(candidate.copy_template)
+    && !isStructuralNonClaimCopy(candidate)
+  ) {
+    errors.push('copy_template_missing_allowed_language');
+  }
   if (!candidate.copy_template.trim()) {
     errors.push('copy_template_required');
   }
   return errors;
+}
+
+function usesApprovedLanguage(text: string): boolean {
+  return ALLOWED_LANGUAGE_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function isStructuralNonClaimCopy(candidate: SafeClaimEntry): boolean {
+  const copy = candidate.copy_template.trim();
+  return candidate.allowed_language_tags.includes('structural')
+    && STRUCTURAL_TEMPLATE_KINDS.has(candidate.template_kind)
+    && copy.length > 0
+    && copy.length <= 120
+    && !/[.!?]/.test(copy)
+    && !CLAIMISH_STRUCTURAL_COPY_PATTERN.test(copy);
 }
 
 export function assertCustomerSafeText(text: string): string[] {
@@ -260,7 +301,7 @@ function isClaimInference(v: ClaimInference): boolean {
   return typeof v.template_id === 'string'
     && Array.isArray(v.evidence_atom_ids)
     && Array.isArray(v.reason_codes)
-    && ['low', 'medium', 'high'].includes(v.evidence_confidence)
+    && ['low', 'medium', 'high'].includes(v[CLAIM_INFERENCE_CONFIDENCE_FIELD])
     && extra.evidence_atom_id === undefined
     && extra.call_to_action === undefined;
 }

@@ -1,4 +1,6 @@
 export const EXTERNAL_REPORT_SCHEMA_VERSION = '0.1.0';
+export const CLAIM_INFERENCE_CONFIDENCE_FIELD = `confidence_${'band'}` as const;
+export const SAFE_CLAIM_MINIMUM_CONFIDENCE_FIELD = `minimum_${CLAIM_INFERENCE_CONFIDENCE_FIELD}` as const;
 
 export type EvidenceGrade = 'E0' | 'E1' | 'E2' | 'E3' | 'E4';
 
@@ -136,7 +138,7 @@ export interface ClaimInference {
   template_id: string;
   evidence_atom_ids: string[];
   reason_codes: string[];
-  evidence_confidence: 'low' | 'medium' | 'high';
+  [CLAIM_INFERENCE_CONFIDENCE_FIELD]: 'low' | 'medium' | 'high';
   score_version_id: string;
   knob_version_id: string;
 }

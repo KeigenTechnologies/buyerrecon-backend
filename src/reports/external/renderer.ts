@@ -7,6 +7,7 @@ import type {
   ReportSnapshot,
   SessionEvidenceCard,
 } from './contracts.js';
+import { CLAIM_INFERENCE_CONFIDENCE_FIELD } from './contracts.js';
 import { FIXTURE_SAFE_CLAIMS, sanitizeCustomerText } from './safe-claims.js';
 
 export function renderReportMarkdown(snapshot: ReportSnapshot): string {
@@ -138,7 +139,7 @@ function renderClaimBlock(
     out.push('  - Inferences suppressed or unavailable.');
   } else {
     for (const inference of block.inferences) {
-      out.push(`  - ${templateText(inference.template_id)} Evidence confidence: ${safe(inference.evidence_confidence)}.`);
+      out.push(`  - ${templateText(inference.template_id)} Evidence confidence: ${safe(inference[CLAIM_INFERENCE_CONFIDENCE_FIELD])}.`);
     }
   }
   out.push('- Recommendations:');
