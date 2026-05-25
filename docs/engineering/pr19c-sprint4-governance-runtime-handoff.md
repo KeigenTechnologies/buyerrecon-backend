@@ -94,6 +94,30 @@ No track in §4 – §16 of this handoff flips any of those locks.
 Each Track B implementation PR must independently restate this set
 (or a strict superset) in its own header.
 
+### 2.2 Upstream dependency: ProductContextProfile v0.1 (PR #76)
+
+`docs/contracts/product-context-profile-v0.1.md` (locked via PR #76,
+merged at base `0f98967`) is now the upstream semantic-configuration
+contract. Sprint 4 governance runtime, when later activated, must
+respect it:
+
+- `site_mapping` is a semantic adapter (route/expression → standard
+  BuyerRecon semantics), not part of the industry/category tree.
+- the buying-role lens is evidence/category input, not a final
+  identity claim (allowed: "behaviour consistent with
+  finance/procurement evaluation"; forbidden: "this visitor is the
+  CFO").
+- no customer-private scoring code, customer-private if/else logic,
+  or customer-private custom model.
+- no silent mutation of old observations after a template/mapping
+  update — old observations must remain explainable under their
+  original version stamps.
+
+This note is a forward-reference only. It does **not** activate
+governance runtime, does **not** flip any of the eleven PR#18ab §9
+locks above, does **not** modify the `safe_claims` dictionary, and
+does **not** authorize customer output.
+
 ---
 
 ## 3. Governance runtime purpose

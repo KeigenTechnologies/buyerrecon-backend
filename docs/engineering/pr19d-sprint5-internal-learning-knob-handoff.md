@@ -136,6 +136,36 @@ No track in §3 – §20 of this handoff flips any of those locks.
 Each Track C implementation PR must independently restate this set
 (or a strict superset) in its own header.
 
+### 2.2 Upstream dependency: ProductContextProfile v0.1 (PR #76)
+
+`docs/contracts/product-context-profile-v0.1.md` (locked via PR #76,
+merged at base `0f98967`) is now upstream of all Sprint 5
+internal-learning surfaces.
+
+- The `score_version` / `knob_version` axes defined in this handoff
+  are **distinct** from the ProductContextProfile version stamps.
+  They do not replace them.
+- Any future learning / replay / feedback observation that consumes
+  a Product-Context Fit observation must **co-record** the relevant
+  PCP §6 version stamps alongside its own version IDs:
+  - `product_context_profile_version`
+  - `category_template_version`
+  - `site_mapping_version`
+  - `buying_role_lens_version`
+  - `universal_surface_taxonomy_version`
+  - `product_fit_model_version`
+  - `product_fit_rule_version`
+- Internal learning must **not** convert customer-specific feedback
+  into customer-private scoring code, if/else logic, or a
+  customer-private custom model.
+- Recurring patterns become **proposed template / mapping version
+  changes** that are replay-tested, shadow-run, then promoted to an
+  active version — never private code.
+
+This note is a forward-reference only. It does **not** activate
+internal-learning runtime, does **not** activate customer output,
+and does **not** flip any PR#18ab §9 lock.
+
 ---
 
 ## 3. Sprint 5 purpose
