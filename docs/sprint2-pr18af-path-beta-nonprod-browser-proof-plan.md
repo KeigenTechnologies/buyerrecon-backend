@@ -72,7 +72,11 @@ Path β closes only one row of this matrix: `staging_collector_pass (ThinSDK→H
 
 ## 2. Mandatory reference compliance
 
-PR#18af-Path-β honors the hard-gate references in `docs/ops/cutover-hard-gates.md` and the eleven PR#18ab governance locks. None are touched:
+PR#18af-Path-β honors the hard-gate references in `docs/ops/cutover-hard-gates.md` and two parallel layers of governance locks. None are touched by this Path β planning PR.
+
+### 2.1 PR#73 hard-gate carry-forward locks
+
+The PR#73 hard-gate carry-forward locks (the ones PR#73 §2 carried forward from `docs/ops/cutover-hard-gates.md` and prior gate planning PRs) remain unchanged:
 
 | Lock | State |
 | --- | --- |
@@ -87,6 +91,28 @@ PR#18af-Path-β honors the hard-gate references in `docs/ops/cutover-hard-gates.
 | `allowed_evidence_kinds_outside_local_proof=[]` | unchanged |
 | `allowed_promotion_actions_outside_local_proof=[]` | unchanged |
 | `allowed_customer_language=[]` | unchanged |
+
+### 2.2 Canonical PR#18ab final-scoring governance locks
+
+The canonical PR#18ab final-scoring governance locks also remain unchanged and are not relaxed by this Path β planning PR:
+
+| Lock | State |
+| --- | --- |
+| `customer_claim_allowed=false` | unchanged |
+| `customer_visibility_allowed=false` | unchanged |
+| `lane_output_allowed=false` | unchanged |
+| `lane_write_allowed=false` | unchanged |
+| `runtime_scoring_allowed=false` | unchanged |
+| `ams_trust_runtime_allowed=false` | unchanged |
+| `pass1_runtime_allowed=false` | unchanged |
+| `pass2_runtime_allowed=false` | unchanged |
+| `dashboard_customer_output_allowed=false` | unchanged |
+| `sales_claim_upgrade_allowed=false` | unchanged |
+| `allowed_customer_language=[]` | unchanged |
+
+No PR#18ab final-scoring governance lock is relaxed by Path β planning or by any future Path β execution authorised under a subsequent Helen GO. The customer-surface, Lane writers, AMS Trust, Pass 1 / Pass 2 runtime, Sprint 4 (PR#19c) runtime, Sprint 5 (PR#19d) runtime, and Sprint 3 (PR#20) runtime blocks elsewhere in this PR (§4.2, §10.2, §11.2, §12, §13) reinforce these locks operationally.
+
+### 2.3 PR#17s / PR#18w 26-row baseline
 
 PR#17s §1 and PR#18w §1 — *"the 26 HTTP 400 `request_body_invalid_json` rows from 2026-05-19 are the historical envelope-shape warning. Do not delete, mutate, annotate, or normalise them"* — are upheld categorically. Path β proof does not touch the 26-row baseline; canary success under any subsequent gate is measured as a *delta from* the 26-row baseline, never *by mutating* it.
 
@@ -505,5 +531,7 @@ Unresolved requirements (operator-owned, not actionable from this repo):
 - The Path β execution evidence file does not yet exist (and will not, per §7.3, until a separate post-execution PR is opened with explicit Helen GO).
 
 The next docs-only step *could* be a separate PR that proposes a concrete Candidate D construction (e.g., a Playwright project scaffold under a clearly non-production hostname) — but only if Helen chooses to proceed with Path β. If Helen chooses Path α instead, this Path β plan remains on file as a documented unactivated alternative; nothing in this PR pressures the Path α / Path β decision.
+
+Path β is stronger technically because it eliminates the ThinSDK→HTTP structural-inference gap, but this planning PR does not choose Path β over Path α. Both paths require explicit Helen GO.
 
 No forbidden action occurred in the authoring of this PR.
