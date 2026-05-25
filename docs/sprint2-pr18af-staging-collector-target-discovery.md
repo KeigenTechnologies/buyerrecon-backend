@@ -15,6 +15,7 @@ Where PR#18af cites PR#71 / PR#72 / PR#17x / PR#17z / PR#17s / PR#18ab / PR#18ac
 > **No Gate 4C execution.**
 > **No endpointUrl re-flip.**
 > **No PR #3 / PR #4 merge.**
+> **Website PR #3 remains HOLD. Website PR #4 remains HOLD.**
 > **No production endpoint, no production token, no production DB.**
 
 ---
@@ -297,8 +298,8 @@ There is no non-production Render-class legacy `/collect` endpoint identified in
 
 PR#18af does **not** approve, recommend, or imply:
 - that Gate 4C is ready to execute,
-- that the website PR #3 should be merged,
-- that the website PR #4 should be merged,
+- that the website PR #3 should be merged (Website PR #3 remains HOLD),
+- that the website PR #4 should be merged (Website PR #4 remains HOLD),
 - that `endpointUrl` should be re-flipped from Render legacy to Hetzner Sprint 2 production,
 - that the production buyerrecon.com `/v1/event` endpoint should receive traffic,
 - that Track A or Playwright should be invoked,
@@ -322,7 +323,7 @@ Helen treats PR#71 ⊕ PR#17x ⊕ PR#17z ⊕ PR #3 ⊕ PR#18af (this PR) as a su
 ### 9.2 Path β — Build Candidate D before Gate 4C
 A separate engineering PR builds a non-production website host carrying the PR #4 config aimed at Hetzner staging, runs a browser session (manually or via Playwright — the latter is currently locked off by PR#18ab `playwright_required_for_gate4=false` but could be temporarily lifted for the proof and re-locked), and records executional PASS for the ThinSDK→HTTP junction. Tradeoff: slower, but eliminates the structural-inference gap.
 
-PR#18af makes no recommendation between α and β. Both paths require explicit Helen GO.
+PR#18af makes no recommendation between α and β. Both paths require explicit Helen GO. Path β is the stronger executional proof path because it eliminates the ThinSDK→HTTP structural-inference gap, though both Path α and Path β require explicit Helen GO.
 
 ---
 
@@ -348,6 +349,7 @@ PR#18af approves nothing beyond the recording of the discovery and the local-lay
 - No Gate 4C execution.
 - No endpointUrl re-flip.
 - No PR #3 / PR #4 merge.
+- Website PR #3 remains HOLD. Website PR #4 remains HOLD.
 - No bundle deploy.
 - No `/var/www` edit.
 - No DB grant change.
