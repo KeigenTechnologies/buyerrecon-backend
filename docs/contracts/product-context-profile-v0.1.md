@@ -226,6 +226,12 @@ Required version fields:
 - `product_fit_model_version`
 - `product_fit_rule_version`
 
+`product_fit_model_version` is intentionally recorded at
+observation/evaluation time rather than as a static
+ProductContextProfile wrapper field, because the same
+ProductContextProfile may be replayed or shadow-evaluated under
+different product-fit model versions.
+
 Purpose:
 
 - replay

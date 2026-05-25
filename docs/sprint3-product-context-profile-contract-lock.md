@@ -144,6 +144,12 @@ Every production Product-Context Fit observation must record:
 These fields are required for replay, explainability, comparison,
 rollback, and audit.
 
+`product_fit_model_version` is intentionally recorded at
+observation/evaluation time rather than as a static
+ProductContextProfile wrapper field, because the same
+ProductContextProfile may be replayed or shadow-evaluated under
+different product-fit model versions.
+
 Old observations must remain explainable under their original versions.
 They must not be silently rewritten after a template or mapping update.
 
