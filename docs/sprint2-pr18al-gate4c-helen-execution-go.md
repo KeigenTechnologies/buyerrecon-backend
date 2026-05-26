@@ -81,7 +81,8 @@ In the later operator session, the operator is authorized to do
 
 ### B. Prepare combined mode+endpoint bundle
 - apply / consume the website PR #4-style delta:
-  `transportOptions.mode = 'sprint2_v1_event'`.
+  `transportOptions.mode = 'sprint2_v1_event'` (as proved by PR #71 —
+  the canonical AMS option key at commit pin `13d4900`).
 - flip `endpointUrl` from legacy Render `/collect` to the Hetzner
   Sprint 2 `/v1/event` endpoint.
 - ensure **both** mode and endpoint flip occur **atomically** in the
