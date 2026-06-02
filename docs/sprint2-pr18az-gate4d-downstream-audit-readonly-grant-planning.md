@@ -101,8 +101,77 @@ GRANT SELECT ON public.risk_observations_v0_1
 | AMS Trust / Pass runtime | No |
 | Superuser / app-role substitution | No |
 
-These grants are the minimum needed for `COUNT(*)` readiness
-checks on the four tables. No row-level content is required.
+These grants are shown here as **table-level `SELECT`** for
+operational simplicity. Section §3.1 below requires the operator to
+explicitly choose the final grant form before the grant step is taken.
+
+### 3.1 Grant-form decision point
+
+The final grant form is **not selected by this PR**. The separate
+operator grant step must explicitly choose the smallest approved
+access that permits Gate 4D readiness observation. The three
+candidate options are:
+
+**Option A — Table-level `SELECT` (shown in §3 above)**
+
+- Operationally simple; unblocks `COUNT(*)` readiness checks with
+  no additional schema work.
+- Technically allows the audit role to `SELECT` sensitive columns
+  (e.g. `session_id`, JSONB evidence fields, URL fields, risk
+  scores) if an operator wrote the wrong query.
+- Relies on query discipline and the redaction rules in §4 to
+  prevent inadvertent exposure.
+- Use only if column-level grants are confirmed insufficient or
+  impractical (see Option B).
+
+**Option B — Column-level `SELECT` on non-sensitive surrogate / PK
+columns (preferred least-privilege option)**
+
+- Grants `SELECT` only on the columns required for `COUNT(*)` to
+  execute (typically the primary key column or any `NOT NULL`
+  non-sensitive surrogate), while denying `SELECT` on `session_id`,
+  JSONB evidence fields (`rule_inputs`, `evidence_refs`, `velocity`,
+  `tags`), URL fields, behavioral timing columns, and risk-score
+  detail fields.
+- Stronger privacy posture: the audit role cannot `SELECT` sensitive
+  columns even if an operator writes an unintended query.
+- Requires confirming the exact non-sensitive column names from
+  `src/db/schema.sql` before the grant step. The post-grant proof
+  must verify that `has_column_privilege` returns `false` for
+  sensitive columns (`session_id`, JSONB fields, URLs, risk scores).
+- Example form (exact column names must be verified before use):
+  ```sql
+  GRANT SELECT (session_features_id) ON public.session_features
+    TO buyerrecon_prod_audit_readonly;
+  ```
+- Use if PostgreSQL confirms that `COUNT(*)` succeeds with only the
+  PK column `SELECT` grant. Test in staging before production.
+
+**Option C — Count-only views**
+
+- Create dedicated views that expose only `COUNT(*)` or similar
+  aggregates over each downstream readiness table. Grant `SELECT`
+  on the views, not the base tables.
+- Strongest isolation: base-table column exposure is entirely
+  eliminated at the grant layer.
+- Requires schema work (view DDL), separate review, and governance
+  sign-off if chosen.
+- Not created by this PR.
+
+**Decision rule for the operator grant step:**
+
+> Apply the smallest access that permits the `COUNT(*)` readiness
+> query in §4. Prefer Option B over Option A; prefer Option C if
+> view governance is already in place. If Option B is chosen, the
+> post-grant proof requirements in §5 must be updated to include
+> column-level `has_column_privilege` checks confirming sensitive
+> columns remain inaccessible.
+
+No grant is applied by this PR. No observation re-run is authorized
+by this PR. If the grant form changes from table-level `SELECT`
+(Option A) to column-level `SELECT` (Option B) or count-only views
+(Option C), the post-grant proof requirements in §5 must be updated
+accordingly before the proof is executed.
 
 ---
 
