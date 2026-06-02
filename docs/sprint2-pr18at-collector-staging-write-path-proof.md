@@ -236,9 +236,9 @@ reproduced.
 
 | Item | Value |
 | --- | --- |
-| `RAW_TOKEN` / `STAGING_DSN` / `APP_DSN` unset | Cleanup requested |
-| `/tmp/gate4c-staging-proof-event.json` removed | Cleanup requested |
-| `/tmp/gate4c-staging-proof-response.json` removed | Cleanup requested |
+| `RAW_TOKEN` / `STAGING_DSN` / `APP_DSN` unset | Verified |
+| `/tmp/gate4c-staging-proof-event.json` removed | Verified |
+| `/tmp/gate4c-staging-proof-response.json` removed | Verified |
 | Production rows created | None |
 | Production website traffic generated | None |
 | Customer output / Lane writer / scoring / AMS Trust / Pass runtime | None activated |
