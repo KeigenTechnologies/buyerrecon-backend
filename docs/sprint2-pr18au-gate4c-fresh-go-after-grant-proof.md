@@ -145,6 +145,7 @@ single-attempt, and rollback-protected per PR #80.
 | `EXPLAIN` pre-check | PR #89 (merged; `EXPLAIN_PRECHECK_PASS`) |
 | Staging write-path proof | PR #90 (merged; `COLLECTOR_WRITE_PATH_PROOF_PASS_STAGING`) |
 | Option key proof | PR #71 — `transportOptions.mode = 'sprint2_v1_event'` at AMS pin `13d4900` |
+| Website repo | `KeigenTechnologies/KeigenTechnologies-buyerrecon-website`, branch `production-live-20260508` |
 | Website cache-safe assets | Website PR #7, merge `8fe6be4ab12e93ec39dfd08e42b1e9dd7fdb9e6d` |
 | Website versioned-pair wiring (103 pages) | Website PR #8, merge `e7918f6c78f1cb67b9807b21519db220a8cffa19` |
 | Versioned SDK | `/thinlayer/thin-sdk.048d1d23.iife.js` sha256 `048d1d23ff1c20b8189364f6e4ad61f9889e57fc4e0e114eb4bfd52ce79c9af7` |
@@ -188,6 +189,7 @@ Before the operator session begins, confirm all of the following:
 | Check | Expected |
 | --- | --- |
 | `current_user` (production) | `buyerrecon_prod_collector_app` |
+| `current_database()` (production) | `buyerrecon_production` |
 | `accepted_events.workspace_id` column SELECT | true |
 | `accepted_events.site_id` column SELECT | true |
 | `accepted_events.client_event_id` column SELECT | true |
@@ -408,6 +410,7 @@ required_load_order: sdk_then_init
 required_endpoint: https://buyerrecon.com/v1/event
 required_mode: sprint2_v1_event
 production_db_role: buyerrecon_prod_collector_app
+production_database: buyerrecon_production
 accepted_events_workspace_id_select: true
 accepted_events_site_id_select: true
 accepted_events_client_event_id_select: true
