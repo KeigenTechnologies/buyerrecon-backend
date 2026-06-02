@@ -4,9 +4,11 @@
 > the `EXPLAIN`-only (no `ANALYZE`) pre-check run after the
 > `accepted_events` conflict-target SELECT grant recorded in PR #87.
 > It does not prove full runtime write success, does not apply any
-> DB grant, does not deploy, does not contact production beyond the
-> read-only and `EXPLAIN`-only commands described below, does not
-> run a canary, does not retry Gate 4C, and does not open Gate 4D.
+> DB grant, does not deploy, does not run a canary, does not retry
+> Gate 4C, and does not open Gate 4D. The `EXPLAIN`-only commands
+> were run in a prior read-only operator session and are recorded
+> here. This PR itself contacts no environment and performs no
+> production action.
 > No secrets, no raw payloads, no raw `request_id` / `session_id`
 > — categorical / structural facts only.
 
@@ -246,7 +248,7 @@ This PR does **not**:
 - execute an INSERT or write to the DB
 - deploy or edit `/var/www`
 - run a canary or retry Gate 4C
-- contact production beyond the described `EXPLAIN`-only session
+- contact any environment (the `EXPLAIN`-only commands were run in a prior operator session; this PR records them)
 - open Gate 4D / Gate 4E
 - invent Gate 4F
 - change backend code, packages, migrations, or schema
