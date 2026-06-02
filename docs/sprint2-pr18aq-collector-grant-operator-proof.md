@@ -180,7 +180,7 @@ Gate 4C retry (see §6).
 
 | Step | Status |
 | --- | --- |
-| 1. Narrow column-level SELECT grant applied | **Done** (this PR) |
+| 1. Narrow column-level SELECT grant applied | Applied manually at `2026-06-02T17:01:16Z`; recorded by this PR |
 | 2. Post-grant privilege snapshot confirming columns | **Done** (§4.2) |
 | 3. RLS / policies / triggers confirmed unchanged | **Done** (§4.4) |
 | 4. Safe collector write-path proof | **Not yet done** — required |
