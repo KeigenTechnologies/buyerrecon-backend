@@ -45,7 +45,7 @@
 | Database | `buyerrecon_production` |
 | `default_transaction_read_only` | `on` |
 | Observation start | `2026-06-02 21:14:34+00` |
-| Observation end | Captured `OBS_END_SQL` value from operator session |
+| Observation end | `2026-06-03 21:38:37+00` |
 | Query types used | `SELECT` / `COUNT(*)` / `GROUP BY` only |
 
 No raw payloads, `canonical_jsonb`, `request_id`, `session_id`,
@@ -210,7 +210,10 @@ option_b_grant_source: PR_97_GATE4D_OPTION_B_AUDIT_GRANT_PROOF_PASS
 observation_role: buyerrecon_prod_audit_readonly
 observation_db: buyerrecon_production
 default_transaction_read_only: on
-observation_start: "2026-06-02 21:14:34+00"
+observation_start_utc: "2026-06-02 21:14:34+00"
+observation_end_utc: "2026-06-03 21:38:37+00"
+observation_journal_start_utc: "2026-06-02 21:14:34 UTC"
+observation_journal_end_utc: "2026-06-03 21:38:37 UTC"
 accepted_total_in_window: 9
 new_invalid_json_since_gate4c: 0
 protected_invalid_json_pre_20260520: 26
