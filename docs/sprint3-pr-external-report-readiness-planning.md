@@ -19,8 +19,8 @@
 | Gate 4D planning | Merged — PR #93 |
 | Gate 4D observation | Pending rerun — PR #98 GO merged; waiting for 24h window |
 | PR #19b | Sprint 3 external output / report contract handoff — merged; docs-only; no runtime |
-| PR #20 | Sprint 3 external report MVP scaffold — merged; **not customer-active**; `safe_claims` enforced empty; PR#18ab locks restated in renderer |
-| `safe_claims` | Empty — `src/reports/external/safe-claims.ts` |
+| PR #20 | Sprint 3 external report MVP scaffold — merged; **not customer-active**; production `SAFE_CLAIMS_DICTIONARY` is empty; `FIXTURE_SAFE_CLAIMS` is test-fixture only; PR#18ab locks restated in renderer |
+| `safe_claims` | Production `SAFE_CLAIMS_DICTIONARY` empty; `FIXTURE_SAFE_CLAIMS` is test-fixture only — both in `src/reports/external/safe-claims.ts` |
 | `customer_claim_allowed` | false |
 | `lane_output_allowed` | false |
 | `allowed_customer_language` | `[]` |
@@ -135,7 +135,7 @@ and `src/reports/external/safe-claims.ts`):
 | `ReportDeliveryProof` | Proof record of any report delivery event |
 | `validateClaimBlock` | Enforces `ClaimBlock` shape constraints |
 | `sanitizeCustomerText` | Strips disallowed language before any customer surface |
-| `safe_claims` | `src/reports/external/safe-claims.ts` — **currently empty** |
+| `safe_claims` | `src/reports/external/safe-claims.ts` — production `SAFE_CLAIMS_DICTIONARY` is empty; `FIXTURE_SAFE_CLAIMS` is test-fixture only and must not feed any customer surface |
 
 **Forward requirement (from sprint3-pr20 alignment note §2):**
 Before any production Product-Context Fit observation or
@@ -160,8 +160,12 @@ with its own Helen GO and Codex review.
 The following locks are in force and must not be relaxed without
 explicit governance review:
 
-- `safe_claims` dictionary remains **empty** until a separate
-  governance review approves specific claim templates.
+- Production `SAFE_CLAIMS_DICTIONARY` remains **empty** until a
+  separate governance review approves specific claim templates.
+  `FIXTURE_SAFE_CLAIMS` is test-fixture only; future report-activation
+  review must confirm fixture claims never feed any customer surface.
+  Customer-facing output remains locked by `customer_claim_allowed=false`,
+  `customer_visibility_allowed=false`, and `allowed_customer_language=[]`.
 - `allowed_customer_language = []` — no customer-visible language
   approved.
 - `customer_claim_allowed = false` — no customer claim generation.
@@ -240,7 +244,8 @@ gate4c_status: GATE4C_EXECUTION_PASS
 gate4d_observation_status: GATE4D_OBSERVATION_PENDING_RERUN
 pr19b_status: merged_docs_only_no_runtime
 pr20_status: merged_scaffold_not_customer_active
-safe_claims_empty: true
+production_safe_claims_dictionary_empty: true
+fixture_safe_claims_test_only: true
 customer_claim_allowed: false
 lane_output_allowed: false
 customer_visibility_allowed: false
