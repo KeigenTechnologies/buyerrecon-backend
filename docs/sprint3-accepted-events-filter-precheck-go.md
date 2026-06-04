@@ -1,5 +1,11 @@
 # Sprint 3 — `accepted_events` Filter Pre-Check Operator GO (Docs-Only)
 
+> **AMENDED BY** `buyerrecon-sprint3-accepted-events-filter-precheck-go-bounded-window-patch`:
+> Q1 is now a hard gate with explicit stop rules; direct `psql`
+> calls replace `eval`-based aliases; Q3–Q5 now include the bounded
+> window `received_at >= '2026-06-02 21:14:34+00'` for consistency
+> with Q2. No execution semantics changed; no new queries added.
+>
 > **DOCS-ONLY OPERATOR GO RECORD. THIS PR DOES NOT EXECUTE.** It
 > records Helen's explicit GO for one bounded read-only aggregate
 > pre-check confirming whether production `accepted_events` contains
@@ -73,66 +79,106 @@ Clarifications:
 All queries must run under `buyerrecon_prod_audit_readonly` with
 `transaction_read_only=on`. No DML. No DDL. No GRANT.
 
-### Query 1 — Role, database, and read-only mode
+### Query 1 — Role, database, and read-only mode (hard gate)
 
-```sql
+**Run this query first. Do not run Q2–Q5 until Q1 output is verified.**
+
+Use a direct `psql` call; do not use `eval` or shell-interpolated
+command aliases:
+
+```bash
+psql --no-password --tuples-only --no-align -d "$AUDIT_DSN" -c "
 SELECT
   current_user,
   current_database(),
   current_setting('transaction_read_only') AS txn_read_only,
   now() AT TIME ZONE 'UTC' AS ts_utc;
+"
 ```
 
 Expected: `buyerrecon_prod_audit_readonly | buyerrecon_production | on | <timestamp>`
 
-> **Stop immediately if `txn_read_only` is not `on`.**
+> **Mandatory hard-gate checks:**
+> - `current_user` must be exactly `buyerrecon_prod_audit_readonly`
+> - `transaction_read_only` must be exactly `on`
+>
+> If either check fails — **stop immediately. Do not run Q2–Q5.
+> Verdict: `FILTER_PRECHECK_BLOCKED`.**
+>
+> If the DSN loaded from `/root/buyerrecon-production-db.env`
+> connects as any role other than `buyerrecon_prod_audit_readonly`,
+> the pre-check is blocked. Do not attempt to substitute a different
+> role or DSN; record the failure in the evidence PR.
 
-### Query 2 — Total accepted events in Gate 4C+ window
+### Query 2 — Total accepted events in bounded window
 
-```sql
+**Only run after Q1 passes.** Use a direct `psql` call:
+
+```bash
+psql --no-password --tuples-only --no-align -d "$AUDIT_DSN" -c "
 SELECT COUNT(*) AS accepted_total
 FROM public.accepted_events
 WHERE received_at >= '2026-06-02 21:14:34+00';
+"
 ```
 
 Returns one integer. No `request_id`, `session_id`, `raw`,
 `canonical_jsonb`, `ip_hash`, or other column is selected.
 
-### Query 3 — Count matching all six extractor filters
+### Query 3 — Count matching all six extractor filters, bounded window
 
-```sql
+**Amendment:** `received_at >= '2026-06-02 21:14:34+00'` added so
+Q3 covers the same evidence window as Q2. This is safer and more
+informative than a lifetime count. Use a direct `psql` call:
+
+```bash
+psql --no-password --tuples-only --no-align -d "$AUDIT_DSN" -c "
 SELECT COUNT(*) AS filter_matched_count
 FROM public.accepted_events
-WHERE event_contract_version = 'event-contract-v0.1'
-  AND event_origin            = 'browser'
+WHERE received_at             >= '2026-06-02 21:14:34+00'
+  AND event_contract_version   = 'event-contract-v0.1'
+  AND event_origin              = 'browser'
   AND workspace_id IS NOT NULL
   AND site_id      IS NOT NULL
   AND session_id   IS NOT NULL
   AND session_id  <> '__server__';
+"
 ```
 
-Returns one integer. This mirrors the exact six locked gating
-conditions from `scripts/extract-session-features.ts` lines
-137–142 (confirmed from source).
+Returns one integer. Mirrors the exact six locked gating conditions
+from `scripts/extract-session-features.ts` lines 137–142
+(confirmed from source), now scoped to the bounded window.
 
-### Query 4 — Distribution by `event_contract_version`
+### Query 4 — Distribution by `event_contract_version`, bounded window
 
-```sql
+**Amendment:** `received_at` bound added for consistency with Q2/Q3.
+Use a direct `psql` call:
+
+```bash
+psql --no-password --tuples-only --no-align -d "$AUDIT_DSN" -c "
 SELECT event_contract_version, COUNT(*) AS row_count
 FROM public.accepted_events
+WHERE received_at >= '2026-06-02 21:14:34+00'
 GROUP BY event_contract_version
 ORDER BY row_count DESC;
+"
 ```
 
 Returns version strings and counts only. No row-level content.
 
-### Query 5 — Distribution by `event_origin`
+### Query 5 — Distribution by `event_origin`, bounded window
 
-```sql
+**Amendment:** `received_at` bound added for consistency with Q2/Q3.
+Use a direct `psql` call:
+
+```bash
+psql --no-password --tuples-only --no-align -d "$AUDIT_DSN" -c "
 SELECT event_origin, COUNT(*) AS row_count
 FROM public.accepted_events
+WHERE received_at >= '2026-06-02 21:14:34+00'
 GROUP BY event_origin
 ORDER BY row_count DESC;
+"
 ```
 
 Returns origin strings and counts only.
