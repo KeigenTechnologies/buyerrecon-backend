@@ -15,18 +15,20 @@
 ## 1. Purpose
 
 `scripts/extract-session-features.ts` (Sprint 1 PR#11) filters
-`accepted_events` using four locked conditions (confirmed from source):
+`accepted_events` using six locked gating conditions (confirmed from source):
 
 ```
 event_contract_version = 'event-contract-v0.1'
 event_origin           = 'browser'
 workspace_id IS NOT NULL
-session_id   IS NOT NULL AND session_id <> '__server__'
+site_id      IS NOT NULL
+session_id   IS NOT NULL
+session_id  <> '__server__'
 ```
 
 Before a session feature extractor GO is issued, a read-only
 pre-check must confirm that at least one `accepted_events` row in
-production matches all four conditions. Without this confirmation,
+production matches all six conditions. Without this confirmation,
 the extractor would run successfully but produce zero
 `session_features` rows — making it impossible to distinguish
 "no matching events" from "extractor bug."
@@ -108,6 +110,7 @@ FROM public.accepted_events
 WHERE event_contract_version = 'event-contract-v0.1'
   AND event_origin            = 'browser'
   AND workspace_id IS NOT NULL
+  AND site_id      IS NOT NULL
   AND session_id   IS NOT NULL
   AND session_id  <> '__server__';
 ```
@@ -266,6 +269,7 @@ transaction_read_only_required: true
 filter_v1_contract_version: event-contract-v0.1
 filter_origin: browser
 filter_workspace_id: IS NOT NULL
+filter_site_id: IS NOT NULL
 filter_session_id: IS NOT NULL AND != __server__
 allowed_evidence: aggregate_counts_and_version_strings_only
 forbidden_evidence:
