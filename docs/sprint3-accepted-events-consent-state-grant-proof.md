@@ -23,8 +23,7 @@ other relevant privilege boundaries remained unchanged.
 
 ## 2. Helen GO phrase
 
-> **`HELEN CONSENT_STATE GRANT GO: apply the consent_state column
-> grant now.`**
+> **`HELEN CONSENT_STATE GRANT GO: apply the consent_state column grant now`**
 
 ---
 
@@ -177,7 +176,7 @@ execution. The required sequence after this proof merges:
 status: ACCEPTED_EVENTS_CONSENT_STATE_GRANT_APPLIED_PASS
 go_source: PR_126_ACCEPTED_EVENTS_CONSENT_STATE_GRANT_GO_PLANNING
 pr126_merge_commit: 204dcd768ade50f468ef8fd51977f530b5697d4f
-helen_go_phrase: HELEN CONSENT_STATE GRANT GO apply the consent_state column grant now
+helen_go_phrase: "HELEN CONSENT_STATE GRANT GO: apply the consent_state column grant now"
 grant_applied: GRANT_SELECT_consent_state_ON_accepted_events_TO_buyerrecon_prod_collector_app
 pre_grant_consent_state_sel: false
 post_grant_consent_state_sel: true
