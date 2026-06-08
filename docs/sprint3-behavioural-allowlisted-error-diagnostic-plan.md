@@ -38,9 +38,11 @@ for execution.
 - **PR #147 / #148 / #149** — Stage 2b plan, in-repo command-pack artifact, and
   manual operator commands (DSN narrowed to `DATABASE_URL` only).
 - **PR #150** — Stage 2b terminal-upsert evidence: full-source-shaped upsert,
-  one attempt, rollback-contained, `commit_used=false`, no persistent DML;
-  outcome `42501` / `aclcheck_error`; all structured
-  `schema/table/column/constraint/detail/hint/where` fields absent.
+  `reached_postgres=true`, one attempt,
+  `dml_attempt_was_rollback_contained=true`, `rolled_back=true`,
+  `commit_used=false`, no persistent DML; outcome `42501` / `aclcheck_error`;
+  structured `schema/table/column/constraint/detail/hint/where` fields were
+  absent.
 - **PR #151** — permission-fix decision plan
   (merge `f5311c5f8a4d4bbfe39383491035215fb498424a`): recommended **Option A
   first** (this diagnostic) before any grant/fix.
@@ -195,12 +197,15 @@ parse (per PR #149) and never echoed.
 - the message contains non-allowlisted content and the script cannot suppress
   it (must redact and emit `message_allowlist_match=false` instead);
 - the source shape cannot be re-verified against HEAD;
+- the full source shape cannot be mirrored;
 - more than one attempt would be required;
 - rollback cannot be guaranteed;
 - any `COMMIT` path exists;
 - a grant/fix would be required first;
 - extractor / worker / downstream runtime would run;
+- Lane/scoring/AMS/customer output would be touched;
 - Gate 4E or Gate 4F would be touched;
+- hostname / IP / UUID / cloud token would be printed;
 - DSN / secret / raw identifier / row value / payload / customer data would be
   exposed.
 
