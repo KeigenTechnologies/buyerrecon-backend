@@ -129,8 +129,8 @@ Framing (deliberately not over-claimed):
 
 ## 8. What Did Not Run
 
-- No GRANT / DML / DDL (the single upsert attempt was rollback-contained; no
-  persistent DML).
+- No GRANT / DDL; one DML-shaped terminal-upsert attempt occurred, was
+  rollback-contained, and produced no persistent DML.
 - No grant / fix.
 - No extractor rerun.
 - No worker.
