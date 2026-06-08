@@ -221,6 +221,8 @@ explicit extractor rerun GO.
 This proof PR alone does not authorize the behavioural extractor to
 run.
 
+Any future rerun must be a separate operator session with all approved stop-lines active.
+
 ---
 
 ## 10. Machine-Readable Block
