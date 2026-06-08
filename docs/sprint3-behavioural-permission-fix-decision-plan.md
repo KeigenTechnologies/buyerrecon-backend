@@ -25,11 +25,13 @@ authorized for execution.
 
 ## 2. Evidence Chain (PR #145–#150)
 
-- **PR #145** — Stage 2a read-only localization: table-level `SELECT=false`,
-  `INSERT=true`, `UPDATE=true`; target column SELECT true for only 5/37,
-  INSERT/UPDATE true for 37/37; sequence USAGE=true, SELECT=false; unqualified
-  vs `public.`-qualified resolve to the same OID. (A `42703` probe error was a
-  diagnostic query-shape limitation, not extractor proof.)
+- **PR #145** — Stage 2a read-only localization, **rolled back**: target
+  table-level `SELECT=false`, `INSERT=true`, `UPDATE=true`; target column SELECT
+  true for only 5/37, INSERT/UPDATE true for 37/37; sequence USAGE=true,
+  SELECT=false; unqualified vs `public.`-qualified resolve to the same OID. The
+  `42703` probe error was a diagnostic query-shape limitation, and the
+  follow-on `25P02` was transaction-abort fallout; **neither `42703` nor
+  `25P02` was extractor proof.**
 - **PR #146** — target-SELECT grant-fix planning: source review found the
   upsert's obvious SELECT surfaces already covered by the existing 5-column
   SELECT grant (conflict arbiter + RETURNING), and `DO UPDATE SET` reads only
