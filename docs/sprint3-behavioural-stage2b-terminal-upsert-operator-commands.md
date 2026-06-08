@@ -81,24 +81,59 @@ If anything differs, **STOP** (pre-flight stop-line) and do not proceed.
 
 ## 2. Step 2 — Load the app DSN without printing it
 
+Operator hygiene (required):
+
+- Run this in a **fresh / ephemeral shell** dedicated to this one task.
+- Do **not** run `env`, `set`, `export -p`, shell history dumps, or any command
+  that prints environment variables.
+- After completion, `unset APP_DSN` (Step 5).
+
+Extract **only** `DATABASE_URL` from `.env.production` into `APP_DSN` — do
+**not** source or export any other variable. The value is never printed.
+
 ```bash
 cd /opt/buyerrecon-backend
 
-# Load production env into the shell WITHOUT echoing it. `set -a` exports
-# variables defined while sourcing; nothing is printed by sourcing.
-set -a
-. ./.env.production 2>/dev/null
-set +a
+# Parse ONLY the DATABASE_URL line from .env.production into APP_DSN.
+# No other variables are sourced or exported. The value is never printed.
+APP_DSN="$(
+  python3 - <<'PY'
+from pathlib import Path
 
-# Bind the app DSN to APP_DSN for the script. NEVER echo it.
-export APP_DSN="${DATABASE_URL:?DATABASE_URL not set in environment}"
+p = Path(".env.production")
+value = ""
+
+for line in p.read_text().splitlines():
+    s = line.strip()
+    if not s or s.startswith("#") or "=" not in s:
+        continue
+    key, val = s.split("=", 1)
+    if key.strip() == "DATABASE_URL":
+        val = val.strip()
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
+            val = val[1:-1]
+        value = val
+        break
+
+print(value, end="")
+PY
+)"
+
+if [ -z "${APP_DSN:-}" ]; then
+  echo '{"stage":"stage2b_terminal_upsert_reproduction","outcome":"blocked","blocked_reason":"database_url_not_loaded","message_redacted":true}'
+  exit 1
+fi
+
+export APP_DSN
 
 # Sanity (prints only a boolean, never the value):
-[ -n "$APP_DSN" ] && echo "APP_DSN loaded: true" || echo "APP_DSN loaded: false"
+[ -n "${APP_DSN:-}" ] && echo "APP_DSN loaded: true" || echo "APP_DSN loaded: false"
 ```
 
 > Do **not** run `echo "$APP_DSN"`, `env`, `set`, `psql "$APP_DSN"`, or any
-> command that would print the DSN, host, user, or password.
+> command that would print the DSN, host, user, or password. Only
+> `DATABASE_URL` is loaded; no other secret from `.env.production` is sourced
+> or exported.
 
 ---
 
