@@ -27,12 +27,17 @@ grant execution, then a post-grant proof PR.
 
 ## 2. Inputs / Prerequisite Chain
 
-- **PR #164** — Stage 0 privilege/role resolution plan: recommended **Option B**
-  (run Stage 0 as `buyerrecon_scoring_worker`) and predicted the read-source
-  SELECT gap.
-- **PR #165** — correct-role read-only preflight for `buyerrecon_scoring_worker`:
-  confirmed the role exists (NOLOGIN), `stage0_decisions` write-side privileges
-  already true, and the **only** remaining blocker is read-source SELECT.
+- **PR #164 — merged:**
+  - merge commit: `7ffff23088a1c5fe2e3845515d6f53c0a5948a49`
+  - status: `STAGE0_PRIVILEGE_ROLE_RESOLUTION_PLANNING_ONLY`
+  - outcome: selected `buyerrecon_scoring_worker` as the intended Stage 0 worker
+    role (Option B) and required correct-role preflight before any grant.
+- **PR #165 — merged:**
+  - merge commit: `d0617b8b1b8fffbfa1c4799ee708f54db17705dc`
+  - status: `STAGE0_SCORING_WORKER_PREFLIGHT_BLOCKED_READ_SOURCE_SELECT_MISSING`
+  - outcome: proved `stage0_decisions` privileges true for
+    `buyerrecon_scoring_worker` (role exists, NOLOGIN), while `accepted_events`
+    and `ingest_requests` SELECT remain missing.
 
 ---
 
