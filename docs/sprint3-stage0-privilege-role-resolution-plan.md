@@ -191,6 +191,17 @@ counts only:
 - stop and record evidence on any unexpected role membership, privilege, or
   permission error; no ad-hoc grants.
 
+Abort the future re-preflight / grant / proof chain if any of the following is
+true:
+
+- wrong branch, base, or HEAD commit for the reviewed planning state;
+- wrong execution role, unconfirmed execution role, or role mismatch;
+- missing expected role-architecture evidence for the recommended Stage 0 role;
+- read-source privileges for the recommended Stage 0 role remain unconfirmed;
+- raw row values or raw identifiers are printed;
+- payload/customer data is printed;
+- DSN, password, or token is printed.
+
 ---
 
 ## 11. Explicit Non-Authorization
