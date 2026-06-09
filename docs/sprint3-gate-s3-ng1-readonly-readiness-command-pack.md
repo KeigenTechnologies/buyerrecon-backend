@@ -177,7 +177,8 @@ SELECT
   (to_regclass('public.risk_observations_v0_1') IS NOT NULL)             AS risk_observations_present,
   (to_regclass('public.poi_observations_v0_1') IS NOT NULL)              AS poi_observations_present,
   (to_regclass('public.poi_sequence_observations_v0_1') IS NOT NULL)     AS poi_sequence_observations_present,
-  (to_regclass('public.scoring_output_lanes') IS NOT NULL)               AS scoring_output_lanes_present;
+  (to_regclass('public.scoring_output_lane_a') IS NOT NULL)              AS scoring_output_lane_a_present,
+  (to_regclass('public.scoring_output_lane_b') IS NOT NULL)              AS scoring_output_lane_b_present;
 ```
 
 ### F. Privilege booleans (SQL; for the next worker role(s) if known)
