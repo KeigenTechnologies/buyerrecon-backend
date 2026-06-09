@@ -151,6 +151,7 @@ So the **only login role that is a member of `buyerrecon_scoring_worker` is
 
 ## 11. What Did Not Run
 
+- No diagnostic rerun by this PR.
 - No role change; no `ALTER ROLE`; no `GRANT role TO role`.
 - No production command by this PR; no SQL by this PR.
 - No GRANT / DML / DDL; no permission fix.
