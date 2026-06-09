@@ -221,7 +221,15 @@ No row values, raw identifiers, `session_id`/`request_id` values,
 
 ## 10. Stop-Lines (future Stage 0 execution)
 
-Stop / never:
+Stop / never (pre-execution gate — abort before running if any is true):
+- wrong branch, base, or HEAD commit for the reviewed command-pack state;
+- unexpected execution role or database role mismatch;
+- missing Stage 0 script or missing expected npm command;
+- missing required source or target table/relation;
+- failed read-only privilege preflight or unconfirmed required privilege;
+- non-zero Stage 0 command exit code;
+
+Stop / never (during/after execution):
 - run more than one Stage 0 execution; deviate from the exact command;
 - apply any extra grant or ad-hoc fix (route grants through the separate chain);
 - bundle with risk / POI / evidence snapshot / Lane / scoring / AMS / customer
