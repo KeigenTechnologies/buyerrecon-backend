@@ -40,6 +40,27 @@ this record.
 
 ---
 
+## 1a. Review History
+
+- **First Codex review of PR #182: BLOCKED.**
+- **Blocker:** the candidate operator flow's admin-capability gate was
+  **comment-only** — it printed the `db_expected` / `admin_role_createrole` /
+  `admin_role_superuser` probe labels but the "proceed only if … else stop / exit"
+  decision was written as a comment, so a probe returning
+  `admin_role_createrole=false` / `admin_role_superuser=false` could finish
+  without emitting the stop-line or exiting non-zero.
+- **Patch response (this commit):** the §4 candidate flow now **parses** the
+  allowlisted boolean labels into shell variables (`DB_EXPECTED`,
+  `ADMIN_CREATEROLE`, `ADMIN_SUPERUSER`) and **fails closed** — it proceeds to
+  the bounded PR #179 create/grant/proof step **only if** `DB_EXPECTED=true`
+  **and** (`ADMIN_CREATEROLE=true` **or** `ADMIN_SUPERUSER=true`), emitting
+  `admin_capability_gate_pass=true`; otherwise it emits
+  `admin_capability_gate_pass=false` +
+  `stop_line=admin_connection_lacks_createrole_or_superuser`, removes the raw
+  temp file, unsets `ADMIN_DSN`, and **exits non-zero** (`5`).
+
+---
+
 ## 2. Decision
 
 - **Do not retry with `.env.production`.** It **reaches the DB** but is **not** an
@@ -116,15 +137,24 @@ SQL
 then admin_probe_ok=true; else admin_probe_ok=false; fi
 echo "admin_probe_ok=${admin_probe_ok}"
 echo "raw_output_printed=false"   # RAW is parsed for the 3 allowlisted labels only; never cat/tee'd
+[ "${admin_probe_ok}" = "true" ] || { echo "admin_capability_gate_pass=false"; echo "stop_line=admin_probe_failed"; rm -f "$RAW"; unset ADMIN_DSN; exit 4; }
 
-# Extract ONLY the allowlisted booleans from RAW (no raw connection text):
-grep -E '^(db_expected|admin_role_createrole|admin_role_superuser)\|' "$RAW"
+# (3) EXECUTABLE admin-capability gate — parse allowlisted booleans; fail closed.
+#     (No raw connection text printed; only the parsed boolean values are used.)
+DB_EXPECTED="$(grep -E '^db_expected\|'           "$RAW" | tail -n1 | cut -d'|' -f2)"
+ADMIN_CREATEROLE="$(grep -E '^admin_role_createrole\|' "$RAW" | tail -n1 | cut -d'|' -f2)"
+ADMIN_SUPERUSER="$(grep -E '^admin_role_superuser\|'  "$RAW" | tail -n1 | cut -d'|' -f2)"
 
-# (3) STOP unless admin-capable AND correct DB:
-#     proceed only if db_expected=true AND (admin_role_createrole=true OR admin_role_superuser=true)
-#     else: echo "stop_line=admin_connection_lacks_createrole_or_superuser"; exit 5
+if [ "$DB_EXPECTED" = "true" ] && { [ "$ADMIN_CREATEROLE" = "true" ] || [ "$ADMIN_SUPERUSER" = "true" ]; }; then
+  echo "admin_capability_gate_pass=true"
+else
+  echo "admin_capability_gate_pass=false"
+  echo "stop_line=admin_connection_lacks_createrole_or_superuser"
+  rm -f "$RAW"; unset ADMIN_DSN
+  exit 5                                 # fail closed: do NOT proceed to create/grant/proof
+fi
 
-# (4) ONLY THEN run the PR #179 direct-grant command pack (§4a of the dedicated-role plan):
+# (4) ONLY THEN (admin_capability_gate_pass=true) run the PR #179 direct-grant command pack (§4a of the dedicated-role plan):
 #     CREATE ROLE buyerrecon_stage0_runner (safe attrs; password via secure admin mechanism, never printed)
 #     + SELECT accepted_events / SELECT ingest_requests / SELECT,INSERT,UPDATE stage0_decisions
 #     + positive + negative privilege proof (booleans only). No membership, no sequence, no schema-wide,
