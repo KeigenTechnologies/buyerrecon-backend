@@ -40,6 +40,9 @@ execution remains separately GO-gated.
 
 ## 3. Blocked Attempt Recap
 
+After PR #172 merged, Helen issued the explicit Stage 0 execution GO authorizing
+exactly one production Stage 0 execution only if the reviewed gates passed.
+
 - Pre-execution gates synced to PR #172 merge; `APP_DSN` loaded without
   printing; `stage0:run` present → `tsx scripts/run-stage0-worker.ts`.
 - Role/database gate observed:
@@ -176,6 +179,7 @@ evidence PR before further action.
 ## 10. Explicit Non-Authorization
 
 This PR is **docs-only / planning-only** and authorizes **none** of:
+- no diagnostic rerun by this PR;
 - no production command; no SQL; no DSN change; no secret edit; no
   `.env.production` mutation;
 - no role change; no `ALTER ROLE`; no `GRANT role TO role`; no GRANT/DML/DDL; no
