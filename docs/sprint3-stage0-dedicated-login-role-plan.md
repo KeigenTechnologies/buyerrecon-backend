@@ -39,6 +39,26 @@ hostname, IP, raw ID, row value, or customer data appears in this record.
 
 ---
 
+## 1a. Review History
+
+- **First Codex review of PR #179: BLOCKED.**
+- **Blocker:** the prior **membership-only** recommendation (make
+  `buyerrecon_stage0_runner` a member of `buyerrecon_scoring_worker`) **violates
+  the Stage-0-only boundary** — `buyerrecon_scoring_worker` is **not Stage-0-only**;
+  it already holds **Risk / POI / POI-Sequence write surfaces** (table + sequence
+  grants) per `migrations/013_risk_observations_v0_1.sql:165`,
+  `migrations/014_poi_observations_v0_1.sql:243` (+ sequence 014:264), and
+  `migrations/015_poi_sequence_observations_v0_1.sql:273` (+ sequence 015:289).
+  Membership would inherit all of those.
+- **Patch response (this commit):** the membership-only shape is
+  **REJECTED / SUPERSEDED — DO NOT USE**; the **direct-grant, Stage-0-only** path
+  is now the **only recommended** path (§2, §4a); the proof pack is expanded with
+  explicit **negative privilege proofs** for Risk/POI/POI-Sequence tables **and**
+  their sequences, plus membership-absence and ownership-absence checks (§5a); and
+  matching stop-lines were added (§6).
+
+---
+
 ## 2. Dedicated Role Design (least-privilege)
 
 **Role name: `buyerrecon_stage0_runner`.**
@@ -59,20 +79,46 @@ hostname, IP, raw ID, row value, or customer data appears in this record.
   worker, POI worker, Lane A/B, scoring, AMS Trust/Pass, customer output, Gate
   4E, or Gate 4F.
 
-**Privilege strategy — two candidate shapes (choose at review):**
-- **(Recommended) Membership-only:** make `buyerrecon_stage0_runner` a **member
-  of `buyerrecon_scoring_worker` only**, inheriting the Stage 0 privileges that
-  already exist on that group role (migration 012 + PR #167). This adds **one
-  login role + one membership** and **no new table grants** — the minimal change,
-  and exactly PR #174 Option B's framing. `buyerrecon_scoring_worker` remains
-  NOLOGIN.
-- **(Alternative) Direct grants:** grant the exact Stage 0 privileges (see §3)
-  **directly** to `buyerrecon_stage0_runner`, with **no** group membership. More
-  explicit/auditable but duplicates the existing grants. Choose only if the team
-  wants the dedicated role independent of `buyerrecon_scoring_worker`.
+**Privilege strategy:**
 
-In **both** shapes the role carries **only** the Stage 0 source/target
-privileges and **nothing broader**.
+- **Recommended path — direct-grant, Stage-0-only.** Grant **only** the exact
+  Stage 0 privileges (§3) **directly** to `buyerrecon_stage0_runner`, with **no
+  group membership**:
+  - `SELECT` on `accepted_events`;
+  - `SELECT` on `ingest_requests`;
+  - `SELECT, INSERT, UPDATE` on `stage0_decisions`;
+  - **no sequence privileges** unless a future source review proves a sequence is
+    required (today the PK is `gen_random_uuid()` — none needed);
+  - **no** Risk / POI / POI-Sequence / Lane / scoring / AMS / customer-output
+    privileges; no schema-wide grants; no table ownership.
+  This keeps the dedicated role strictly Stage-0-only and independent of any
+  broader group role.
+
+- **REJECTED / SUPERSEDED — DO NOT USE — membership in
+  `buyerrecon_scoring_worker`.** A prior draft recommended making
+  `buyerrecon_stage0_runner` a member of `buyerrecon_scoring_worker`. **This is
+  rejected** because `buyerrecon_scoring_worker` is **not Stage-0-only** — it
+  already holds **Risk / POI / POI-Sequence write surfaces** (current repo
+  evidence):
+  - `migrations/013_risk_observations_v0_1.sql:165` —
+    `GRANT SELECT, INSERT, UPDATE ON risk_observations_v0_1 TO
+    buyerrecon_scoring_worker`;
+  - `migrations/014_poi_observations_v0_1.sql:243` —
+    `GRANT SELECT, INSERT, UPDATE ON poi_observations_v0_1 TO
+    buyerrecon_scoring_worker` **plus** `GRANT USAGE, SELECT, UPDATE ON SEQUENCE
+    poi_observations_v0_1_poi_observation_id_seq TO buyerrecon_scoring_worker`
+    (014:264);
+  - `migrations/015_poi_sequence_observations_v0_1.sql:273` —
+    `GRANT SELECT, INSERT, UPDATE ON poi_sequence_observations_v0_1 TO
+    buyerrecon_scoring_worker` **plus** the sequence grant
+    `... poi_sequence_observations_v0_1_poi_sequence_observation_id_seq ...`
+    (015:289).
+  Granting membership would **inherit** all of these — violating the
+  Stage-0-only boundary. Therefore the membership-only shape is **not used**;
+  the direct-grant path above is the only recommended path.
+
+The recommended role carries **only** the Stage 0 source/target privileges and
+**nothing broader**.
 
 ---
 
@@ -126,24 +172,12 @@ BEFORE GRANT`.
 > Helen GO for **one** bounded create/grant operator action. The password is
 > supplied through a secure admin mechanism and **never** written in docs/logs.
 
-### 4a. Recommended shape — membership-only
+### 4a. Recommended shape — direct least-privilege grants (no membership)
 ```sql
 -- CANDIDATE ONLY — DO NOT RUN
--- Dedicated, least-privilege Stage 0 login role; password supplied securely by
--- the admin mechanism (NOT in this doc). No table grants needed — inherits the
--- existing Stage 0 privileges from buyerrecon_scoring_worker (migration 012 + PR #167).
-CREATE ROLE buyerrecon_stage0_runner
-  LOGIN
-  NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS
-  PASSWORD :'STAGE0_RUNNER_PW';            -- value injected by admin tooling; never echoed/committed
-
-GRANT buyerrecon_scoring_worker TO buyerrecon_stage0_runner;   -- membership only
--- buyerrecon_scoring_worker remains NOLOGIN; no new table grants added.
-```
-
-### 4b. Alternative shape — direct least-privilege grants (no membership)
-```sql
--- CANDIDATE ONLY — DO NOT RUN — use ONLY instead of 4a if a membership-independent role is required.
+-- Dedicated, Stage-0-only login role; password supplied securely by the admin
+-- mechanism (NOT in this doc). Direct grants only — NO group membership, so it
+-- cannot inherit Risk/POI/POI-Sequence surfaces held by buyerrecon_scoring_worker.
 CREATE ROLE buyerrecon_stage0_runner
   LOGIN
   NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS
@@ -153,7 +187,19 @@ GRANT SELECT                  ON TABLE public.accepted_events  TO buyerrecon_sta
 GRANT SELECT                  ON TABLE public.ingest_requests  TO buyerrecon_stage0_runner;
 GRANT SELECT, INSERT, UPDATE  ON TABLE public.stage0_decisions TO buyerrecon_stage0_runner;
 -- No sequence USAGE (PK is gen_random_uuid()). No schema-wide grants. No ownership.
--- No grants to collector/extractor/risk/POI/Lane/scoring/AMS/customer/Gate paths.
+-- No grants to collector/extractor/risk/POI/POI-sequence/Lane/scoring/AMS/customer/Gate paths.
+-- No GRANT buyerrecon_scoring_worker TO buyerrecon_stage0_runner.
+```
+
+### 4b. REJECTED / SUPERSEDED — DO NOT USE — membership-only shape
+```sql
+-- REJECTED / SUPERSEDED — DO NOT USE — DO NOT RUN
+-- Reason: buyerrecon_scoring_worker is NOT Stage-0-only — it holds Risk/POI/
+-- POI-Sequence table+sequence grants (migrations 013:165, 014:243/264, 015:273/289).
+-- Granting membership would inherit those non-Stage-0 surfaces, violating the
+-- Stage-0-only boundary. Retained for audit trail only; use §4a instead.
+--
+--   GRANT buyerrecon_scoring_worker TO buyerrecon_stage0_runner;   -- DO NOT USE
 ```
 
 The password is **never** placed in this doc, the repo, logs, or any artifact;
@@ -190,11 +236,43 @@ SELECT 'priv_stage0_select|'           || has_table_privilege('buyerrecon_stage0
 SELECT 'priv_stage0_insert|'           || has_table_privilege('buyerrecon_stage0_runner','public.stage0_decisions','INSERT')::text;
 SELECT 'priv_stage0_update|'           || has_table_privilege('buyerrecon_stage0_runner','public.stage0_decisions','UPDATE')::text;
 
--- Forbidden privileges ABSENT (expect false):
+-- Membership absence (expect false): must NOT be a member of buyerrecon_scoring_worker
+SELECT 'not_member_scoring_worker|'    || (NOT pg_has_role('buyerrecon_stage0_runner','buyerrecon_scoring_worker','MEMBER'))::text;
+
+-- NEGATIVE PROOF — non-Stage-0 inherited/broader privileges ABSENT (all expect false):
+-- Risk surface (migration 013):
+SELECT 'forbidden_risk_select|'        || has_table_privilege('buyerrecon_stage0_runner','public.risk_observations_v0_1','SELECT')::text;
+SELECT 'forbidden_risk_insert|'        || has_table_privilege('buyerrecon_stage0_runner','public.risk_observations_v0_1','INSERT')::text;
+SELECT 'forbidden_risk_update|'        || has_table_privilege('buyerrecon_stage0_runner','public.risk_observations_v0_1','UPDATE')::text;
+-- POI surface (migration 014) + its sequence:
+SELECT 'forbidden_poi_select|'         || has_table_privilege('buyerrecon_stage0_runner','public.poi_observations_v0_1','SELECT')::text;
+SELECT 'forbidden_poi_insert|'         || has_table_privilege('buyerrecon_stage0_runner','public.poi_observations_v0_1','INSERT')::text;
+SELECT 'forbidden_poi_update|'         || has_table_privilege('buyerrecon_stage0_runner','public.poi_observations_v0_1','UPDATE')::text;
+SELECT 'forbidden_poi_seq_usage|'      || has_sequence_privilege('buyerrecon_stage0_runner','public.poi_observations_v0_1_poi_observation_id_seq','USAGE')::text;
+SELECT 'forbidden_poi_seq_select|'     || has_sequence_privilege('buyerrecon_stage0_runner','public.poi_observations_v0_1_poi_observation_id_seq','SELECT')::text;
+SELECT 'forbidden_poi_seq_update|'     || has_sequence_privilege('buyerrecon_stage0_runner','public.poi_observations_v0_1_poi_observation_id_seq','UPDATE')::text;
+-- POI-Sequence surface (migration 015) + its sequence:
+SELECT 'forbidden_poiseq_select|'      || has_table_privilege('buyerrecon_stage0_runner','public.poi_sequence_observations_v0_1','SELECT')::text;
+SELECT 'forbidden_poiseq_insert|'      || has_table_privilege('buyerrecon_stage0_runner','public.poi_sequence_observations_v0_1','INSERT')::text;
+SELECT 'forbidden_poiseq_update|'      || has_table_privilege('buyerrecon_stage0_runner','public.poi_sequence_observations_v0_1','UPDATE')::text;
+SELECT 'forbidden_poiseq_seq_usage|'   || has_sequence_privilege('buyerrecon_stage0_runner','public.poi_sequence_observations_v0_1_poi_sequence_observation_id_seq','USAGE')::text;
+SELECT 'forbidden_poiseq_seq_select|'  || has_sequence_privilege('buyerrecon_stage0_runner','public.poi_sequence_observations_v0_1_poi_sequence_observation_id_seq','SELECT')::text;
+SELECT 'forbidden_poiseq_seq_update|'  || has_sequence_privilege('buyerrecon_stage0_runner','public.poi_sequence_observations_v0_1_poi_sequence_observation_id_seq','UPDATE')::text;
+-- Stage 0 target hard-delete + Lane / scoring-output customer-visible surfaces:
 SELECT 'forbidden_stage0_delete|'      || has_table_privilege('buyerrecon_stage0_runner','public.stage0_decisions','DELETE')::text;
 SELECT 'forbidden_lane_a_any|'         || has_table_privilege('buyerrecon_stage0_runner','public.scoring_output_lane_a','INSERT')::text;
 SELECT 'forbidden_lane_b_any|'         || has_table_privilege('buyerrecon_stage0_runner','public.scoring_output_lane_b','INSERT')::text;
+
+-- Ownership absence (expect 0 rows / false): role owns no application tables
+SELECT 'owns_no_tables|' || (NOT EXISTS (
+  SELECT 1 FROM pg_class c JOIN pg_roles r ON r.oid = c.relowner
+  WHERE r.rolname = 'buyerrecon_stage0_runner' AND c.relkind IN ('r','p')
+))::text;
 ```
+
+If any `forbidden_*` label is `true`, or `not_member_scoring_worker` /
+`owns_no_tables` is `false`, the proof **fails** and the role must not be used
+for Stage 0 until corrected.
 
 ### 5b. Dedicated-DSN identity gate (only if a connect proof is required)
 
@@ -221,11 +299,26 @@ Abort if any of the following:
 - dedicated role name ambiguous / conflicts with an existing role;
 - password / DSN custody for the dedicated role unresolved;
 - any real secret (password / DSN / token) would need to be committed or printed;
+- **any membership in `buyerrecon_scoring_worker` is proposed for
+  `buyerrecon_stage0_runner`** (rejected — that group is not Stage-0-only);
+- **`buyerrecon_stage0_runner` inherits any non-Stage-0 privilege** (via any
+  membership or default ACL);
+- **any Risk table privilege** (`risk_observations_v0_1`) is present;
+- **any POI table or sequence privilege** (`poi_observations_v0_1` /
+  `poi_observations_v0_1_poi_observation_id_seq`) is present;
+- **any POI-Sequence table or sequence privilege**
+  (`poi_sequence_observations_v0_1` /
+  `poi_sequence_observations_v0_1_poi_sequence_observation_id_seq`) is present;
+- any Lane / scoring / AMS / customer-output privilege is present;
 - candidate grants exceed the Stage 0 required relations (§3);
 - broad schema-wide / extra-table grants proposed without justification;
+- any sequence grant is proposed without proving Stage 0 needs it (today: none —
+  PK is `gen_random_uuid()`);
 - the role would be SUPERUSER / CREATEDB / CREATEROLE / REPLICATION / BYPASSRLS
   / a table owner;
 - the proof cannot establish the expected `current_user` / `current_database`;
+- **the proof cannot establish negative privilege absence** (any `forbidden_*`
+  label is `true`, or `not_member_scoring_worker` / `owns_no_tables` is `false`);
 - the proof would print raw DSN / password / token / host / IP / user / row data;
 - a Stage 0 command would run **before** the dedicated-role proof passes;
 - the run lock would be touched;
