@@ -96,7 +96,16 @@ cd /opt/buyerrecon-backend || { echo "stop_line=wrong_repo_path"; exit 3; }
 echo "repo_head=$(git rev-parse HEAD)"
 git merge-base --is-ancestor 57d8732fd248bae34a3b7a239953a445ae9617d6 HEAD \
   && echo "pr188_merge_present=true" || { echo "stop_line=pr188_merge_missing"; exit 3; }
-grep -n '"stage0:run"' package.json   # expect: tsx scripts/run-stage0-worker.ts
+
+# (A) FAIL-CLOSED source-command mapping check — BEFORE any DSN load / run-lock / Stage 0.
+#     Exact parse of package.json (Node, not bare grep); require stage0:run == "tsx scripts/run-stage0-worker.ts".
+if node -e 'const s=require("./package.json").scripts||{}; process.exit(s["stage0:run"]==="tsx scripts/run-stage0-worker.ts"?0:1)'; then
+  echo "stage0_command_mapping_ok=true"
+else
+  echo "stage0_command_mapping_ok=false"
+  echo "stop_line=stage0_command_mapping_mismatch"
+  exit 3                                    # stop before DSN load / run-lock / Stage 0
+fi
 
 # One-execution guard (operator-side run lock). Stop if a prior Stage 0 already ran:
 RUN_LOCK=/opt/buyerrecon-backend/.stage0_run.lock
@@ -120,12 +129,30 @@ BEGIN;
 ROLLBACK;
 SQL
 echo "gate_raw_output_printed=false"
-GATE_DB="$(grep -E '^gate_db_expected\|' "$RAW" | tail -n1 | cut -d'|' -f2)"
-GATE_USER="$(grep -E '^gate_user_expected\|' "$RAW" | tail -n1 | cut -d'|' -f2)"
+
+# (B) Parse allowlisted booleans; EMIT each individually; fail closed on missing/ambiguous/false.
+GATE_DB="$(grep -E '^gate_db_expected\|'       "$RAW" | tail -n1 | cut -d'|' -f2)"
+GATE_USER="$(grep -E '^gate_user_expected\|'   "$RAW" | tail -n1 | cut -d'|' -f2)"
 GATE_WRITABLE="$(grep -E '^gate_session_writable\|' "$RAW" | tail -n1 | cut -d'|' -f2)"
-[ "$GATE_DB" = "true" ]       || { echo "stop_line=expected_db_mismatch"; exit 5; }
-[ "$GATE_USER" = "true" ]     || { echo "stop_line=expected_role_mismatch"; exit 5; }
-[ "$GATE_WRITABLE" = "true" ] || { echo "stop_line=readwrite_posture_mismatch"; exit 5; }
+
+gate_fail() {                               # name only; never the raw value/line
+  echo "gate_db_expected=${GATE_DB:-<missing>}"
+  echo "gate_user_expected=${GATE_USER:-<missing>}"
+  echo "gate_session_writable=${GATE_WRITABLE:-<missing>}"
+  echo "stage0_exec_gate_pass=false"
+  echo "stop_line=stage0_exec_gate_failed"
+  echo "failed_gate_label=$1"
+  rm -f "$RAW"; unset STAGE0_RUNNER_DSN
+  exit 5
+}
+[ "$GATE_DB" = "true" ]       || gate_fail gate_db_expected
+[ "$GATE_USER" = "true" ]     || gate_fail gate_user_expected
+[ "$GATE_WRITABLE" = "true" ] || gate_fail gate_session_writable
+
+# All gates passed -> emit each individual safe boolean (true):
+echo "gate_db_expected=true"
+echo "gate_user_expected=true"
+echo "gate_session_writable=true"
 echo "stage0_exec_gate_pass=true"
 ```
 
@@ -133,42 +160,84 @@ echo "stage0_exec_gate_pass=true"
 ```bash
 # CANDIDATE ONLY — DO NOT RUN — exactly ONE execution, only after §4a gate pass + separate Helen GO.
 echo "stage0_exec_start=true"
+
+# Runtime output -> chmod-600 temp ONLY; npm/tsx stdout+stderr are NEVER printed directly
+# (raw stderr on failure could carry connection details).
+RUNOUT="$(mktemp /tmp/stage0-run-out.XXXXXX)"; chmod 600 "$RUNOUT"
+trap 'rm -f "$RAW" "$RUNOUT"; unset STAGE0_RUNNER_DSN' EXIT INT TERM
+
 touch "$RUN_LOCK"; echo "run_lock_touched=true"      # one-execution guard set immediately before the run
 
-DATABASE_URL="$STAGE0_RUNNER_DSN" npm run stage0:run  # exact reviewed command (package.json stage0:run)
+DATABASE_URL="$STAGE0_RUNNER_DSN" npm run stage0:run > "$RUNOUT" 2>&1   # exact reviewed command; output captured, not printed
 STAGE0_RC=$?
-
 unset STAGE0_RUNNER_DSN
-if [ "$STAGE0_RC" -eq 0 ]; then
-  echo "stage0_command_run=true"
-  echo "stage0_exit_code=0"
-  # Native PASS summary is already masked (host/db only + counts; no raw UA/token/IP/payload/jsonb).
-  # Capture ONLY the masked summary fields for evidence: database(masked), stage0_version,
-  # scoring_version, window, upserted_rows, excluded, non_excluded.
-else
-  echo "stage0_command_run=true"
-  echo "stage0_exit_code=$STAGE0_RC"
-  echo "stop_line=stage0_command_failed"               # withhold raw error if it could carry connection details
+echo "stage0_command_run=true"
+
+if [ "$STAGE0_RC" -ne 0 ]; then
+  # FAILURE: emit safe failure labels only; raw runtime output withheld.
+  echo "stage0_command_exit_code=$STAGE0_RC"
+  echo "stage0_command_failed=true"
+  echo "raw_runtime_output_printed=false"
+  echo "stop_line=stage0_command_failed_raw_output_withheld"
+  rm -f "$RUNOUT"
+  exit 6
 fi
+
+# SUCCESS: parse ONLY the allowlisted masked PASS-summary fields from the runner output.
+# (Runner native output is already masked: database host/db only, versions, window, counts.)
+PASS_MARKER="$(grep -cE 'stage0 worker — PASS' "$RUNOUT")"
+S0_VERSION="$(grep -E 'stage0_version:'  "$RUNOUT" | tail -n1 | sed -E 's/.*stage0_version:[[:space:]]*//')"
+SC_VERSION="$(grep -E 'scoring_version:' "$RUNOUT" | tail -n1 | sed -E 's/.*scoring_version:[[:space:]]*//')"
+UPSERTED="$(grep -E 'upserted_rows:'     "$RUNOUT" | tail -n1 | sed -E 's/.*upserted_rows:[[:space:]]*//')"
+EXCLUDED="$(grep -E 'excluded:'          "$RUNOUT" | tail -n1 | sed -E 's/.*excluded:[[:space:]]*//')"
+NONEXCL="$(grep -E 'non_excluded:'       "$RUNOUT" | tail -n1 | sed -E 's/.*non_excluded:[[:space:]]*//')"
+
+if [ "$PASS_MARKER" -lt 1 ] || [ -z "$S0_VERSION" ] || [ -z "$UPSERTED" ]; then
+  # Could not parse the expected safe fields -> fail closed; never print raw output.
+  echo "stage0_result_parse_ok=false"
+  echo "raw_runtime_output_printed=false"
+  echo "stop_line=stage0_result_parse_failed_raw_output_withheld"
+  rm -f "$RUNOUT"
+  exit 7
+fi
+
+echo "stage0_command_exit_code=0"
+echo "stage0_result_parse_ok=true"
+echo "raw_runtime_output_printed=false"
+echo "stage0_pass=true"
+# Allowlisted masked PASS fields ONLY (counts + versions; database masked to host/db; window is timestamps):
+echo "stage0_version=$S0_VERSION"
+echo "scoring_version=$SC_VERSION"
+echo "upserted_rows=$UPSERTED"
+echo "excluded_rows=$EXCLUDED"
+echo "non_excluded_rows=$NONEXCL"
+rm -f "$RUNOUT"
 echo "stage0_exec_done=true"
 ```
 
-The command is run **once**. The `RUN_LOCK` sentinel prevents a second run (§4a
-aborts on `run_lock_already_touched`).
+The command is run **once**. Runtime stdout/stderr go **only** to the chmod-600
+`RUNOUT` temp (never printed); on success only the allowlisted masked PASS fields
+are emitted, on non-zero exit only safe failure labels, and if the expected safe
+fields cannot be parsed it fails closed (`stage0_result_parse_failed_raw_output_withheld`).
+The `RUN_LOCK` sentinel prevents a second run (§4a aborts on
+`run_lock_already_touched`); temp files are removed on exit.
 
 ---
 
 ## 5. Safe Labels (emit before & after)
 
 **Before (gate):** `on_production_host`, `repo_head`, `pr188_merge_present`,
-`run_lock_clear`, `dsn_loaded_without_printing`, `gate_db_expected`,
-`gate_user_expected`, `gate_session_writable`, `gate_raw_output_printed=false`,
+`stage0_command_mapping_ok`, `run_lock_clear`, `dsn_loaded_without_printing`,
+`gate_raw_output_printed=false`, the **individual** gate booleans
+`gate_db_expected` / `gate_user_expected` / `gate_session_writable`, and
 `stage0_exec_gate_pass`.
 
-**After (run):** `run_lock_touched`, `stage0_command_run`, `stage0_exit_code`,
-and the **masked** summary fields (`database` host/db only, `stage0_version`,
-`scoring_version`, `window`, `upserted_rows`, `excluded`, `non_excluded`),
-`stage0_exec_done`.
+**After (run):** `run_lock_touched`, `stage0_command_run`,
+`stage0_command_exit_code`, `raw_runtime_output_printed=false`,
+`stage0_result_parse_ok`, `stage0_pass`, and the **masked** summary fields
+(`stage0_version`, `scoring_version`, `upserted_rows`, `excluded_rows`,
+`non_excluded_rows`), `stage0_exec_done`. (On failure: `stage0_command_failed`
+and the relevant `stop_line` only.)
 
 **Never** emit: DSN, password, token, raw hostname/IP, raw `session_id` /
 `request_id`, `canonical_jsonb`, raw rows, payload, or customer data.
@@ -187,16 +256,25 @@ Abort (safe stop-line + non-zero exit; do not run / do not continue) if any of:
   `buyerrecon_stage0_runner`);
 - transaction / read-write posture mismatch (`readwrite_posture_mismatch` —
   session not writable for the upsert);
-- the exact Stage 0 command cannot be identified from `package.json` /
-  `scripts/run-stage0-worker.ts`;
+- the exact Stage 0 command cannot be identified, or the `package.json`
+  `stage0:run` mapping is not exactly `tsx scripts/run-stage0-worker.ts`
+  (`stage0_command_mapping_mismatch` — fail closed **before** DSN load / run-lock
+  / Stage 0);
+- any pre-run gate label is missing / ambiguous / false
+  (`stage0_exec_gate_failed` with `failed_gate_label=<…>`);
 - the command would run more than once;
 - the run lock is already touched / unexpected prior Stage 0 state
   (`run_lock_already_touched`);
+- Stage 0 runtime stdout/stderr is not fully captured to the chmod-600 temp, or
+  raw runtime output would be printed;
+- the Stage 0 command exits non-zero
+  (`stage0_command_failed_raw_output_withheld`);
+- the expected safe PASS-summary fields cannot be parsed from the captured output
+  (`stage0_result_parse_failed_raw_output_withheld`);
 - any downstream runtime would be bundled (extractor / risk / POI / evidence
   snapshot / Lane A·B / scoring / AMS / customer output / Gate 4E / Gate 4F);
 - any raw IDs / raw rows / payload / customer data would be printed;
-- any result is ambiguous (`stage0_command_failed` or unparseable summary →
-  record blocked, do not re-run without a fresh GO).
+- any result is ambiguous (record blocked, do not re-run without a fresh GO).
 
 If a stop-line is hit, remove temp files, `unset STAGE0_RUNNER_DSN`, and record
 the blocked state in a docs-only evidence PR before any further action.
