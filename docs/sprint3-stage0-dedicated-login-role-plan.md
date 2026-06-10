@@ -159,10 +159,13 @@ Source review performed on this branch (base
 | sequence (any) | `USAGE` | — | **NOT REQUIRED** — PK is `gen_random_uuid()`, no sequence default |
 | schema-wide / other tables | — | — | **NOT REQUIRED** — `CANDIDATE — VERIFY BEFORE GRANT` if ever proposed |
 
-No column-level narrowing is asserted here; the existing group-role grants are
-**table-level** `SELECT/INSERT/UPDATE`, which the membership-only shape inherits
-unchanged. Any deviation (e.g. column-level grants) is `CANDIDATE — VERIFY
-BEFORE GRANT`.
+No column-level narrowing is asserted here. The `buyerrecon_scoring_worker`
+group-role grants are intentionally **not inherited** because that role includes
+non-Stage-0 Risk/POI/POI-sequence surfaces. The recommended path remains
+direct grants only: `accepted_events` `SELECT`, `ingest_requests` `SELECT`, and
+`stage0_decisions` `SELECT/INSERT/UPDATE`. The membership-only shape remains
+**rejected / superseded — do not use**. Any deviation (e.g. column-level grants)
+is `CANDIDATE — VERIFY BEFORE GRANT`.
 
 ---
 
