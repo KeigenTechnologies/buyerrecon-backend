@@ -106,15 +106,40 @@ grep -n '"stage0:run"' package.json   # expect: "tsx scripts/run-stage0-worker.t
 ```
 
 ```sql
--- CANDIDATE ONLY — DO NOT RUN — read-only role/database gate (booleans/names only)
+-- CANDIDATE ONLY — DO NOT RUN — role/database gate (booleans/names only)
+
+-- (1) Pre-proof writable session/default gate (OUTSIDE any read-only block).
+--     Proves the DSN/session can support the would-be Stage 0 run (writable),
+--     without performing any write. Scalar/session settings only.
+\echo '=== PRE_PROOF_WRITABLE_SESSION_GATE ==='
+SELECT
+  current_user AS gate_current_user,                                    -- expect: buyerrecon_app
+  current_database() AS gate_database,                                  -- expect: buyerrecon_production
+  current_setting('transaction_read_only') AS gate_transaction_read_only,           -- expect: off
+  current_setting('default_transaction_read_only') AS gate_default_transaction_read_only; -- expect: off
+
+-- (2) Protected read-only proof transaction (the actual proof query runs
+--     read-only; ROLLBACK; no write, no Stage 0 command).
+\echo '=== READ_ONLY_PROOF_TRANSACTION ==='
 BEGIN;
-  SET LOCAL transaction_read_only = on;     -- hard read-only guard for the proof itself
-  SELECT
-    current_user      AS current_user,       -- expect: buyerrecon_app
-    current_database() AS current_database,   -- expect: buyerrecon_production
-    current_setting('transaction_read_only') AS proof_txn_read_only; -- proof runs read-only
+SET LOCAL transaction_read_only = on;          -- hard read-only guard for the proof itself
+
+SELECT
+  current_user AS proof_current_user,                                  -- expect: buyerrecon_app
+  current_database() AS proof_database,                                -- expect: buyerrecon_production
+  current_setting('transaction_read_only') AS proof_transaction_read_only,           -- expect: on (proof stayed read-only)
+  current_setting('default_transaction_read_only') AS proof_default_transaction_read_only; -- expect: off
+
 ROLLBACK;
 ```
+
+Safe design: the **session/default writable gate** (step 1) is captured
+**outside** any read-only block and must show
+`gate_transaction_read_only=off` / `gate_default_transaction_read_only=off`
+(proving the DSN/session can support the later Stage 0 write); the **protected
+proof transaction** (step 2) is read-only and must show
+`proof_transaction_read_only=on` (proving the proof itself performed no write).
+**Do not** claim the proof transaction itself has `transaction_read_only=off`.
 
 > Note on `transaction_read_only`: the **Stage 0 runtime** requires
 > `transaction_read_only=off` (it writes `stage0_decisions`). The **proof
@@ -133,17 +158,30 @@ After the checks: `unset APP_DSN`. The proof runs **no** `npm run stage0:run`.
 ## 7. Expected Proof Evidence (for the future evidence PR)
 
 A future docs-only **gate-proof evidence PR** (after its own GO) must record
-(booleans / names only):
+(booleans / names only), distinguishing the **pre-proof writable session gate**
+from the **protected read-only proof transaction**:
 - `APP_DSN_loaded=true` (value not printed);
-- `current_user=buyerrecon_app`;
-- `current_database=buyerrecon_production`;
-- `transaction_read_only=off` (session default for the would-be Stage 0 run);
+- **Pre-proof writable session/default gate** (outside the read-only block):
+  - `gate_current_user=buyerrecon_app`;
+  - `gate_database=buyerrecon_production`;
+  - `gate_transaction_read_only=off` (session can support the would-be Stage 0
+    write);
+  - `gate_default_transaction_read_only=off`;
+- **Protected read-only proof transaction:**
+  - `proof_current_user=buyerrecon_app`;
+  - `proof_database=buyerrecon_production`;
+  - `proof_transaction_read_only=on` (the proof itself stayed read-only);
 - `stage0_run_maps_to=tsx scripts/run-stage0-worker.ts`;
 - `head_matches_reviewed_chain=true`;
 - `stage0_command_run=false`;
 - `no_dsn_secret_printed=true`, `no_row_values_printed=true`,
   `no_raw_identifier_printed=true`;
 - and an explicit "Stage 0 rerun still requires a separate explicit GO" note.
+
+Do **not** claim the proof transaction itself has `transaction_read_only=off`;
+the writable state is proven by the **pre-proof gate**
+(`gate_transaction_read_only=off`), and the proof transaction is intentionally
+`proof_transaction_read_only=on`.
 
 If any check fails (e.g. `current_user` is not `buyerrecon_app`), the proof
 records a **blocked** state and Stage 0 rerun remains unauthorized.
@@ -174,7 +212,9 @@ any further action.
 ## 9. Explicit Non-Authorization
 
 This PR is **docs-only / planning-only** and authorizes **none** of:
-- no DSN value in repo; no secret edit; no `.env.production` mutation;
+- no DSN value in repo; no DSN change by this PR; no secret edit; no
+  `.env.production` mutation;
+- no diagnostic rerun by this PR;
 - no production command; no SQL execution; no role change; no grant;
 - no `ALTER ROLE`; no `GRANT role TO role`; no GRANT/DML/DDL; no permission fix;
 - no Stage 0 rerun; no extractor rerun;
