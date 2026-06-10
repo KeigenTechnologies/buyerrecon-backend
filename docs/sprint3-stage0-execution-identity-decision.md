@@ -171,6 +171,31 @@ separate Stage 0 execution GO.)
 - no secrets / DSN / password / token printed; no raw row values, raw
   identifiers, payload/customer data.
 
+Any future Stage 0 execution attempt must **stop immediately** if any of the
+following occur:
+
+- branch, base branch, or HEAD does not match the reviewed and merged
+  decision/evidence chain;
+- execution role is not the approved Stage 0 execution identity from this
+  decision path;
+- database is not the expected production database;
+- DSN cannot be loaded without printing or exposing it;
+- Stage 0 command differs from the reviewed command:
+  `DATABASE_URL="$APP_DSN" npm run stage0:run`;
+- more than one Stage 0 execution would be attempted;
+- Stage 0 command exits non-zero;
+- any permission error occurs;
+- any ad hoc grant, role change, SQL fix, or permission fix is needed;
+- output prints secrets, DSN, password, token, raw row values, raw identifiers,
+  payload data, or customer data;
+- any risk worker, POI worker, evidence snapshot, Lane A/B preview/write,
+  scoring runtime, AMS Trust/Pass runtime, customer output, Gate 4E, or Gate 4F
+  action is bundled into the same execution;
+- this decision PR is treated as Stage 0 execution authorization.
+
+If any stop-line is hit, record the blocked state in a separate docs-only
+evidence PR before taking any further action.
+
 ---
 
 ## 10. Explicit Non-Authorization
