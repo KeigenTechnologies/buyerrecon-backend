@@ -50,22 +50,35 @@ check that fails closed** on bad input, emitting only safe booleans/labels.
   URL / DSN components); the residue check was only a commented placeholder and
   too narrow; the validator read like a placeholder
   (`node scripts-or-inline-validator`).
-- **This patch addresses the blockers** by:
-  - **suppressing raw `psql` stdout/stderr** — both streams are redirected to a
-    `chmod 600` raw temp file and **never** printed/`tee`/`cat` to terminal or
-    the safe log (§5a/§5d);
-  - **emitting sanitized failure labels only** on connect/auth/DNS or proof
-    error (`psql_connect_or_proof_ok=false`, `psql_raw_output_captured=true`,
-    `psql_raw_output_printed=false`, `STOP_LINE: psql failed; raw output
-    withheld`) (§5d);
-  - **making the residue check operational** — a real executed step over the raw
-    output **and** the safe log, emitting only `residue_check_pass` /
-    `forbidden_pattern_count`, never printing matches, failing closed (§5e);
-  - **replacing the placeholder validator** with a concrete inline
-    `node - <<'NODE' … NODE` structural validator that emits booleans/labels
-    only (§5a/§5b);
-  - **booleans-only proof SQL** — labelled `key|value` booleans, no raw
-    `current_user` / `current_database` / role / row values (§5c).
+- **First patch (commit `5d5907d`)** fixed raw-`psql` suppression (chmod-600 raw
+  temp file; raw output never printed) and the inline `node - <<'NODE'`
+  validator, and changed proof SQL to booleans-only.
+- **Second Codex re-review: still BLOCKED** — the residue scan existed as shell
+  code but was **not wired into the main candidate flow** (the flow still had
+  narrative comments like "Run the §5e classifier here" / "Build SAFE log…"); the
+  psql-failure path emitted sanitized labels but did not clearly run the residue
+  check and terminate non-zero; and on `forbidden_pattern_count > 0` the check
+  removed `SAFE` and printed a stop-line but did **not** explicitly `exit`
+  non-zero / fail closed.
+- **This patch wires the residue scan into the live candidate flow and makes the
+  forbidden-residue and psql-failure paths fail closed**, by:
+  - **defining functions up front** (`emit_safe`, `cleanup`, `residue_scan`,
+    `finalize_or_fail`) and **calling them directly** in the main flow — no
+    "run §5e here" / "build SAFE log here" comments remain (§5a);
+  - **suppressing raw `psql` stdout/stderr** — both streams redirected to a
+    `chmod 600` raw temp file, **never** printed/`tee`/`cat` (§5a/§5d);
+  - **psql-failure path is explicit** — emits only the sanitized labels, runs
+    `finalize_or_fail`, removes `RAW`, unsets `APP_DSN`, and **`exit 4`** (§5a);
+  - **success path scans before finalizing** — extracts only allowlisted
+    `key|value` labels into `SAFE`, runs `finalize_or_fail`, and **`exit 6`** if
+    residue is found, else `exit 0` (§5a);
+  - **forbidden residue fails closed** — `finalize_or_fail` emits
+    `residue_check_pass=false` / `forbidden_pattern_count=<n>` /
+    `STOP_LINE: forbidden residue detected; safe log withheld`, removes `SAFE`,
+    and returns non-zero so the flow exits non-zero (§5a/§5e);
+  - **inline validator preserved** (booleans-only; never prints raw
+    DSN/components/parse errors) (§5a/§5b);
+  - **proof SQL preserved** as labelled `key|value` booleans only (§5c).
 
 ---
 
@@ -124,31 +137,64 @@ call** and **fail closed** if any condition fails. The check must:
 > structurally before `psql`; fails closed; emits booleans/labels only; runs no
 > Stage 0.
 
-### 5a. Guarded shell flow (sanitized; psql output never reaches terminal/safe log)
+### 5a. Guarded shell flow (self-contained; sanitized; fail-closed)
 ```bash
 # CANDIDATE ONLY — DO NOT RUN
 set -o pipefail
 cd /opt/buyerrecon-backend
 
-# Gate: HEAD + PR #176 presence + stage0:run mapping (names only)
-git rev-parse HEAD                                   # expect reviewed merged commit
-git merge-base --is-ancestor 0f15fd3ebd14155792a0b7f9b82652d4c81b1175 HEAD \
-  && echo "pr176_present=true" || { echo "pr176_present=false"; exit 3; }
-grep -n '"stage0:run"' package.json                  # expect: tsx scripts/run-stage0-worker.ts
+# --- file handles ---
+RAW="$(mktemp /tmp/bapp-dsn-proof-raw.XXXXXX)"; chmod 600 "$RAW"   # raw psql output (NEVER printed)
+SAFE="/tmp/buyerrecon-app-dsn-gate-proof-$(date -u +%Y%m%dT%H%M%SZ).log"  # safe log: sanitized labels only
 
-# Read DSN hidden; never echoed; in-shell only (no file write):
-read -r -s APP_DSN; echo
-[ -n "${APP_DSN:-}" ] && echo "dsn_nonempty=true" || { echo "dsn_nonempty=false"; unset APP_DSN; exit 2; }
-export APP_DSN
+# --- functions (defined up front; called by the main flow) ---
+emit_safe(){ printf '%s\n' "$1" | tee -a "$SAFE"; }                # write ONE sanitized label to terminal + safe log
 
-# RAW capture file (chmod 600) + cleanup trap. Raw psql output is NEVER printed.
-RAW="$(mktemp /tmp/bapp-dsn-proof-raw.XXXXXX)"; chmod 600 "$RAW"
-SAFE="/tmp/buyerrecon-app-dsn-gate-proof-$(date -u +%Y%m%dT%H%M%SZ).log"  # safe log: only sanitized labels
-cleanup(){ rm -f "$RAW" 2>/dev/null && echo "raw_temp_removed=true" || echo "raw_temp_removed=false"; unset APP_DSN; }
+cleanup(){
+  rm -f "$RAW" 2>/dev/null && echo "raw_temp_removed=true" || echo "raw_temp_removed=false"
+  unset APP_DSN
+}
 trap cleanup EXIT INT TERM
 
-# (1) Structural validation BEFORE psql (fails closed; booleans/labels only — see §5b):
-node - <<'NODE'
+# residue_scan: count-only over a file; NEVER prints matched lines. Echoes an integer count.
+residue_scan(){
+  local f="$1"
+  [ -f "$f" ] || { echo 0; return; }
+  grep -Eic \
+    'postgres(ql)?://|://[^ ]*:[^ ]*@|[?&](password|sslmode|user)=|password[=:]|secret|token|bearer|[A-Za-z0-9._-]+:[0-9]{2,5}/|([0-9]{1,3}\.){3}[0-9]{1,3}' \
+    "$f" 2>/dev/null || echo 0
+}
+
+# finalize_or_fail: run residue scan over RAW + SAFE; fail closed (exit non-zero) if anything found.
+finalize_or_fail(){
+  local raw_hits safe_hits forbidden
+  raw_hits="$(residue_scan "$RAW")"; safe_hits="$(residue_scan "$SAFE")"
+  forbidden=$(( raw_hits + safe_hits ))
+  if [ "$forbidden" -eq 0 ]; then
+    emit_safe "residue_check_pass=true"
+    emit_safe "forbidden_pattern_count=0"
+    return 0
+  fi
+  emit_safe "residue_check_pass=false"
+  emit_safe "forbidden_pattern_count=${forbidden}"        # count only; matching lines NEVER printed
+  emit_safe "STOP_LINE: forbidden residue detected; safe log withheld"
+  rm -f "$SAFE" 2>/dev/null                                # withhold safe log
+  return 1
+}
+
+# --- (0) gates: HEAD + PR #176 presence + stage0:run mapping (names only) ---
+git rev-parse HEAD                                          # expect reviewed merged commit
+git merge-base --is-ancestor 0f15fd3ebd14155792a0b7f9b82652d4c81b1175 HEAD \
+  && emit_safe "pr176_present=true" || { emit_safe "pr176_present=false"; exit 3; }
+grep -n '"stage0:run"' package.json                        # expect: tsx scripts/run-stage0-worker.ts
+
+# --- (1) read DSN hidden; never echoed; in-shell only ---
+read -r -s APP_DSN; echo
+[ -n "${APP_DSN:-}" ] && emit_safe "dsn_nonempty=true" || { emit_safe "dsn_nonempty=false"; exit 2; }
+export APP_DSN
+
+# --- (2) structural validation BEFORE psql (inline node; booleans only; fail closed) ---
+node - <<'NODE' | tee -a "$SAFE"
 'use strict';
 const raw = process.env.APP_DSN || '';
 function out(k,v){ console.log(k + '=' + v); }
@@ -173,14 +219,15 @@ out('dsn_db_expected', String(dbExpected));
 out('dsn_user_expected', String(userExpected));
 process.exit(protoOk && hostOk && userOk && dbOk && dbExpected && userExpected ? 0 : 5);
 NODE
-VALID_RC=$?
+VALID_RC="${PIPESTATUS[0]}"
 if [ "$VALID_RC" -ne 0 ]; then
-  echo "dsn_structural_validation=failed; stopping before psql"
-  exit "$VALID_RC"   # trap cleanup unsets APP_DSN and removes RAW
+  emit_safe "dsn_structural_validation=failed"
+  finalize_or_fail || true        # scan SAFE before exit (raw not yet created by psql)
+  exit "$VALID_RC"                 # trap cleanup removes RAW + unsets APP_DSN
 fi
-echo "dsn_structural_validation=passed"
+emit_safe "dsn_structural_validation=passed"
 
-# (2) Sanitized psql execution. BOTH stdout+stderr -> RAW (chmod 600). NEVER tee/cat raw to terminal.
+# --- (3) sanitized psql execution: BOTH stdout+stderr -> RAW (chmod 600); never printed ---
 if PGCONNECT_TIMEOUT=8 psql "$APP_DSN" \
      --no-psqlrc --set ON_ERROR_STOP=1 \
      -f /tmp/buyerrecon-app-dsn-gate-proof.sql > "$RAW" 2>&1; then
@@ -188,23 +235,27 @@ if PGCONNECT_TIMEOUT=8 psql "$APP_DSN" \
 else
   PSQL_OK=false
 fi
+
+# --- (4) FAILURE path: sanitized labels, residue scan, fail closed ---
 if [ "$PSQL_OK" != "true" ]; then
-  # Connection/auth/DNS failure: withhold ALL raw output (it may contain host/IP/user/URL).
-  echo "psql_connect_or_proof_ok=false"
-  echo "psql_raw_output_captured=true"
-  echo "psql_raw_output_printed=false"
-  echo "STOP_LINE: psql failed; raw output withheld"
-  # (residue check §5e still runs via trap-independent step below before exit)
+  emit_safe "psql_connect_or_proof_ok=false"
+  emit_safe "psql_raw_output_captured=true"
+  emit_safe "psql_raw_output_printed=false"
+  emit_safe "STOP_LINE: psql failed; raw output withheld"   # raw (may hold host/IP/user/URL) NEVER printed
+  finalize_or_fail || true                                  # residue scan still runs on RAW + SAFE
+  exit 4                                                     # fail closed; trap removes RAW + unsets APP_DSN
 fi
 
-# (3) Operational residue check over RAW + SAFE (booleans/count only; never prints matches) — see §5e.
-#     Run the §5e classifier here; it sets residue_check_pass / forbidden_pattern_count.
-
-# (4) Build SAFE log = ONLY sanitized labels (validator booleans + proof labels extracted as
-#     allowlisted "key|value" lines), NEVER the raw psql output. Then residue-check SAFE too.
-#     (See §5d for how proof labels are extracted from RAW without emitting raw connection text.)
-
-# trap cleanup removes RAW and unsets APP_DSN on exit.
+# --- (5) SUCCESS path: scan BEFORE finalizing; extract only allowlisted key|value labels ---
+emit_safe "psql_connect_or_proof_ok=true"
+# Extract only the allowlisted proof labels from RAW into SAFE (no raw connection text):
+grep -E '^(db_expected|user_expected|session_readonly_off|default_readonly_off|proof_transaction_readonly_on|proof_db_expected|proof_user_expected)\|' \
+  "$RAW" | tee -a "$SAFE" >/dev/null
+if ! finalize_or_fail; then
+  exit 6                                                     # forbidden residue -> fail closed (SAFE already withheld)
+fi
+emit_safe "gate_proof_safe_log=$SAFE"
+exit 0                                                       # trap removes RAW + unsets APP_DSN
 ```
 
 ### 5b. Structural validator (inline `node` heredoc; booleans/labels only)
@@ -250,53 +301,43 @@ Note: the proof emits **labelled booleans only** (e.g. `db_expected|true`,
 bounds the connect; the proof runs **no** `npm run stage0:run` and performs
 **no** write (`ROLLBACK`).
 
-### 5d. Sanitized failure / label extraction
+### 5d. Sanitized failure / label-extraction behaviour (as wired in §5a)
 
-- On **psql success**: extract **only** the allowlisted `key|value` boolean
-  lines (the `\echo` markers + the `*_expected` / `*_readonly_*` labels from §5c)
-  from `RAW` into the `SAFE` log — never copy raw connection text. Emit
-  `psql_connect_or_proof_ok=true`.
-- On **psql failure** (connect/auth/DNS or proof error): emit **only**
-  `psql_connect_or_proof_ok=false`, `psql_raw_output_captured=true`,
-  `psql_raw_output_printed=false`, and `STOP_LINE: psql failed; raw output
-  withheld`. **Never** `cat`/`tee`/print `RAW`; raw connection/auth/DNS error
-  text (which can contain hostname/IP/user/URL/DSN fragments) is **withheld**.
-- `APP_DSN` is unset and `RAW` is removed by the `trap cleanup` on exit
+The §5a flow implements both paths directly (no narrative placeholders):
+- **psql success** (step 5): emits `psql_connect_or_proof_ok=true`, then
+  extracts **only** the allowlisted `key|value` proof labels
+  (`db_expected|…`, `user_expected|…`, `session_readonly_off|…`,
+  `default_readonly_off|…`, `proof_transaction_readonly_on|…`,
+  `proof_db_expected|…`, `proof_user_expected|…`) from `RAW` into `SAFE` via a
+  fixed `grep -E '^(…)\|'` allowlist — never copying raw connection text — then
+  calls `finalize_or_fail` and exits non-zero (`6`) if residue is found, else
+  exits `0`.
+- **psql failure** (step 4): emits **only** `psql_connect_or_proof_ok=false`,
+  `psql_raw_output_captured=true`, `psql_raw_output_printed=false`, and
+  `STOP_LINE: psql failed; raw output withheld`; **never** `cat`/`tee`/prints
+  `RAW` (which can contain hostname/IP/user/URL/DSN fragments); runs
+  `finalize_or_fail`; then **`exit 4`** (fail closed).
+- `APP_DSN` is unset and `RAW` is removed by the `trap cleanup` on every exit
   (`raw_temp_removed=true`).
 
-### 5e. Operational residue check (real step; booleans/count only)
-```bash
-# CANDIDATE ONLY — DO NOT RUN — residue check over RAW and SAFE; never prints matches.
-residue_scan() {
-  local f="$1"
-  [ -f "$f" ] || { echo 0; return; }
-  # Count (do NOT print) lines containing DSN-scheme+authority, credential/secret patterns,
-  # URI authority fragments, query strings, or likely host/IP leakage.
-  grep -Eic \
-    'postgres(ql)?://|://[^ ]*:[^ ]*@|[?&](password|sslmode|user)=|password[=:]|secret|token|bearer|[A-Za-z0-9._-]+:[0-9]{2,5}/|([0-9]{1,3}\.){3}[0-9]{1,3}' \
-    "$f" 2>/dev/null || echo 0
-}
-RAW_HITS="$(residue_scan "$RAW")"
-SAFE_HITS="$(residue_scan "$SAFE")"
-FORBIDDEN=$(( RAW_HITS + SAFE_HITS ))
-if [ "$FORBIDDEN" -eq 0 ]; then
-  echo "residue_check_pass=true"
-  echo "forbidden_pattern_count=0"
-else
-  echo "residue_check_pass=false"
-  echo "forbidden_pattern_count=$FORBIDDEN"   # count only; matching lines NEVER printed
-  # fail closed: do not finalize/keep SAFE; remove it; raw already trap-removed
-  rm -f "$SAFE" 2>/dev/null
-  echo "STOP_LINE: residue check detected forbidden material; outputs withheld"
-fi
-```
+### 5e. Operational residue check (as wired in §5a)
 
-> The residue check is an **executed step** (not a comment), runs over the
-> **actual captured raw psql output** (`RAW`) **and** the `SAFE` log, emits only
-> `residue_check_pass` / `forbidden_pattern_count`, **never prints matching
-> lines**, and **fails closed** if any forbidden pattern is detected. If a known
-> forbidden raw value is available at run time, the operator adds it to the
-> scan's pattern set (still count-only).
+The residue check is the `residue_scan()` + `finalize_or_fail()` pair defined at
+the top of §5a and **called by the main flow** on every path (validation-fail,
+psql-fail, psql-success) **before** any output is considered safe. It:
+- runs over the **actual captured raw psql output** (`RAW`) **and** the `SAFE`
+  log;
+- **counts only** (DSN-scheme+authority, credential/secret/token patterns, URI
+  authority fragments, query strings, host:port, and IP-shaped leakage) and
+  **never prints matching lines**;
+- emits only `residue_check_pass=true|false` and
+  `forbidden_pattern_count=<count>`;
+- **fails closed**: on `forbidden_pattern_count > 0` it withholds (`rm -f`) the
+  `SAFE` log, emits `STOP_LINE: forbidden residue detected; safe log withheld`,
+  and the main flow **exits non-zero** (`6`).
+
+If a known forbidden raw value is available at run time, the operator adds it to
+the `residue_scan` pattern set (still count-only, never printed).
 
 ---
 
