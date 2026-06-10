@@ -43,6 +43,27 @@ ID, row value, or customer data appears in this record.
 
 ---
 
+## 1a. Review History
+
+- **First Codex review of PR #185: BLOCKED.**
+- **Blocker 1:** the catalog-backed success gate was **comment-only** — the live
+  candidate block did not parse/gate the proof labels; it only echoed
+  `stage0_command_run` / `run_lock_touched` / `raw_output_printed`.
+- **Blocker 2:** the **PR #182 / PR #183 merge gates were missing** — the flow
+  checked only PR #179 and PR #184.
+- **Patch response (this commit):** the candidate now checks **all four**
+  prerequisite merges (PR #179 / #182 / #183 / #184) **before** any password
+  prompt or psql execution, each with a distinct stop-line + non-zero exit (§3a);
+  and the §3c success gate is now **executable and fail-closed** —
+  `label_value` / `require_label` parse the §3b proof output and emit
+  `role_created=true` / `grants_applied=true` / `create_grant_proof_ok=true`
+  **only after** every required positive is true and every forbidden label is
+  false; otherwise it emits `create_grant_proof_ok=false` /
+  `stop_line=catalog_proof_failed` / `failed_label=<name>`, removes temp files,
+  unsets the password variables, and exits non-zero.
+
+---
+
 ## 2. Correction Summary
 
 - **Avoid Node template generation entirely** — psql-only / reviewed shell.
@@ -75,8 +96,10 @@ cd /opt/buyerrecon-backend || { echo "stop_line=wrong_repo_path"; exit 3; }
 # (0) repo + merge gates (names/booleans only):
 [ "$(pwd)" = "/opt/buyerrecon-backend" ] && echo "on_production_host=true" || { echo "on_production_host=false"; exit 3; }
 echo "repo_head=$(git rev-parse HEAD)"
-git merge-base --is-ancestor 5af3da6575521446d95adf0b82ed8044efa30a6b HEAD && echo "pr179_merge_present=true" || { echo "stop_line=pr179_missing"; exit 3; }
-git merge-base --is-ancestor 0e335a2b015ad4ec61c8f813f6f66a60899d8bfe HEAD && echo "pr184_merge_present=true" || { echo "stop_line=pr184_missing"; exit 3; }
+git merge-base --is-ancestor 5af3da6575521446d95adf0b82ed8044efa30a6b HEAD && echo "pr179_merge_present=true" || { echo "stop_line=pr179_merge_missing"; exit 3; }
+git merge-base --is-ancestor e31a8fb9449151e5312ae1600f5fb59b96839ef6 HEAD && echo "pr182_merge_present=true" || { echo "stop_line=pr182_merge_missing"; exit 3; }
+git merge-base --is-ancestor 8d647c74232e86c79b1e8645af3d17de444f0e10 HEAD && echo "pr183_merge_present=true" || { echo "stop_line=pr183_merge_missing"; exit 3; }
+git merge-base --is-ancestor 0e335a2b015ad4ec61c8f813f6f66a60899d8bfe HEAD && echo "pr184_merge_present=true" || { echo "stop_line=pr184_merge_missing"; exit 3; }
 [ -f docs/sprint3-stage0-dedicated-login-role-plan.md ] && echo "command_pack_doc_present=true" || { echo "stop_line=command_pack_doc_missing"; exit 3; }
 
 # (1) temp psql var file (0600) + trap cleanup; password & temp file NEVER printed:
@@ -173,19 +196,64 @@ SELECT 'owns_no_tables|' || (NOT EXISTS (
 ))::text;
 ```
 
-### 3c. Success-label gate (only after parsing §3b output)
+### 3c. Executable catalog-gated success (only after §3b proof; fail closed)
 ```bash
-# CANDIDATE ONLY — DO NOT RUN — parse RAW2 (the §3b output) for allowlisted labels; success only if ALL hold.
-# Required positives (must be true): db_expected, role_exists, role_can_login,
-#   priv_accepted_events_select, priv_ingest_requests_select, priv_stage0_select,
-#   priv_stage0_insert, priv_stage0_update, not_member_scoring_worker, owns_no_tables.
-# Required negatives (must be false): role_is_superuser, role_createdb, role_createrole,
-#   role_replication, role_bypassrls, all forbidden_* labels.
-# If every required positive is true AND every required negative is false:
-#     echo "role_created=true"; echo "grants_applied=true"; echo "create_grant_proof_ok=true"
-# else:
-#     echo "create_grant_proof_ok=false"; echo "stop_line=catalog_proof_failed"; exit 6
-# (Print ONLY the allowlisted labels parsed from RAW2 — never the raw psql output.)
+# CANDIDATE ONLY — DO NOT RUN
+# PROOF_RAW = the §3b output file (chmod 600). Parse ONLY allowlisted labels; never print raw psql output.
+
+label_value() {                              # echo the value of one allowlisted "name|value" label
+  grep -E "^$1\|" "$PROOF_RAW" | tail -n1 | cut -d'|' -f2
+}
+require_label() {                            # fail closed unless label == expected
+  name="$1"; expected="$2"; actual="$(label_value "$name")"
+  if [ "$actual" != "$expected" ]; then
+    echo "create_grant_proof_ok=false"
+    echo "stop_line=catalog_proof_failed"
+    echo "failed_label=$name"               # name only; never the raw line/value context
+    return 1
+  fi
+}
+
+gate_ok=true
+
+# Required POSITIVE labels (exact expected values):
+require_label db_expected               true  || gate_ok=false
+require_label role_exists               true  || gate_ok=false
+require_label role_can_login            true  || gate_ok=false
+require_label role_is_superuser         false || gate_ok=false
+require_label role_createdb             false || gate_ok=false
+require_label role_createrole           false || gate_ok=false
+require_label role_replication          false || gate_ok=false
+require_label role_bypassrls            false || gate_ok=false
+require_label priv_accepted_events_select true || gate_ok=false
+require_label priv_ingest_requests_select true || gate_ok=false
+require_label priv_stage0_select        true  || gate_ok=false
+require_label priv_stage0_insert        true  || gate_ok=false
+require_label priv_stage0_update        true  || gate_ok=false
+require_label not_member_scoring_worker true  || gate_ok=false
+require_label owns_no_tables            true  || gate_ok=false
+
+# Required FORBIDDEN labels (all must be false):
+for f in forbidden_risk_select forbidden_risk_insert forbidden_risk_update \
+         forbidden_poi_select forbidden_poi_insert forbidden_poi_update \
+         forbidden_poi_seq_usage forbidden_poi_seq_select forbidden_poi_seq_update \
+         forbidden_poiseq_select forbidden_poiseq_insert forbidden_poiseq_update \
+         forbidden_poiseq_seq_usage forbidden_poiseq_seq_select forbidden_poiseq_seq_update \
+         forbidden_stage0_delete forbidden_lane_a_any forbidden_lane_b_any; do
+  require_label "$f" false || gate_ok=false
+done
+
+if [ "$gate_ok" != "true" ]; then
+  # any failed_label / stop_line=catalog_proof_failed already emitted by require_label
+  echo "create_grant_proof_ok=false"
+  rm -f "$PWFILE" "$RAW" "$PROOF_RAW" 2>/dev/null; unset PW1 PW2
+  exit 6                                      # fail closed — NO success labels emitted
+fi
+
+# All positives true AND all forbidden false -> emit success labels (ONLY here):
+echo "role_created=true"
+echo "grants_applied=true"
+echo "create_grant_proof_ok=true"
 echo "stage0_command_run=false"
 echo "run_lock_touched=false"
 echo "raw_output_printed=false"
@@ -198,7 +266,10 @@ echo "raw_output_printed=false"
 Stop closed — emit **only** a safe stop-line, **no** success labels, remove temp
 files, unset password variables, run **no** Stage 0 — if any of:
 - repo path is wrong (`stop_line=wrong_repo_path`);
-- required merges missing (`pr179_missing` / `pr184_missing`);
+- required merges missing — PR #179 / #182 / #183 / #184 (`pr179_merge_missing` /
+  `pr182_merge_missing` / `pr183_merge_missing` / `pr184_merge_missing`), each a
+  distinct stop-line with non-zero exit **before** any password prompt or psql
+  execution;
 - command-pack doc missing;
 - password empty (`password_empty`) or mismatch
   (`stage0_runner_password_mismatch`);
