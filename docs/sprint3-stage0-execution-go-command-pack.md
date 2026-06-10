@@ -183,34 +183,55 @@ if [ "$STAGE0_RC" -ne 0 ]; then
   exit 6
 fi
 
-# SUCCESS: parse ONLY the allowlisted masked PASS-summary fields from the runner output.
-# (Runner native output is already masked: database host/db only, versions, window, counts.)
-PASS_MARKER="$(grep -cE 'stage0 worker — PASS' "$RUNOUT")"
-S0_VERSION="$(grep -E 'stage0_version:'  "$RUNOUT" | tail -n1 | sed -E 's/.*stage0_version:[[:space:]]*//')"
-SC_VERSION="$(grep -E 'scoring_version:' "$RUNOUT" | tail -n1 | sed -E 's/.*scoring_version:[[:space:]]*//')"
-UPSERTED="$(grep -E 'upserted_rows:'     "$RUNOUT" | tail -n1 | sed -E 's/.*upserted_rows:[[:space:]]*//')"
-EXCLUDED="$(grep -E 'excluded:'          "$RUNOUT" | tail -n1 | sed -E 's/.*excluded:[[:space:]]*//')"
-NONEXCL="$(grep -E 'non_excluded:'       "$RUNOUT" | tail -n1 | sed -E 's/.*non_excluded:[[:space:]]*//')"
+# SUCCESS: EXACT, FAIL-CLOSED parse of ONLY the allowlisted masked PASS fields.
+# Runner labels (from scripts/run-stage0-worker.ts): "stage0 worker — PASS",
+#   stage0_version:, scoring_version:, upserted_rows:, excluded:, non_excluded:.
+# Anchored '^[[:space:]]*' patterns ensure 'excluded:' does NOT match 'non_excluded:'.
 
-if [ "$PASS_MARKER" -lt 1 ] || [ -z "$S0_VERSION" ] || [ -z "$UPSERTED" ]; then
-  # Could not parse the expected safe fields -> fail closed; never print raw output.
+parse_fail() {                               # field name only; raw output NEVER printed
   echo "stage0_result_parse_ok=false"
   echo "raw_runtime_output_printed=false"
   echo "stop_line=stage0_result_parse_failed_raw_output_withheld"
-  rm -f "$RUNOUT"
+  echo "failed_parse_field=$1"
+  rm -f "$RAW" "$RUNOUT"; unset STAGE0_RUNNER_DSN
   exit 7
-fi
+}
+val_after() { grep -E "$1" "$RUNOUT" | sed -E "s/$1[[:space:]]*//"; }   # value after an anchored label
 
+# Each field must match EXACTLY ONE anchored line, be non-empty, and well-formed.
+[ "$(grep -cE 'stage0 worker — PASS' "$RUNOUT")" -eq 1 ] || parse_fail pass_marker
+
+[ "$(grep -cE '^[[:space:]]*stage0_version:'  "$RUNOUT")" -eq 1 ] || parse_fail stage0_version
+[ "$(grep -cE '^[[:space:]]*scoring_version:' "$RUNOUT")" -eq 1 ] || parse_fail scoring_version
+[ "$(grep -cE '^[[:space:]]*upserted_rows:'   "$RUNOUT")" -eq 1 ] || parse_fail upserted_rows
+[ "$(grep -cE '^[[:space:]]*excluded:'        "$RUNOUT")" -eq 1 ] || parse_fail excluded_rows
+[ "$(grep -cE '^[[:space:]]*non_excluded:'    "$RUNOUT")" -eq 1 ] || parse_fail non_excluded_rows
+
+S0_VERSION="$(val_after '^[[:space:]]*stage0_version:')"
+SC_VERSION="$(val_after '^[[:space:]]*scoring_version:')"
+UPSERTED="$(val_after '^[[:space:]]*upserted_rows:')"
+EXCLUDED="$(val_after '^[[:space:]]*excluded:')"
+NONEXCL="$(val_after '^[[:space:]]*non_excluded:')"
+
+# Versions: non-empty + safe-char allowlist; counts: non-empty + numeric.
+printf '%s' "$S0_VERSION" | grep -qE '^[A-Za-z0-9._:-]+$' || parse_fail stage0_version
+printf '%s' "$SC_VERSION" | grep -qE '^[A-Za-z0-9._:-]+$' || parse_fail scoring_version
+printf '%s' "$UPSERTED"   | grep -qE '^[0-9]+$'           || parse_fail upserted_rows
+printf '%s' "$EXCLUDED"   | grep -qE '^[0-9]+$'           || parse_fail excluded_rows
+printf '%s' "$NONEXCL"    | grep -qE '^[0-9]+$'           || parse_fail non_excluded_rows
+
+# All fields exist, unambiguous (exactly one line each), non-empty, well-formed -> success.
 echo "stage0_command_exit_code=0"
 echo "stage0_result_parse_ok=true"
 echo "raw_runtime_output_printed=false"
 echo "stage0_pass=true"
-# Allowlisted masked PASS fields ONLY (counts + versions; database masked to host/db; window is timestamps):
 echo "stage0_version=$S0_VERSION"
 echo "scoring_version=$SC_VERSION"
 echo "upserted_rows=$UPSERTED"
 echo "excluded_rows=$EXCLUDED"
 echo "non_excluded_rows=$NONEXCL"
+echo "stage0_command_run=true"
+echo "run_lock_touched=true"
 rm -f "$RUNOUT"
 echo "stage0_exec_done=true"
 ```
