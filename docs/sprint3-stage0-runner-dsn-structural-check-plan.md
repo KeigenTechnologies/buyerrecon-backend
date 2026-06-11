@@ -158,7 +158,7 @@ if [ -n "${STAGE0_RUNNER_DSN:-}" ]; then
 else
   echo "stage0_runner_dsn_loaded=false"
   echo "stop_line=stage0_runner_dsn_missing"
-  rm -f "$RAW"; unset STAGE0_RUNNER_DSN
+  rm -f "$RAW"; unset STAGE0_RUNNER_DSN       # unset on every path (even when empty)
   exit 2
 fi
 
@@ -167,14 +167,17 @@ if PGCONNECT_TIMEOUT=8 psql "$STAGE0_RUNNER_DSN" --no-psqlrc -v ON_ERROR_STOP=1 
      -c 'SELECT 1' > "$RAW" 2>&1; then
   echo "stage0_runner_dsn_connectivity_check_pass=true"
   echo "stage0_runner_dsn_raw_output_printed=false"
+  rm -f "$RAW"; unset STAGE0_RUNNER_DSN
+  exit 0                                      # success path returns 0
 else
   # Broad category only — never parse/print the raw error text, host, user, db, or DSN.
   echo "stage0_runner_dsn_connectivity_check_pass=false"
   echo "stage0_runner_dsn_auth_or_connectivity_failed=true"
   echo "stage0_runner_dsn_raw_output_printed=false"
   echo "stop_line=stage0_runner_dsn_connectivity_check_failed_raw_output_withheld"
+  rm -f "$RAW"; unset STAGE0_RUNNER_DSN
+  exit 4                                      # FAIL CLOSED: classifier failure exits non-zero
 fi
-rm -f "$RAW"; unset STAGE0_RUNNER_DSN
 ```
 
 - Allowed labels: `stage0_runner_dsn_connectivity_check_pass=true|false`,
