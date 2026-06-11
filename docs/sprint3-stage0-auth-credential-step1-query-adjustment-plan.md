@@ -71,10 +71,10 @@ table/sequence privilege checks):
 - `role_has_no_createrole`;
 - `step1a_role_metadata_result`.
 
-Rationale: this avoids the table/sequence privilege joins (the likely source of
-the failed query) and tests whether a **minimal** `pg_roles`-only query executes
-and emits the allowlist cleanly. **Fail closed** if the query errors or the label
-set does not match the allowlist exactly.
+Rationale: this avoids table/sequence privilege joins, which are one possible
+source of the failed query, and tests whether a **minimal** `pg_roles`-only query
+executes and emits the allowlist cleanly. **Fail closed** if the query errors or
+the label set does not match the allowlist exactly.
 
 ### Step 1B — grant boundary check (only if Step 1A passes; separately GO-gated if desired)
 Emit **only**:
