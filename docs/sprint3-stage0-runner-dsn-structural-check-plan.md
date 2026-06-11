@@ -78,9 +78,11 @@ echo "stage0_runner_dsn_printed=false"
 [ -n "${STAGE0_RUNNER_DSN:-}" ] && echo "stage0_runner_dsn_loaded=true" \
   || { echo "stage0_runner_dsn_loaded=false"; echo "stage0_runner_dsn_structural_check_pass=false"; echo "stop_line=stage0_runner_dsn_structural_check_failed"; echo "failed_dsn_check=dsn_missing"; exit 2; }
 
-# Structural validation in a Node heredoc: reads env only, prints BOOLEANS ONLY,
-# never prints the DSN or any component (host/user/password/db/query/URL/error text).
-node - <<'NODE'
+# Structural validation in a Node heredoc. The hidden DSN is passed via a ONE-SHOT
+# env assignment on the same command so the child process actually receives it
+# (a bare shell var is NOT exported). Prints BOOLEANS ONLY; never prints the DSN
+# or any component (host/user/password/db/query/URL/error text).
+STAGE0_RUNNER_DSN="$STAGE0_RUNNER_DSN" node - <<'NODE'
 'use strict';
 const raw = process.env.STAGE0_RUNNER_DSN || '';
 function out(k,v){ console.log(k + '=' + v); }
@@ -88,7 +90,8 @@ function fail(label){ out('stage0_runner_dsn_structural_check_pass','false'); co
 if (raw.length === 0) fail('dsn_missing');
 if (/\s/.test(raw)) fail('whitespace_or_paste_artifact');              // newline/space/paste artifact
 if (!/^postgres(ql)?:\/\//.test(raw)) fail('bad_scheme');
-let u; try { u = new URL(raw); } catch { fail('unparseable'); }
+let u; try { u = new URL(raw); } catch { fail('dsn_unparseable'); }    // never print raw parse error
+out('stage0_runner_dsn_parseable','true');
 if (!(u.protocol === 'postgres:' || u.protocol === 'postgresql:')) fail('bad_protocol');
 const userExpected = (u.username === 'buyerrecon_stage0_runner');      // compare only; never print username
 const notCollector = (u.username !== 'buyerrecon_prod_collector_app'); // must NOT be the collector identity
@@ -116,13 +119,16 @@ echo "stage0_runner_dsn_structural_preflight_done=true"
 ```
 
 **Safe booleans emitted** (examples): `stage0_runner_dsn_loaded=true`,
-`stage0_runner_dsn_printed=false`, `stage0_runner_dsn_scheme_ok=true`,
-`stage0_runner_dsn_user_expected=true`, `stage0_runner_dsn_not_collector_app=true`,
-`stage0_runner_dsn_db_expected=true`, `stage0_runner_dsn_no_whitespace=true`,
+`stage0_runner_dsn_printed=false`, `stage0_runner_dsn_parseable=true`,
+`stage0_runner_dsn_scheme_ok=true`, `stage0_runner_dsn_user_expected=true`,
+`stage0_runner_dsn_not_collector_app=true`, `stage0_runner_dsn_db_expected=true`,
+`stage0_runner_dsn_no_whitespace=true`,
 `stage0_runner_dsn_structural_check_pass=true`. On failure: only
 `stage0_runner_dsn_structural_check_pass=false`,
 `stop_line=stage0_runner_dsn_structural_check_failed`,
-`failed_dsn_check=<label>`.
+`failed_dsn_check=<label>` (e.g. `dsn_missing`, `whitespace_or_paste_artifact`,
+`bad_scheme`, `dsn_unparseable`, `bad_protocol`, `user_not_stage0_runner`,
+`collector_app_dsn_suspected`, `db_not_buyerrecon_production`).
 
 The DSN value, host, username, password, database name, query string, URL, and
 any parse-error text are **never** printed. The DSN is **unset** after the
@@ -137,10 +143,26 @@ preflight on every path.
 > host/user/db/password/DSN/error text.
 
 ```bash
-# CANDIDATE ONLY — DO NOT RUN — broad connectivity/auth classification; raw output withheld.
-# (Run ONLY after §3 structural check passes; DSN re-supplied hidden; raw psql -> chmod-600 temp.)
+# CANDIDATE ONLY — DO NOT RUN — self-contained broad connectivity/auth classification; raw output withheld.
+# Run ONLY after §3 structural check passed. This block reads its own hidden DSN and fails closed.
+set -o pipefail
+umask 077
 RAW="$(mktemp /tmp/stage0-dsn-classify.XXXXXX)"; chmod 600 "$RAW"
 trap 'rm -f "$RAW"; unset STAGE0_RUNNER_DSN' EXIT INT TERM
+
+# Read hidden DSN again (self-contained); never echoed; require non-empty; fail closed if missing:
+read -r -s STAGE0_RUNNER_DSN; echo
+echo "stage0_runner_dsn_printed=false"
+if [ -n "${STAGE0_RUNNER_DSN:-}" ]; then
+  echo "stage0_runner_dsn_loaded=true"
+else
+  echo "stage0_runner_dsn_loaded=false"
+  echo "stop_line=stage0_runner_dsn_missing"
+  rm -f "$RAW"; unset STAGE0_RUNNER_DSN
+  exit 2
+fi
+
+# psql with stdout+stderr -> RAW (chmod 600); raw output NEVER printed:
 if PGCONNECT_TIMEOUT=8 psql "$STAGE0_RUNNER_DSN" --no-psqlrc -v ON_ERROR_STOP=1 \
      -c 'SELECT 1' > "$RAW" 2>&1; then
   echo "stage0_runner_dsn_connectivity_check_pass=true"
@@ -195,7 +217,7 @@ Abort (safe stop-line + non-zero exit) if any of:
 - missing PR #189 merge (`pr189_merge_missing`);
 - DSN missing (`failed_dsn_check=dsn_missing`);
 - the DSN would be printed (never emit the value — abort the printing path);
-- malformed DSN (`bad_scheme` / `bad_protocol` / `unparseable`);
+- malformed DSN (`bad_scheme` / `bad_protocol` / `dsn_unparseable`);
 - wrong role/user indicator (`user_not_stage0_runner`);
 - collector-app DSN suspected (`collector_app_dsn_suspected`);
 - whitespace / newline / paste artifact suspected
