@@ -44,7 +44,7 @@ text, host/network details, terminal prompt values, or raw data.
 step2d_password_rotation_attempted=true
 diagnostic_scope=pr219_step2d_password_rotation_command_pack
 production_host_confirmed=true
-expected_branch_head_confirmed=not_reached_or_not_recorded
+expected_branch_head_confirmed=true
 authoritative_custody_pointer_confirmed=false
 hidden_password_received=false
 hidden_password_confirmed=false
@@ -58,8 +58,15 @@ password_value_stored_in_repo=false
 password_value_recorded_in_evidence=false
 raw_sql_output_printed=false
 raw_postgres_error_printed=false
+secret_value_exposed_printed_or_recorded=false
 stage0_executed=false
 run_lock_touched=false
+step2e_diagnostic_run=false
+psql_login_as_stage0_runner=false
+grant_dml_ddl_outside_scoped_rotation=false
+runtime_downstream_customer_action=false
+lane_scoring_ams_customer_output=false
+gate4e_gate4f_action=false
 step2d_password_rotation_result=blocked_admin_connection_missing
 ```
 
@@ -69,13 +76,16 @@ step2d_password_rotation_result=blocked_admin_connection_missing
 
 - **Step 2D execution GO was issued** and the rotation command-pack was
   **attempted** (`step2d_password_rotation_attempted=true`) under the trusted scope
-  label `diagnostic_scope=pr219_step2d_password_rotation_command_pack`, on the
-  production host (`production_host_confirmed=true`).
-- **Execution was blocked before any SQL** because the operator **did not have/know
-  the approved admin/rotation connection**
-  (`authoritative_custody_pointer_confirmed=false`,
+  label `diagnostic_scope=pr219_step2d_password_rotation_command_pack`.
+- **The early gates passed:** the **production host was confirmed**
+  (`production_host_confirmed=true`) and the **expected branch/head/docs gate was
+  confirmed** (`expected_branch_head_confirmed=true`).
+- **Execution then blocked at the approved admin/rotation connection availability
+  gate, before any SQL,** because the operator **did not have/know the approved
+  admin/rotation connection** (`authoritative_custody_pointer_confirmed=false`,
   `step2d_password_rotation_result=blocked_admin_connection_missing`). The command-
-  pack **failed closed** at the hidden admin/rotation-connection prompt.
+  pack **failed closed** at the hidden admin/rotation-connection prompt — before any
+  password / reset / rotation action.
 - **Nothing was changed and no SQL ran:**
   - **no** hidden password was received or confirmed
     (`hidden_password_received=false`, `hidden_password_confirmed=false`);
@@ -107,7 +117,9 @@ the approved admin/rotation connection.
 
 - No password reset; no credential rotation; no custody-pointer update.
 - No guessing, fallback, app, or runner connection substituted.
-- No psql / SQL; no raw SQL output; no raw PostgreSQL error text.
+- No psql / SQL; no psql login as `buyerrecon_stage0_runner`; no raw SQL output;
+  no raw PostgreSQL error text.
+- No GRANT / DML / DDL outside the (un-run) scoped rotation.
 - No `.env.production` mutation.
 - No hidden password received/confirmed; no password value printed/stored/recorded.
 - No Step 2E; no Stage 0; no `npm run stage0:run`.
