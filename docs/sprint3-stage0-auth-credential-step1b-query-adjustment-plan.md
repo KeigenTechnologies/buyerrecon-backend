@@ -38,11 +38,12 @@ DSN, password, host, port, token, or raw value appears in this document.
 **No Step 1B booleans were produced.** Therefore this plan does **not** claim
 `required_grants_hold` or `forbidden_privileges_absent`, does **not** infer that
 required grants are missing or forbidden privileges are present, and does **not**
-infer a password/custody root cause. **Table/sequence privilege checks may be a
-fragile part of the query path**, but the **exact failure cause remains unproven**
-because raw output was withheld. The fix is to **split the combined query into
-smaller fail-closed slices** that are more likely to execute cleanly and emit a
-strict allowlist.
+infer that password/custody is the cause. **The combined privilege joins are one
+possible fragile element of the query path**, but the **exact Step 1B query
+failure cause remains unproven** because raw output was withheld. The fix is to
+**split the combined query into smaller fail-closed slices** — **Step 1B-A is
+designed as a smaller first slice to test object-presence labels before privilege
+probes** — each emitting a strict allowlist of booleans.
 
 ---
 
@@ -77,8 +78,10 @@ Emit **only**:
 - `step1b_a_object_presence_result`.
 
 Catalog presence checks only (`pg_class` / `information_schema` / `pg_sequences`);
-**no** `has_table_privilege` / `has_sequence_privilege` joins yet. This isolates
-whether object resolution (the likeliest fragile element) executes cleanly.
+**no** `has_table_privilege` / `has_sequence_privilege` joins yet. This tests
+object-presence labels separately, before any privilege probes, so each part is
+evaluated on its own (object resolution being **one possible fragile element**;
+the exact Step 1B failure cause remains unproven).
 
 ### Step 1B-B — required table privileges only
 Emit **only**:
