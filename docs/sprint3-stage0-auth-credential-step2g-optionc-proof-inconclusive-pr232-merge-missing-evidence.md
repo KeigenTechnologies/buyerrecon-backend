@@ -1,4 +1,4 @@
-# Sprint 3 — Stage 0 auth/credential Step 2G Option C — Proof — Evidence (INCONCLUSIVE: PR #232 merge not present)
+# Sprint 3 — Stage 0 auth/credential Step 2G Option C — Proof — Evidence (INCONCLUSIVE: PR #232 merge commit absent from local operator checkout)
 
 **Status:** `STAGE0_AUTH_CREDENTIAL_STEP2G_OPTIONC_PROOF_EXECUTED_INCONCLUSIVE_PR232_MERGE_NOT_PRESENT`
 
@@ -6,9 +6,19 @@ This is a **docs-only evidence record**. Under the GO
 `HELEN STAGE0 AUTH CREDENTIAL STEP 2G OPTION C PROOF GO`, the operator ran the Option C
 non-secret connection-source category proof (safe-label-only) on the production host
 path `/opt/buyerrecon-backend`. The proof **failed closed before source-category
-classification** because the approved PR #232 merge commit was **not present** in the
-local checkout → `option_c_result=inconclusive`,
+classification** because **the approved PR #232 merge commit was not present in the
+local operator checkout** → `option_c_result=inconclusive`,
 `stop_line=approved_pr232_merge_not_present`.
+
+> **Scope of the "not present" finding (precise):** this evidence supports **only**
+> that the local operator checkout at `/opt/buyerrecon-backend` did not contain or
+> recognize commit `5de683a5caeca3b4f90bee7c8353461ba7b0ad8c` (a local Git
+> `fatal: Not a valid commit name 5de683…` — i.e. the local Git object was
+> absent/unknown). It does **not** assert anything about the GitHub merge state of PR
+> #232. **Independently verified from GitHub at the time of this PR #233's creation,
+> PR #232 is `MERGED`** (mergeCommit `5de683a5caeca3b4f90bee7c8353461ba7b0ad8c`,
+> mergedAt `2026-06-14T18:01:37Z`, mergedBy `KeigenTechnologies`) — so the absence is a
+> **local-checkout sync condition only**, not a GitHub-unmerged condition.
 
 **This is a valid fail-closed result — it does NOT classify the runner source, does NOT
 prove runner-source presence/absence, does NOT select Option A or Option B, does NOT
@@ -75,10 +85,16 @@ stop_line=approved_pr232_merge_not_present
   `proof_basis=env_var_name_source_selection_path_presence_booleans_tracked_code_docs_only`
   (non-secret classification basis only).
 - It **failed closed before source-category classification**: the **approved PR #232
-  merge commit `5de683a5caeca3b4f90bee7c8353461ba7b0ad8c` was not present** in the local
-  checkout (`pr232_merge_present=false`), so the proof stopped at
+  merge commit `5de683a5caeca3b4f90bee7c8353461ba7b0ad8c` was not present in the local
+  operator checkout** (`pr232_merge_present=false`), so the proof stopped at
   `stop_line=approved_pr232_merge_not_present` →
   `option_c_result=inconclusive`.
+- **Precise meaning of "not present":** the local operator checkout produced a Git
+  `fatal: Not a valid commit name 5de683…` — i.e. the local Git object was
+  absent/unknown in that checkout. This is a **local-checkout sync condition**, and does
+  **not** by itself indicate the GitHub merge state of PR #232. (Independently verified
+  from GitHub at this PR's creation, PR #232 is `MERGED` — see the header note — so the
+  gap is local-sync only.)
 - Because it stopped before classification, the category labels are all **`unknown`**:
   `approved_runner_source_present=unknown`,
   `approved_runner_source_category=unknown`,
@@ -129,7 +145,9 @@ PR #228/#229 binding hypothesis remain unchanged.
 - **INCONCLUSIVE (fail-closed) — Step 2G Option C is `option_c_result=inconclusive`,
   `stop_line=approved_pr232_merge_not_present`**: the proof stopped before
   classification because the approved PR #232 merge commit was not present in the local
-  checkout; all category labels are `unknown`; no secret/raw value exposed; nothing
+  operator checkout (GitHub independently shows PR #232 `MERGED` — see header note; the
+  absence is a local-sync condition only); all category labels are `unknown`; no
+  secret/raw value exposed; nothing
   connected, changed, or executed.
 - This is **not** a source-category classification, **not** a runner-source
   presence/absence proof, **not** an Option A/B selection, **not** a raw-error proof,
