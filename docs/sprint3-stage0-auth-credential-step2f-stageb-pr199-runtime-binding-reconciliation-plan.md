@@ -46,49 +46,88 @@ host, port, IP, or URI appears in this document.
 > **doc/code citations** are recorded (all already non-secret in tracked files).
 
 **Q1 — What did PR #199 actually record?**
-The registry (`docs/ops/buyerrecon-production-environment-runtime-registry.md`, §5)
-**does document a Stage 0 runner-specific connection contract**: it specifies the
-dedicated role `buyerrecon_stage0_runner` against database `buyerrecon_production`,
-with password/host/port held as **custody placeholders only** ("password-manager or
-server-side hidden in-memory assembly; never paste into chat/logs/repo"). It
+The registry (`docs/ops/buyerrecon-production-environment-runtime-registry.md`)
+**does document a Stage 0 runner-specific connection contract**: it names the
+dedicated role `buyerrecon_stage0_runner`
+(`docs/ops/buyerrecon-production-environment-runtime-registry.md:60`) against database
+`buyerrecon_production`, with a placeholder DSN template
+(`docs/ops/buyerrecon-production-environment-runtime-registry.md:77-78`) and custody
+rules holding password/host/port as **placeholders only**
+(`docs/ops/buyerrecon-production-environment-runtime-registry.md:74,79-86`: §5 header,
+password custody, host/port custody, "assemble the full DSN outside repo/logs"). It
 **explicitly forbids** using the `.env.production` collector DSN directly and forbids
-the `buyerrecon_prod_collector_app` role as the Stage 0 runner connection.
+the `buyerrecon_prod_collector_app` role as the Stage 0 DSN
+(`docs/ops/buyerrecon-production-environment-runtime-registry.md:87-91`).
 
 **Q2 — Did PR #199 define a runner-specific Stage 0 connection source?**
-**Yes, as a documented contract** (role + database + custody rules). It is a
+**Yes, as a documented contract** (role + database + custody rules:
+`docs/ops/buyerrecon-production-environment-runtime-registry.md:60,74-91`). It is a
 **documentation/custody contract**, not a wired runtime binding.
 
 **Q3 — Did PR #199 only define production/runtime/app/collector source names?**
 **No** — it goes beyond app/collector registry by naming the dedicated runner role and
-its custody rules. (So this is **not** `registry_only_no_runner_binding`.)
+its custody rules
+(`docs/ops/buyerrecon-production-environment-runtime-registry.md:60,74-91`). (So this
+is **not** `registry_only_no_runner_binding`.)
 
 **Q4 — What env-var names do current scripts/docs expect for the Stage 0 runner?**
-The **Stage 0 worker code reads only `DATABASE_URL`**
-(`scripts/run-stage0-worker.ts` header comment; `src/scoring/stage0/run-stage0-worker.ts`
-reads `env.DATABASE_URL` and errors "DATABASE_URL is required"). The worker does **not**
-read any runner-specific env. `extract-stage0-inputs.ts` reads no env directly (it takes
-a pool from the caller). The shared pool helper (`src/db/client.ts`) also reads
-`DATABASE_URL`.
+The **Stage 0 worker code reads only `DATABASE_URL`**: `scripts/run-stage0-worker.ts:6`
+(header comment "DATABASE_URL required; never printed");
+`src/scoring/stage0/run-stage0-worker.ts:175` (`const databaseUrl = env.DATABASE_URL;`)
+and `src/scoring/stage0/run-stage0-worker.ts:177` (throws "DATABASE_URL is required").
+The worker does **not** read any runner-specific env (its other reads at
+`src/scoring/stage0/run-stage0-worker.ts:180-216` are `WORKSPACE_ID` / `SITE_ID` /
+`UNTIL` / `SINCE` / `SINCE_HOURS` / `STAGE0_VERSION`). `extract-stage0-inputs.ts` reads
+no env directly (it takes a pool from the caller). The shared pool helper reads
+`DATABASE_URL` at `src/db/client.ts:6` (`connectionString: process.env.DATABASE_URL`).
 
 **Q5 — Is there a documented `STAGE0_RUNNER_DSN` or equivalent?**
 **In docs only, not in worker code.** The PR #198-style psql gate diagnostic plan
-(`docs/sprint3-stage0-psql-gate-diagnostic-plan.md`) **assembles `STAGE0_RUNNER_DSN`
-in-memory** from an `APPROVED_DB_SOURCE` custody pointer for the diagnostic, and never
-stores it as a runtime env var. The Stage 0 **worker** has **no** `STAGE0_RUNNER_DSN`
-wiring.
+**assembles `STAGE0_RUNNER_DSN` in-memory** from an `APPROVED_DB_SOURCE` custody
+pointer for the diagnostic (`docs/sprint3-stage0-psql-gate-diagnostic-plan.md:8` names
+`STAGE0_RUNNER_DSN`; `:76,78` derive host/port and assemble "in memory only … never
+printed"; `:108-115` source from `APPROVED_DB_SOURCE`; `:124-125` assemble then unset
+components), and never stores it as a runtime env var. The Stage 0 **worker** has
+**no** `STAGE0_RUNNER_DSN` wiring (Q4: it reads `DATABASE_URL` only).
 
 **Q6 — Current safe source-selection order in the diagnostic command/spec?**
-The **diagnostic spec** sources from `APPROVED_DB_SOURCE` and **fails closed (no
-fallback to `DATABASE_URL`)** if that custody source is absent. The **worker**, by
-contrast, has no such selection — it reads `DATABASE_URL` as its only source.
+The **diagnostic spec** sources from `APPROVED_DB_SOURCE`
+(`docs/sprint3-stage0-psql-gate-diagnostic-plan.md:108-109`) and **fails closed (no
+fallback to `DATABASE_URL`)** if that custody source / its components are absent
+(`docs/sprint3-stage0-psql-gate-diagnostic-plan.md:114-115`, stop-lines with `exit 3`).
+The **worker**, by contrast, has no such selection — it reads `DATABASE_URL` as its
+only source (`src/scoring/stage0/run-stage0-worker.ts:175,177`; `src/db/client.ts:6`).
 
 **Q7 — Does the current path fall back to `DATABASE_URL` when the runner-specific
 source is absent?**
-For the **diagnostic spec: no** (documented fail-closed, no fallback). For the **Stage
-0 worker: effectively yes / worse** — there is **no runner-specific source wired at
-all**, so the worker's only source is `DATABASE_URL`, which is the **collector**
-category. Tracked evidence associates `DATABASE_URL` with `buyerrecon_prod_collector_app`
-(collector runtime role), **not** `buyerrecon_stage0_runner`.
+For the **diagnostic spec: no** (documented fail-closed, no fallback —
+`docs/sprint3-stage0-psql-gate-diagnostic-plan.md:114-115`). For the **Stage 0 worker:
+effectively yes / worse** — there is **no runner-specific source wired at all**, so the
+worker's only source is `DATABASE_URL` (`src/scoring/stage0/run-stage0-worker.ts:175`;
+`src/db/client.ts:6`), which is the **collector** category. Tracked evidence associates
+`DATABASE_URL` / the operator's `APP_DSN` with `buyerrecon_prod_collector_app`
+(`docs/sprint3-stage0-execution-identity-dsn-resolution-plan.md:49`
+[`current_user=buyerrecon_prod_collector_app`], `:76`, `:161`, and the
+`DATABASE_URL="$APP_DSN" npm run stage0:run` example at `:217`), the **collector
+runtime role** (`docs/ops/cutover-hard-gates.md:111`) — **not**
+`buyerrecon_stage0_runner` — which the registry explicitly forbids for Stage 0
+(`docs/ops/buyerrecon-production-environment-runtime-registry.md:87-91`).
+
+### 2.1 Exact Citations (verified against current repo line numbers)
+
+> Line numbers verified by `grep -n` on the current checkout of branch
+> `buyerrecon-sprint3-stage0-auth-credential-step2f-stageb-pr199-runtime-binding-reconciliation-plan`.
+> Not reproduced from memory.
+
+| Claim | Citation(s) |
+|---|---|
+| PR #199 documents a runner-specific Stage 0 connection contract / custody (dedicated role `buyerrecon_stage0_runner`, db `buyerrecon_production`, placeholder DSN template, custody rules, collector-DSN/role forbidden) | `docs/ops/buyerrecon-production-environment-runtime-registry.md:60`, `:74`, `:77-78`, `:79-86`, `:87-91` |
+| `STAGE0_RUNNER_DSN` is the documented runner connection env name | `docs/sprint3-stage0-psql-gate-diagnostic-plan.md:8`, `:124` |
+| PR #198-style psql gate diagnostic assembles `STAGE0_RUNNER_DSN` **in memory** / never prints raw secrets (hidden input, in-memory assembly, chmod-600 temp) | `docs/sprint3-stage0-psql-gate-diagnostic-plan.md:76`, `:78`, `:108-109`, `:118`, `:124-125`, `:158-159`, `:381-382` |
+| Diagnostic fails closed with **no fallback to `DATABASE_URL`** if the approved source/components are absent | `docs/sprint3-stage0-psql-gate-diagnostic-plan.md:114-115` |
+| Current Stage 0 worker / shared pool source path reads `DATABASE_URL` (no runner-specific env) | `scripts/run-stage0-worker.ts:6`; `src/scoring/stage0/run-stage0-worker.ts:175`, `:177`; `src/db/client.ts:6` |
+| `extract-stage0-inputs.ts` reads no env directly (pool passed by caller) | `src/scoring/stage0/extract-stage0-inputs.ts` (no `process.env` / `DATABASE_URL` reads) |
+| Current worker source-selection depends on `DATABASE_URL`, which is the **collector** category (`buyerrecon_prod_collector_app`), not a proven runner-specific runtime binding | `src/scoring/stage0/run-stage0-worker.ts:175`; `src/db/client.ts:6`; `docs/sprint3-stage0-execution-identity-dsn-resolution-plan.md:49`, `:76`, `:161`, `:217`; `docs/ops/cutover-hard-gates.md:111` |
 
 ---
 
