@@ -78,8 +78,11 @@ and `src/scoring/stage0/run-stage0-worker.ts:177` (throws "DATABASE_URL is requi
 The worker does **not** read any runner-specific env (its other reads at
 `src/scoring/stage0/run-stage0-worker.ts:180-216` are `WORKSPACE_ID` / `SITE_ID` /
 `UNTIL` / `SINCE` / `SINCE_HOURS` / `STAGE0_VERSION`). `extract-stage0-inputs.ts` reads
-no env directly (it takes a pool from the caller). The shared pool helper reads
-`DATABASE_URL` at `src/db/client.ts:6` (`connectionString: process.env.DATABASE_URL`).
+no env directly — `src/scoring/stage0/extract-stage0-inputs.ts:317-320` shows
+`extractStage0Inputs(...)` takes a `pool` parameter (`:318`) and `:327` runs
+`pool.query(...)`; grep confirms no `process.env` / `DATABASE_URL` reads in that file.
+The shared pool helper reads `DATABASE_URL` at `src/db/client.ts:6`
+(`connectionString: process.env.DATABASE_URL`).
 
 **Q5 — Is there a documented `STAGE0_RUNNER_DSN` or equivalent?**
 **In docs only, not in worker code.** The PR #198-style psql gate diagnostic plan
@@ -93,7 +96,9 @@ components), and never stores it as a runtime env var. The Stage 0 **worker** ha
 **Q6 — Current safe source-selection order in the diagnostic command/spec?**
 The **diagnostic spec** sources from `APPROVED_DB_SOURCE`
 (`docs/sprint3-stage0-psql-gate-diagnostic-plan.md:108-109`) and **fails closed (no
-fallback to `DATABASE_URL`)** if that custody source / its components are absent
+fallback to `DATABASE_URL`)** if that custody source is absent
+(`docs/sprint3-stage0-psql-gate-diagnostic-plan.md:109-110`, `stop_line=approved_source_missing; exit 3`)
+or if its host/port components are absent
 (`docs/sprint3-stage0-psql-gate-diagnostic-plan.md:114-115`, stop-lines with `exit 3`).
 The **worker**, by contrast, has no such selection — it reads `DATABASE_URL` as its
 only source (`src/scoring/stage0/run-stage0-worker.ts:175,177`; `src/db/client.ts:6`).
@@ -101,7 +106,9 @@ only source (`src/scoring/stage0/run-stage0-worker.ts:175,177`; `src/db/client.t
 **Q7 — Does the current path fall back to `DATABASE_URL` when the runner-specific
 source is absent?**
 For the **diagnostic spec: no** (documented fail-closed, no fallback —
-`docs/sprint3-stage0-psql-gate-diagnostic-plan.md:114-115`). For the **Stage 0 worker:
+`docs/sprint3-stage0-psql-gate-diagnostic-plan.md:109-110` for missing
+`APPROVED_DB_SOURCE` and `:114-115` for missing host/port components). For the **Stage 0
+worker:
 effectively yes / worse** — there is **no runner-specific source wired at all**, so the
 worker's only source is `DATABASE_URL` (`src/scoring/stage0/run-stage0-worker.ts:175`;
 `src/db/client.ts:6`), which is the **collector** category. Tracked evidence associates
@@ -124,9 +131,9 @@ runtime role** (`docs/ops/cutover-hard-gates.md:111`) — **not**
 | PR #199 documents a runner-specific Stage 0 connection contract / custody (dedicated role `buyerrecon_stage0_runner`, db `buyerrecon_production`, placeholder DSN template, custody rules, collector-DSN/role forbidden) | `docs/ops/buyerrecon-production-environment-runtime-registry.md:60`, `:74`, `:77-78`, `:79-86`, `:87-91` |
 | `STAGE0_RUNNER_DSN` is the documented runner connection env name | `docs/sprint3-stage0-psql-gate-diagnostic-plan.md:8`, `:124` |
 | PR #198-style psql gate diagnostic assembles `STAGE0_RUNNER_DSN` **in memory** / never prints raw secrets (hidden input, in-memory assembly, chmod-600 temp) | `docs/sprint3-stage0-psql-gate-diagnostic-plan.md:76`, `:78`, `:108-109`, `:118`, `:124-125`, `:158-159`, `:381-382` |
-| Diagnostic fails closed with **no fallback to `DATABASE_URL`** if the approved source/components are absent | `docs/sprint3-stage0-psql-gate-diagnostic-plan.md:114-115` |
+| Diagnostic fails closed with **no fallback to `DATABASE_URL`** if the approved source/components are absent | `docs/sprint3-stage0-psql-gate-diagnostic-plan.md:109-110` (missing `APPROVED_DB_SOURCE` → `stop_line=approved_source_missing; exit 3`); `docs/sprint3-stage0-psql-gate-diagnostic-plan.md:114-115` (missing host/port component → `exit 3`) |
 | Current Stage 0 worker / shared pool source path reads `DATABASE_URL` (no runner-specific env) | `scripts/run-stage0-worker.ts:6`; `src/scoring/stage0/run-stage0-worker.ts:175`, `:177`; `src/db/client.ts:6` |
-| `extract-stage0-inputs.ts` reads no env directly (pool passed by caller) | `src/scoring/stage0/extract-stage0-inputs.ts` (no `process.env` / `DATABASE_URL` reads) |
+| `extract-stage0-inputs.ts` reads no env directly (pool passed by caller) | `src/scoring/stage0/extract-stage0-inputs.ts:317-320` (`extractStage0Inputs(...)` takes a `pool` parameter — `:318`), `:327` (`pool.query(...)`); grep confirms **no** `process.env` / `DATABASE_URL` reads anywhere in the file |
 | Current worker source-selection depends on `DATABASE_URL`, which is the **collector** category (`buyerrecon_prod_collector_app`), not a proven runner-specific runtime binding | `src/scoring/stage0/run-stage0-worker.ts:175`; `src/db/client.ts:6`; `docs/sprint3-stage0-execution-identity-dsn-resolution-plan.md:49`, `:76`, `:161`, `:217`; `docs/ops/cutover-hard-gates.md:111` |
 
 ---
