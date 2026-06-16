@@ -522,14 +522,28 @@ on** a production-critical parameter must either:
 
 A future **execution GO must fail closed** if any required parameter is not present and
 `current_status=active` in the registry (with no conflicting active parameter and a
-sufficient `shape_contract`).
+sufficient `shape_contract`) — **except** for PR #270-aligned RB-ROTATE, which uses the
+two-axis gate semantics below (see the supersession note).
+
+> **Supersession note (Stage 0 runner DSN RB-ROTATE only).** For Stage 0 runner DSN
+> RB-ROTATE only, PR #281 two-axis gate semantics supersede earlier prose that required all
+> Stage 0 DSN-related entries to be `current_status=active`. The physical custody value
+> remains blocked until rewritten; the source-of-truth derivation path is the activatable
+> dependency for RB-ROTATE.
 
 ---
 
 ## 6. Future Command-Pack Gate Contract
 
-Every future production command-pack PR must include a **`parameter_registry_gate`** that
-runs **before** execution and must:
+There are **two** gate variants. The standard variant applies to executions that **consume an
+existing parameter value**; the **RB-ROTATE derivation variant** applies to a PR #270-aligned
+RB-ROTATE whose purpose is to **construct a corrected value and write it** (so it must not be
+blocked merely because the current custody value is broken — that is what it fixes).
+
+### 6.1 Standard `parameter_registry_gate` (value-consuming executions)
+
+Every such command-pack PR must include a **`parameter_registry_gate`** that runs **before**
+execution and must:
 
 1. Confirm current branch is `sprint2-architecture-contracts-d4cc2bf`.
 2. Fetch origin and fast-forward to the current tip.
@@ -543,6 +557,35 @@ runs **before** execution and must:
 8. Confirm **no conflicting active parameter** exists for the same `category` + `environment`.
 9. Confirm `shape_contract` is **sufficient** for the planned execution.
 10. Emit **safe labels only** (§7); never print raw values.
+
+> If an execution depends on the **current physical custody value already being correct**
+> (e.g. Stage 0 runtime binding that consumes `STAGE0_RUNNER_DSN`), it must still require the
+> custody value to be `current_status=active` / verified — which only happens **after** an
+> RB-ROTATE write **and** a later evidence PR verifies it. This standard variant stays
+> conservative and is **not** superseded.
+
+### 6.2 RB-ROTATE derivation `parameter_registry_gate` (PR #270-aligned RB-ROTATE only)
+
+For a PR #270-aligned RB-ROTATE — which derives the corrected DSN locally, rotates the
+credential, and **writes** the corrected custody value — the gate runs steps 1–6 and 8 above,
+and then instead of requiring `current_status=active` on the custody value, it must confirm
+the **source-of-truth derivation axis**:
+
+- `source_of_truth_derivation_status=verified_active` on every required Stage 0 DSN dependency;
+- `complete_stage0_runner_dsn_shape_derivable=true`;
+- `operator_guess_required=false`;
+- `raw_values_printed=false`;
+- **no** required derivation dependency has `source_commit=TBD`;
+- **no** approved-source conflict exists;
+- **broken custody is not used as a source** (`broken_custody_used_as_source=false`);
+- `prod.stage0.runner.custody.file` **may remain `current_status=blocked`**
+  (`current_custody_value_status=broken_until_rewritten_by_rb_rotate`) — this does **not**
+  block RB-ROTATE, because RB-ROTATE is what rewrites that value.
+
+This variant authorizes RB-ROTATE **only** to derive (without printing), rotate the credential,
+and write the corrected custody value, then produce evidence. It does **not** authorize, and
+the gate does **not** assert, live-auth success or Stage 0 readiness (those remain separately
+gated). Emit **safe labels only**; never print raw values.
 
 ---
 
@@ -642,6 +685,8 @@ custody value as-is** before RB-ROTATE rewrites it.
 
 ```text
 # CANDIDATE ONLY — illustrative; not executed by this PR
+# RB-ROTATE derivation variant (§6.2): checks the source-of-truth DERIVATION axis,
+# NOT current_status=active on the (still-blocked) custody value.
 REG="docs/production-parameter-registry.md"
 [ -f "$REG" ] || { echo "stop_line=parameter_registry_doc_missing"; exit 1; }
 # extract the fenced block to a temp (no raw secrets are present in it by policy)
@@ -649,21 +694,29 @@ awk '/^```buyerrecon-production-parameter-registry-v1$/{f=1;next}/^```$/{f=0}f' 
 grep -q '^registry_version=1$' "$BLK" || { echo "stop_line=parameter_registry_version_unsupported"; exit 1; }
 SEED="$(awk -F= '/^registry_seed_commit=/{print $2}' "$BLK")"
 git merge-base --is-ancestor "$SEED" HEAD || { echo "stop_line=parameter_registry_seed_commit_missing"; exit 1; }
-# for each required parameter_id: confirm present + current_status=active + shape sufficient
-for id in prod.stage0.runner.role prod.stage0.runner.custody.file prod.stage0.runner.dsn.shape; do
+# for each required Stage0 DSN dependency: confirm present + derivation verified-active + non-TBD source
+for id in prod.stage0.runner.role prod.stage0.runner.custody.file prod.stage0.runner.custody.key \
+          prod.stage0.runner.dsn.shape prod.database.scheme.category prod.database.host.category \
+          prod.database.port.category prod.database.name.category; do
   rec="$(awk -v id="$id" 'BEGIN{RS=""} $0 ~ ("parameter_id=" id "(\n|$)")' "$BLK")"
   [ -n "$rec" ] || { echo "stop_line=required_parameter_missing"; exit 1; }
-  printf '%s\n' "$rec" | grep -q '^current_status=active$' || { echo "stop_line=required_parameter_not_active"; exit 1; }
+  printf '%s\n' "$rec" | grep -q '^source_of_truth_derivation_status=verified_active$' \
+    || { echo "stop_line=derivation_not_verified_active"; exit 1; }
+  printf '%s\n' "$rec" | grep -q '^source_commit=TBD$' && { echo "stop_line=source_commit_tbd"; exit 1; }
 done
+# NOTE: prod.stage0.runner.custody.file may be current_status=blocked here — that is the
+# current physical value RB-ROTATE rewrites; it does NOT block the RB-ROTATE derivation gate.
 echo "parameter_registry_raw_values_printed=false"
 echo "parameter_registry_gate_result=pass"
 echo "stop_line=none"
 ```
 
-(For the current Stage 0 state this gate would emit
-`parameter_registry_gate_result=blocked`,
-`stop_line=parameter_only_available_from_broken_custody`, because
-`prod.stage0.runner.custody.file` is `current_status=blocked`.)
+(After the PR #281 activation, the RB-ROTATE derivation gate emits
+`parameter_registry_gate_result=pass` / `stop_line=none` because every required Stage 0 DSN
+dependency is `source_of_truth_derivation_status=verified_active` with non-`TBD` provenance —
+even though `prod.stage0.runner.custody.file` remains `current_status=blocked` for its current
+physical value. A **standard** value-consuming gate (§6.1) would still treat that `blocked`
+custody value as not-yet-usable until RB-ROTATE writes it and a later evidence PR verifies it.)
 
 ---
 
@@ -787,19 +840,36 @@ dependency — it does **not** guess.
 
 ## A.5 Future Executable Gate (before any RB-ROTATE retry)
 
-A future `parameter_registry_gate` (in the RB-ROTATE command-pack, before password input / DB
+> **Superseded by PR #281 two-axis semantics (RB-ROTATE only).** This list originally said
+> "every required Stage 0 DSN parameter must be `current_status=active`." For Stage 0 runner
+> DSN **RB-ROTATE only**, that is replaced by the §6.2 two-axis gate: the **current physical
+> custody value may remain `blocked`** (`current_custody_value_status=broken_until_rewritten_by_rb_rotate`),
+> while the **source-of-truth derivation axis must be verified-active**. RB-ROTATE is allowed
+> only to derive the corrected DSN (without printing), rotate the credential, and **write** the
+> corrected custody value — **not** to claim live auth or Stage 0 readiness.
+
+A future RB-ROTATE `parameter_registry_gate` (in the command-pack, before password input / DB
 rotation) must:
 - fast-forward to the current base tip;
 - confirm HEAD contains the registry **seed + amendment merge commits** required;
 - parse the `buyerrecon-production-parameter-registry-v1` block;
-- assert **every required Stage 0 DSN parameter** (§A.3) is present and `current_status=active`;
-- assert their `shape_contract` is **complete**;
-- assert **no** required parameter has `source_commit=TBD`;
-- assert **no** dependency is only available from broken custody;
+- assert **every required Stage 0 DSN parameter** (§A.3) is present and
+  **`source_of_truth_derivation_status=verified_active`** (the **current physical custody
+  value** for `prod.stage0.runner.custody.file` may remain `current_status=blocked` — RB-ROTATE
+  is what rewrites it);
+- assert `complete_stage0_runner_dsn_shape_derivable=true`, `operator_guess_required=false`,
+  `raw_values_printed=false`;
+- assert their `shape_contract` is **complete** (or category-only as approved for host/port);
+- assert **no** required derivation dependency has `source_commit=TBD`;
+- assert **broken custody is not used as a source** (`broken_custody_used_as_source=false`);
 - assert **no** conflicting active parameter for the same category/environment;
 - emit **safe labels only**;
 - **stop before any password input or DB rotation** if any check fails
   (`parameter_registry_gate_result=blocked`).
+
+> Non-RB-ROTATE executions that **consume** the custody value (e.g. Stage 0 runtime binding)
+> stay conservative: they must still require the custody value `current_status=active` /
+> verified, which only holds **after** an RB-ROTATE write and a later evidence PR.
 
 Illustrative safe labels: `amendment_required_ids_active=true|false`,
 `amendment_no_tbd_source_commits=true|false`,
