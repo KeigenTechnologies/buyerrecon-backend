@@ -585,9 +585,16 @@ the **source-of-truth derivation axis**:
 - **no** required derivation dependency has `source_commit=TBD`;
 - **no** approved-source conflict exists;
 - **broken custody is not used as a source** (`broken_custody_used_as_source=false`);
-- `prod.stage0.runner.custody.file` **may remain `current_status=blocked`**
-  (`current_custody_value_status=broken_until_rewritten_by_rb_rotate`) — this does **not**
-  block RB-ROTATE, because RB-ROTATE is what rewrites that value.
+- the custody value's current-value axis is **not** a bar to this RB-ROTATE derivation gate.
+  - **Before PR #282 (historical):** `prod.stage0.runner.custody.file` could remain
+    `current_status=blocked` / `current_custody_value_status=broken_until_rewritten_by_rb_rotate`
+    while the derivation axis was verified-active — that did **not** block RB-ROTATE, because
+    RB-ROTATE is what rewrites the value.
+  - **After PR #282 / PR #283 (current):** the value was rewritten by the PR #282 RB-ROTATE and
+    marked corrected/verified by PR #283 — `current_status=active` /
+    `current_custody_value_status=corrected_by_pr282_rb_rotate_evidence`. The derivation gate
+    still keys on the derivation axis (a fresh RB-ROTATE would re-derive and re-write); it does
+    **not** rely on, and is not blocked by, the current-value axis either way.
 
 This variant authorizes RB-ROTATE **only** to derive (without printing), rotate the credential,
 and write the corrected custody value, then produce evidence. It does **not** authorize, and
@@ -713,19 +720,24 @@ for id in prod.stage0.runner.role prod.stage0.runner.custody.file prod.stage0.ru
     || { echo "stop_line=derivation_not_verified_active"; exit 1; }
   printf '%s\n' "$rec" | grep -q '^source_commit=TBD$' && { echo "stop_line=source_commit_tbd"; exit 1; }
 done
-# NOTE: prod.stage0.runner.custody.file may be current_status=blocked here — that is the
-# current physical value RB-ROTATE rewrites; it does NOT block the RB-ROTATE derivation gate.
+# NOTE: the RB-ROTATE derivation gate keys on the derivation axis only; it does NOT depend on
+# the custody value's current-value axis (current_status) either way.
 echo "parameter_registry_raw_values_printed=false"
 echo "parameter_registry_gate_result=pass"
 echo "stop_line=none"
 ```
 
-(After the PR #281 activation, the RB-ROTATE derivation gate emits
-`parameter_registry_gate_result=pass` / `stop_line=none` because every required Stage 0 DSN
-dependency is `source_of_truth_derivation_status=verified_active` with non-`TBD` provenance —
-even though `prod.stage0.runner.custody.file` remains `current_status=blocked` for its current
-physical value. A **standard** value-consuming gate (§6.1) would still treat that `blocked`
-custody value as not-yet-usable until RB-ROTATE writes it and a later evidence PR verifies it.)
+(The RB-ROTATE derivation gate emits `parameter_registry_gate_result=pass` / `stop_line=none`
+because every required Stage 0 DSN dependency is `source_of_truth_derivation_status=verified_active`
+with non-`TBD` provenance. **Historical (pre-PR #282):** this held even while
+`prod.stage0.runner.custody.file` was `current_status=blocked` for its then-broken current
+value, and a **standard** value-consuming gate (§6.1) would have treated that value as
+not-yet-usable. **Current (post-PR #282 / PR #283):** that custody value has been rewritten and
+marked corrected/verified — `current_status=active` /
+`current_custody_value_status=corrected_by_pr282_rb_rotate_evidence` — so a standard
+value-consuming gate now treats the **file-state** as usable; **live authentication remains
+unproven** (`live_auth_proven=false`) and is a separate axis, so no Stage 0 runtime may rely on
+it until a separately GO-gated Option A binding/auth preflight rerun proves live auth.)
 
 ---
 
@@ -763,6 +775,14 @@ not secret or row values.
 # Appendix A — Stage 0 Runner DSN Source-of-Truth Registry-Amendment Plan (Planning Only)
 
 **Appendix status:** `STAGE0_RUNNER_DSN_REGISTRY_AMENDMENT_PLANNING_ONLY`
+
+> **Historical planning record — current-value statements below are SUPERSEDED.** This
+> appendix captured the **pre-fix** planning baseline (custody value then `current_status=blocked`).
+> Its §A.1 "as recorded in the v1 block above" snapshot is **stale**: the v1 block now shows
+> `prod.stage0.runner.custody.file` `current_status=active` /
+> `current_custody_value_status=corrected_by_pr282_rb_rotate_evidence` (PR #282 / PR #283 — see
+> §9 and Appendix D). The §A.5 gate language is governed by §6.2 (two-axis). Live authentication
+> remains unproven (`live_auth_proven=false`).
 
 This appendix is **planning only**. It does **not** change any parameter `current_status` in
 the machine-readable `buyerrecon-production-parameter-registry-v1` block above (the Stage 0
@@ -851,11 +871,17 @@ dependency — it does **not** guess.
 
 > **Superseded by PR #281 two-axis semantics (RB-ROTATE only).** This list originally said
 > "every required Stage 0 DSN parameter must be `current_status=active`." For Stage 0 runner
-> DSN **RB-ROTATE only**, that is replaced by the §6.2 two-axis gate: the **current physical
-> custody value may remain `blocked`** (`current_custody_value_status=broken_until_rewritten_by_rb_rotate`),
-> while the **source-of-truth derivation axis must be verified-active**. RB-ROTATE is allowed
-> only to derive the corrected DSN (without printing), rotate the credential, and **write** the
-> corrected custody value — **not** to claim live auth or Stage 0 readiness.
+> DSN **RB-ROTATE only**, that is replaced by the §6.2 two-axis gate: the RB-ROTATE derivation
+> gate keys on the **source-of-truth derivation axis** (which must be verified-active) and does
+> **not** depend on the custody value's current-value axis. **Historical (pre-PR #282):** the
+> current physical custody value could remain `blocked`
+> (`current_custody_value_status=broken_until_rewritten_by_rb_rotate`) while derivation was
+> verified-active. **Current (post-PR #282 / PR #283):** that value was rewritten and marked
+> corrected/verified — `current_status=active` /
+> `current_custody_value_status=corrected_by_pr282_rb_rotate_evidence`. Either way RB-ROTATE is
+> allowed only to derive the corrected DSN (without printing), rotate the credential, and
+> **write** the corrected custody value — **not** to claim live auth or Stage 0 readiness
+> (`live_auth_proven=false`).
 
 A future RB-ROTATE `parameter_registry_gate` (in the command-pack, before password input / DB
 rotation) must:
@@ -863,9 +889,11 @@ rotation) must:
 - confirm HEAD contains the registry **seed + amendment merge commits** required;
 - parse the `buyerrecon-production-parameter-registry-v1` block;
 - assert **every required Stage 0 DSN parameter** (§A.3) is present and
-  **`source_of_truth_derivation_status=verified_active`** (the **current physical custody
-  value** for `prod.stage0.runner.custody.file` may remain `current_status=blocked` — RB-ROTATE
-  is what rewrites it);
+  **`source_of_truth_derivation_status=verified_active`** (this gate keys on the derivation
+  axis and does **not** depend on the custody value's current-value axis; **pre-PR #282** that
+  value could be `current_status=blocked`, and **post-PR #282 / PR #283** it is
+  `current_status=active` / `corrected_by_pr282_rb_rotate_evidence` — either way it does not
+  block this derivation gate, since RB-ROTATE rewrites the value);
 - assert `complete_stage0_runner_dsn_shape_derivable=true`, `operator_guess_required=false`,
   `raw_values_printed=false`;
 - assert their `shape_contract` is **complete** (or category-only as approved for host/port);
@@ -981,6 +1009,14 @@ identifiers / public git PR & commit references — not secret or row values.
 # Appendix C — Activation: Stage 0 Runner DSN Source-of-Truth Derivation (PR #280)
 
 **Amendment status:** `PRODUCTION_PARAMETER_REGISTRY_STAGE0_RUNNER_DSN_SOURCE_OF_TRUTH_ACTIVATION_ONLY`
+
+> **Historical record — current-value statements below are SUPERSEDED by Appendix D (PR #282 /
+> PR #283).** This appendix documents the PR #281 activation as it stood **before** the PR #282
+> RB-ROTATE. Any statement here that the current custody value "remains broken" /
+> "stays `current_status=blocked`" describes the **pre-PR #282** state only. The current
+> custody value was rewritten by PR #282 and is now `current_status=active` /
+> `current_custody_value_status=corrected_by_pr282_rb_rotate_evidence` (see §9 and Appendix D).
+> Live authentication remains unproven (`live_auth_proven=false`) in all cases.
 
 - **What this amendment did:** added a `source_of_truth_derivation_status=verified_active`
   marker (plus `derivation_evidence_pr=280` /
