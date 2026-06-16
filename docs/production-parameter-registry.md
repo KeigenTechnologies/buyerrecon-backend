@@ -533,9 +533,13 @@ two-axis gate semantics below (see the supersession note).
 
 > **Supersession note (Stage 0 runner DSN RB-ROTATE only).** For Stage 0 runner DSN
 > RB-ROTATE only, PR #281 two-axis gate semantics supersede earlier prose that required all
-> Stage 0 DSN-related entries to be `current_status=active`. The physical custody value
-> remains blocked until rewritten; the source-of-truth derivation path is the activatable
-> dependency for RB-ROTATE.
+> Stage 0 DSN-related entries to be `current_status=active`; the RB-ROTATE derivation gate
+> keys on the source-of-truth derivation axis. **Before PR #282** the physical custody value
+> remained blocked until RB-ROTATE rewrote it. **After PR #282 / PR #283** the physical
+> custody value is corrected/verified from PR #282 evidence and `current_status=active` /
+> `current_custody_value_status=corrected_by_pr282_rb_rotate_evidence` for custody-value gate
+> purposes. **Live authentication remains unproven** (`live_auth_proven=false`) — that is a
+> separate axis.
 
 ---
 
@@ -701,8 +705,8 @@ relied upon for Stage 0 runtime, and **Step 2E / Stage 0 remain separately GO-ga
 
 ```text
 # CANDIDATE ONLY — illustrative; not executed by this PR
-# RB-ROTATE derivation variant (§6.2): checks the source-of-truth DERIVATION axis,
-# NOT current_status=active on the (still-blocked) custody value.
+# RB-ROTATE derivation variant (§6.2): checks the source-of-truth DERIVATION axis only;
+# it does NOT depend on the custody value's current-value status either way.
 REG="docs/production-parameter-registry.md"
 [ -f "$REG" ] || { echo "stop_line=parameter_registry_doc_missing"; exit 1; }
 # extract the fenced block to a temp (no raw secrets are present in it by policy)
@@ -864,8 +868,9 @@ For each required parameter, the future amendment updates its v1-block record wi
 - **no** raw secret / DSN / host / port / username / password value printed.
 
 The amendment is **docs-only** and updates **this canonical registry**. If it cannot verify a
-parameter safely, it records the parameter as still-blocked with the precise missing
-dependency — it does **not** guess.
+parameter safely, it leaves that parameter blocked and records the precise missing
+dependency — it does **not** guess. (Generic amendment rule; not a statement about the current
+`prod.stage0.runner.custody.file` value, which is corrected/verified per §9 / Appendix D.)
 
 ## A.5 Future Executable Gate (before any RB-ROTATE retry)
 
