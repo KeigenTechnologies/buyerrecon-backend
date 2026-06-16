@@ -179,10 +179,10 @@ category=database_host_category
 environment=production
 sensitivity_level=sensitive
 raw_value_allowed_in_docs=false
-safe_representation=category_only_custody_presence_confirmed
+safe_representation=category_only / approved_source_contains_host_component
 source_pr=195
-source_commit=TBD
-source_doc_path=docs/ops/buyerrecon-production-environment-runtime-registry.md
+source_commit=4de1b1f1ae7ebb2e9adb3be5564e8e58cfa6e036
+source_doc_path=docs/sprint3-stage0-runner-dsn-host-port-custody-pass-evidence.md
 current_status=active
 supersedes=none
 superseded_by=none
@@ -190,10 +190,10 @@ custody_location=approved_production_db_custody_source
 custody_key=none
 required_for=stage0_runner_dsn_construction
 shape_contract=category_only
-validation_method=presence_boolean_from_approved_custody_never_printed
-stop_line_if_missing=required_parameter_missing
-last_verified_at=unknown
-notes=value never in docs; PR199 §5 presence confirmed by PR195; do not guess host; source_commit TBD pending PR195 merge-commit lookup
+validation_method=safe_boolean_host_component_present_true_from_approved_custody_never_printed
+stop_line_if_missing=database_host_source_missing
+last_verified_at=2026-06-11
+notes=NO raw host recorded or printed; provenance is the PR195 host/port custody PASS (merge 4de1b1f1ae7ebb2e9adb3be5564e8e58cfa6e036) which confirmed approved source contains the host component (host_component_present=true, host_port_custody_check_pass=true); value remains in approved custody and is derived locally without printing; do not guess host
 
 parameter_id=prod.database.port.category
 parameter_name=Database port category
@@ -201,10 +201,10 @@ category=database_port_category
 environment=production
 sensitivity_level=sensitive
 raw_value_allowed_in_docs=false
-safe_representation=category_only_custody_presence_confirmed
+safe_representation=category_only / approved_source_contains_port_component
 source_pr=195
-source_commit=TBD
-source_doc_path=docs/ops/buyerrecon-production-environment-runtime-registry.md
+source_commit=4de1b1f1ae7ebb2e9adb3be5564e8e58cfa6e036
+source_doc_path=docs/sprint3-stage0-runner-dsn-host-port-custody-pass-evidence.md
 current_status=active
 supersedes=none
 superseded_by=none
@@ -212,10 +212,10 @@ custody_location=approved_production_db_custody_source
 custody_key=none
 required_for=stage0_runner_dsn_construction
 shape_contract=category_only
-validation_method=presence_boolean_from_approved_custody_never_printed
-stop_line_if_missing=required_parameter_missing
-last_verified_at=unknown
-notes=value never in docs; do not assume 5432 unless approved custody verifies; source_commit TBD pending PR195 merge-commit lookup
+validation_method=safe_boolean_port_component_present_true_from_approved_custody_never_printed
+stop_line_if_missing=database_port_source_missing
+last_verified_at=2026-06-11
+notes=NO raw port recorded or printed; provenance is the PR195 host/port custody PASS (merge 4de1b1f1ae7ebb2e9adb3be5564e8e58cfa6e036) which confirmed approved source contains the port component (port_component_present=true, host_port_custody_check_pass=true); value remains in approved custody and is derived locally without printing; do not assume 5432 unless approved custody verifies
 
 parameter_id=prod.database.name.category
 parameter_name=Database name
@@ -571,8 +571,8 @@ Current Stage 0 parameter status in the registry:
 | `prod.stage0.runner.custody.key` | active | complete | PR #199 seed; PR #274 (`b63f2b7b…`) value-incomplete finding |
 | `prod.stage0.runner.dsn.shape` | active | complete | PR #199 §5; PR #274 (`b63f2b7b…`) custody-mismatch finding |
 | `prod.database.scheme.category` | active | complete | PR #199 |
-| `prod.database.host.category` | active | category_only | PR #195 (presence) |
-| `prod.database.port.category` | active | category_only | PR #195 (presence) |
+| `prod.database.host.category` | active | category_only | PR #195 (`4de1b1f1…`, host_component_present) |
+| `prod.database.port.category` | active | category_only | PR #195 (`4de1b1f1…`, port_component_present) |
 | `prod.database.name.category` | active | complete | PR #199 |
 
 **Blocking condition:** `prod.stage0.runner.custody.file` is `current_status=blocked`
@@ -592,9 +592,13 @@ from approved custody **without guessing host, port, username, database name, or
 any RB-ROTATE retry must **fail closed** at the registry gate with
 `stop_line=parameter_only_available_from_broken_custody`.
 
-> Note: `prod.database.host.category` / `prod.database.port.category` carry `source_commit=TBD`
-> pending a follow-up to record PR #195's exact merge commit; that lookup is required before
-> an execution gate relies on those parameters' `source_commit` containment.
+> Note (resolved): `prod.database.host.category` / `prod.database.port.category` now carry
+> concrete provenance `source_commit=4de1b1f1ae7ebb2e9adb3be5564e8e58cfa6e036`
+> (PR #195 host/port custody PASS,
+> `docs/sprint3-stage0-runner-dsn-host-port-custody-pass-evidence.md`,
+> `host_component_present=true` / `port_component_present=true`) — the prior `TBD` is
+> resolved. The host/port **values** remain in approved custody and are **never** recorded or
+> printed; the registry holds category/provenance only. See Appendix B for the amendment note.
 
 ---
 
@@ -813,3 +817,49 @@ complete shape and concrete (non-`TBD`) provenance. (Per the PR #218 Codex note:
 used or exposed" is to be read as "no secret value exposed, printed, or recorded.") All values
 above are safe labels / booleans / category tokens / non-secret identifiers / public git
 commit hashes — not secret or row values.
+
+---
+
+# Appendix B — Amendment: Host/Port Source Provenance (PR #195)
+
+**Amendment status:** `PRODUCTION_PARAMETER_REGISTRY_HOST_PORT_PROVENANCE_AMENDMENT_ONLY`
+
+- **What this amendment did:** replaced `source_commit=TBD` on
+  `prod.database.host.category` and `prod.database.port.category` with concrete provenance
+  from the merged **PR #195** host/port custody PASS:
+  - `source_pr=195`
+  - `source_commit=4de1b1f1ae7ebb2e9adb3be5564e8e58cfa6e036`
+  - `source_doc_path=docs/sprint3-stage0-runner-dsn-host-port-custody-pass-evidence.md`
+- **Why:** PR #278 showed the host/port source provenance was the **remaining missing
+  dependency** (`verification_result=blocked_missing_dependency`, `stop_line=source_commit_tbd`).
+  PR #195 supplies the approved host/port custody PASS provenance
+  (`approved_source_present=true`, `host_component_present=true`, `port_component_present=true`,
+  `host_port_custody_check_pass=true`) — category/provenance evidence only; **no raw host,
+  port, DSN, or custody value is recorded or printed**.
+- **Scope of this amendment:**
+  - It **only** resolves host/port source provenance.
+  - It does **not** by itself re-run the source-of-truth verification.
+  - It does **not** by itself authorize an RB-ROTATE retry.
+- **Preserved blocked status:** `prod.stage0.runner.custody.file` **remains
+  `current_status=blocked`** (PR #274: the existing custody value is structurally incomplete);
+  this amendment does **not** touch the runner DSN custody value, the `dsn.shape` entry, or
+  any other parameter. The existing broken custody value remains evidence-only, never a source.
+- **Expected next step:** **re-run the Stage 0 runner DSN source-of-truth verification** (the
+  PR #277 command pack). Only a `verification_result=verified_active_candidate` outcome
+  (host/port now provenanced, complete shape derivable, no operator guessing) may then unblock
+  a separately-GO-gated PR #270-aligned RB-ROTATE retry. **RB-ROTATE is not authorized by this
+  amendment.**
+
+**Non-authorization.** This amendment authorizes no RB-ROTATE retry, credential rotation,
+custody write, psql/auth rerun, Option A rerun, Step 2E, Stage 0, run-lock touch, grants,
+schema/data changes, source-selection change, Option B code change, remediation, downstream
+runtime, Lane/scoring/AMS/customer output, Gate 4E, or Gate 4F. **Stage 0 execution remains
+separately GO-gated.**
+
+**Appendix B safety boundary.** No raw host, raw port, raw DSN, username, password, token,
+`.env.production` value, source DSN, Stage 0 DSN, raw connection string, custody contents,
+psql raw output, customer payload, or PII appears in this amendment. The host/port entries
+remain `sensitivity_level=sensitive` / `raw_value_allowed_in_docs=false` / category-only; the
+values stay in approved custody and are derived locally without printing when a future command
+needs them. All values recorded are safe labels / booleans / category tokens / non-secret
+identifiers / public git PR & commit references — not secret or row values.
