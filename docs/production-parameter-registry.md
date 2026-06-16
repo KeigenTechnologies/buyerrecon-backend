@@ -310,22 +310,28 @@ source_commit=b63f2b7b454609a36b1fe9f1c882ce562cee369d
 source_doc_path=docs/sprint3-stage0-runner-dsn-custody-structure-diagnostic-evidence.md
 seed_pr=199
 seed_commit=193cdc96bfabe9893b330910b36cf681db77a20a
-current_status=blocked
+current_status=active
 supersedes=none
 superseded_by=none
 custody_location=/etc/buyerrecon/stage0-runner.env
 custody_key=STAGE0_RUNNER_DSN
 required_for=rb_rotate_gate,stage0_runtime_binding
-shape_contract=partial
-validation_method=structure_only_diagnostic_booleans_never_print_value
-stop_line_if_missing=parameter_only_available_from_broken_custody
+shape_contract=complete
+validation_method=pr282_rb_rotate_evidence_booleans_custody_written_true__custody_file_exists_owner_root_chmod_600_true__custody_key_present_true__db_custody_in_sync_true__never_print_value
+stop_line_if_missing=custody_value_not_corrected_or_verified
 last_verified_at=2026-06-16
-notes=custody file path seeded by PR199 (193cdc96); the current physical custody value is HISTORICALLY BROKEN per PR274 (merge b63f2b7b454609a36b1fe9f1c882ce562cee369d) structure diagnostic: existing value structurally INCOMPLETE (no scheme/netloc/host/user/password; path present but not /buyerrecon_production). current_status=blocked refers to the CURRENT VALUE, which is NOT corrected by this amendment. SEPARATELY, the source-of-truth DERIVATION PATH for constructing a corrected complete DSN is verified-active per PR280 (merge 3b010d731b0abb92806c3a105b428b481b39c94c). A future PR270-aligned RB-ROTATE must derive the corrected DSN locally without printing, rotate the credential, and WRITE the corrected custody value; only a later evidence PR may mark the current value corrected.
+notes=custody file path seeded by PR199 (193cdc96). HISTORICAL: the prior physical custody value was BROKEN per PR274 (merge b63f2b7b454609a36b1fe9f1c882ce562cee369d) structure diagnostic (structurally INCOMPLETE). The source-of-truth DERIVATION PATH was verified-active per PR280/PR281. The current physical custody value was REWRITTEN by the PR282 (merge dadb458bde5e7de0e980749829f11e9308920f91) RB-ROTATE and is now CORRECTED/VERIFIED by evidence labels (custody_written=true, custody_file_exists=true, custody_file_owner_root=true, custody_file_chmod_600=true, custody_key_present=true, db_custody_in_sync=true, db_rotation_applied=true, corrected_dsn_derived_locally=true, corrected_dsn_printed=false, raw_values_printed=false). NOTE: live authentication is NOT proven by PR282 (no psql/auth attempt occurred); db_custody_in_sync means the rotation and corrected custody write completed in the same controlled chain, NOT an auth test. Live auth still requires a separately GO-gated Option A binding/auth preflight rerun; Step2E/Stage0 remain separately GO-gated.
 source_of_truth_derivation_status=verified_active
-current_custody_value_status=broken_until_rewritten_by_rb_rotate
-future_custody_write_required=true
+current_custody_value_status=corrected_by_pr282_rb_rotate_evidence
+live_auth_proven=false
+future_custody_write_required=false
+historical_broken_value_pr=274
+historical_broken_value_commit=b63f2b7b454609a36b1fe9f1c882ce562cee369d
 derivation_evidence_pr=280
 derivation_evidence_commit=3b010d731b0abb92806c3a105b428b481b39c94c
+correction_pr=282
+correction_commit=dadb458bde5e7de0e980749829f11e9308920f91
+correction_doc_path=docs/sprint3-stage0-rb-rotate-pr281-applied-evidence.md
 derivation_validation_method=pr280_complete_stage0_runner_dsn_shape_derivable_true__operator_guess_required_false__raw_values_printed_false
 
 parameter_id=prod.stage0.runner.custody.key
@@ -351,7 +357,7 @@ last_verified_at=2026-06-16
 finding_pr=274
 finding_commit=b63f2b7b454609a36b1fe9f1c882ce562cee369d
 finding_doc_path=docs/sprint3-stage0-runner-dsn-custody-structure-diagnostic-evidence.md
-notes=key name is non-secret; key-name seeded by PR199 (193cdc96); PR274 (merge b63f2b7b454609a36b1fe9f1c882ce562cee369d) confirmed the key is present but its value is structurally incomplete
+notes=key name is non-secret; key-name seeded by PR199 (193cdc96); PR274 (merge b63f2b7b454609a36b1fe9f1c882ce562cee369d) historically confirmed the key present but its value structurally incomplete; PR282 (merge dadb458bde5e7de0e980749829f11e9308920f91) RB-ROTATE rewrote the value — the key is present with a corrected/verified value (custody_key_present=true, custody_written=true) — value never printed; live auth not yet proven
 source_of_truth_derivation_status=verified_active
 derivation_evidence_pr=280
 derivation_evidence_commit=3b010d731b0abb92806c3a105b428b481b39c94c
@@ -379,7 +385,7 @@ last_verified_at=2026-06-16
 finding_pr=274
 finding_commit=b63f2b7b454609a36b1fe9f1c882ce562cee369d
 finding_doc_path=docs/sprint3-stage0-runner-dsn-custody-structure-diagnostic-evidence.md
-notes=<PASSWORD>/<HOST>/<PORT> are literal placeholders; assemble outside repo/logs; never the collector/app/admin DSN; never a guessed host/port; PR274 (merge b63f2b7b454609a36b1fe9f1c882ce562cee369d) proved the current custody value does NOT satisfy this shape (incomplete) — this entry defines the required shape, not the current custody value; PR280 (merge 3b010d731b0abb92806c3a105b428b481b39c94c) verified this shape is derivable from approved sources without guessing
+notes=<PASSWORD>/<HOST>/<PORT> are literal placeholders; assemble outside repo/logs; never the collector/app/admin DSN; never a guessed host/port; this entry defines the required shape, not the current custody value; PR274 (merge b63f2b7b454609a36b1fe9f1c882ce562cee369d) historically proved the prior custody value did NOT satisfy this shape; PR280 (merge 3b010d731b0abb92806c3a105b428b481b39c94c) verified this shape is derivable from approved sources without guessing; PR282 (merge dadb458bde5e7de0e980749829f11e9308920f91) RB-ROTATE wrote a corrected custody value derived to this shape (corrected_dsn_derived_locally=true, corrected_dsn_printed=false) — live auth not yet proven
 source_of_truth_derivation_status=verified_active
 derivation_evidence_pr=280
 derivation_evidence_commit=3b010d731b0abb92806c3a105b428b481b39c94c
@@ -538,7 +544,8 @@ two-axis gate semantics below (see the supersession note).
 There are **two** gate variants. The standard variant applies to executions that **consume an
 existing parameter value**; the **RB-ROTATE derivation variant** applies to a PR #270-aligned
 RB-ROTATE whose purpose is to **construct a corrected value and write it** (so it must not be
-blocked merely because the current custody value is broken — that is what it fixes).
+blocked merely because a prior custody value was broken — rewriting it is what RB-ROTATE does;
+as of PR #282 the current custody value is recorded corrected/verified — see §9 / Appendix D).
 
 ### 6.1 Standard `parameter_registry_gate` (value-consuming executions)
 
@@ -633,15 +640,15 @@ Fail closed (safe stop-line + non-zero exit; no raw values emitted) on at least:
 represented in this registry with enough **active source-of-truth structure** to **construct
 or verify** the complete `STAGE0_RUNNER_DSN` **without operator guessing**.
 
-Current Stage 0 parameter status in the registry (updated by the PR #280 activation —
-see Appendix C):
+Current Stage 0 parameter status in the registry (current-value axis corrected by the PR #282
+RB-ROTATE — see Appendix D; derivation axis activated by PR #280/#281 — see Appendix C):
 
 | parameter_id | current_status | source_of_truth_derivation | shape_contract | source |
 |---|---|---|---|---|
 | `prod.stage0.runner.role` | active | verified_active | complete | PR #199 (PR #188); PR #280 |
-| `prod.stage0.runner.custody.file` | **blocked (current value)** | **verified_active (derivation)** | partial | PR #199 seed; PR #274 broken-value (`b63f2b7b…`); PR #280 derivation (`3b010d73…`) |
-| `prod.stage0.runner.custody.key` | active | verified_active | complete | PR #199 seed; PR #274 (`b63f2b7b…`); PR #280 |
-| `prod.stage0.runner.dsn.shape` | active | verified_active | complete | PR #199 §5; PR #274 (`b63f2b7b…`); PR #280 (`3b010d73…`) |
+| `prod.stage0.runner.custody.file` | **active (current value corrected)** | **verified_active (derivation)** | complete | PR #199 seed; PR #274 historical broken (`b63f2b7b…`); PR #280 derivation (`3b010d73…`); **PR #282 correction (`dadb458b…`)** |
+| `prod.stage0.runner.custody.key` | active | verified_active | complete | PR #199 seed; PR #274 (`b63f2b7b…`); PR #280; PR #282 (`dadb458b…`) |
+| `prod.stage0.runner.dsn.shape` | active | verified_active | complete | PR #199 §5; PR #274 (`b63f2b7b…`); PR #280 (`3b010d73…`); PR #282 (`dadb458b…`) |
 | `prod.database.scheme.category` | active | verified_active | complete | PR #199; PR #280 |
 | `prod.database.host.category` | active | verified_active | category_only | PR #195 (`4de1b1f1…`, host_component_present); PR #280 |
 | `prod.database.port.category` | active | verified_active | category_only | PR #195 (`4de1b1f1…`, port_component_present); PR #280 |
@@ -649,24 +656,26 @@ see Appendix C):
 
 **Two-axis model (do not conflate).**
 - **`current_status` / `current_custody_value_status`** tracks the *current physical custody
-  value*. For `prod.stage0.runner.custody.file` this remains **`blocked` /
-  `broken_until_rewritten_by_rb_rotate`** (PR #274) — **this amendment does NOT correct the
-  current value, and the registry does NOT claim it is corrected.**
+  value*. For `prod.stage0.runner.custody.file` this is now
+  **`active` / `corrected_by_pr282_rb_rotate_evidence`** — the PR #282 RB-ROTATE rewrote the
+  value, and it is recorded corrected/verified by evidence labels (`custody_written=true`,
+  `custody_file_exists=true`, `custody_file_owner_root=true`, `custody_file_chmod_600=true`,
+  `custody_key_present=true`, `db_custody_in_sync=true`). The prior `broken` state was the
+  PR #274 historical finding, now superseded by the PR #282 rewrite.
 - **`source_of_truth_derivation_status`** tracks whether a *corrected complete DSN can be
-  constructed from approved sources without guessing*. PR #280 verified this is
+  constructed from approved sources without guessing*. PR #280/#281 verified this is
   **`verified_active`** (`complete_stage0_runner_dsn_shape_derivable=true`,
   `operator_guess_required=false`, `raw_values_printed=false`).
+- **Live authentication is a THIRD, still-open axis** (`live_auth_proven=false`): PR #282 made
+  **no** psql/auth attempt. `db_custody_in_sync=true` means the rotation and corrected custody
+  write completed in one controlled chain — **not** an auth test.
 
-**RB-ROTATE gate status (updated).** Because the **derivation path is verified-active**, a
-future **PR #270-aligned RB-ROTATE retry may now be GO-gated** for DSN source-of-truth
-derivability — its purpose is precisely to **derive the corrected DSN locally (no printing),
-rotate the runner credential, and WRITE the corrected custody value**. The custody.file's
-`blocked (current value)` status is therefore **not** a bar to RB-ROTATE (RB-ROTATE is what
-fixes it); it **is** a bar to any claim that the current value is already correct, and to any
-Stage 0 / runtime binding that would consume the current value before it is rewritten. The
-prior fail-closed `stop_line=parameter_only_available_from_broken_custody` no longer applies
-to *derivation* (resolved by PR #280); it still applies to any attempt to **use the current
-custody value as-is** before RB-ROTATE rewrites it.
+**Status (updated by PR #282).** The current custody value is now **corrected/verified** for
+value-consuming registry gates, and the derivation axis remains verified-active. The prior
+fail-closed `stop_line=parameter_only_available_from_broken_custody` **no longer applies** (the
+value was rewritten by PR #282). **However, live authentication is NOT yet proven** — a
+separately GO-gated **Option A binding/auth preflight rerun** is required before any value is
+relied upon for Stage 0 runtime, and **Step 2E / Stage 0 remain separately GO-gated.**
 
 > Note (resolved): `prod.database.host.category` / `prod.database.port.category` now carry
 > concrete provenance `source_commit=4de1b1f1ae7ebb2e9adb3be5564e8e58cfa6e036`
@@ -1013,7 +1022,61 @@ separately GO-gated.**
 `.env.production` value, raw database URL, raw connection string, custody contents, psql raw
 output, customer payload, or PII appears in this amendment; sensitive host/port stay
 `sensitivity_level=sensitive` / `raw_value_allowed_in_docs=false` / category-only, with values
-remaining in approved custody and derived locally without printing. The registry does **not**
-say the current custody file value is already corrected. All values recorded are safe labels /
-booleans / category tokens / non-secret identifiers / public git PR & commit references — not
-secret or row values.
+remaining in approved custody and derived locally without printing. At the time of Appendix C
+the registry did **not** say the current custody file value was already corrected (that came
+later via PR #282 — **see Appendix D**, which supersedes this Appendix-C statement for the
+current-value axis). All values recorded are safe labels / booleans / category tokens /
+non-secret identifiers / public git PR & commit references — not secret or row values.
+
+---
+
+# Appendix D — Correction: Current Stage 0 Runner Custody Value (PR #282)
+
+**Amendment status:** `PRODUCTION_PARAMETER_REGISTRY_STAGE0_RUNNER_CUSTODY_VALUE_CORRECTED_AMENDMENT_ONLY`
+
+- **What this amendment did:** updated the **current-value axis** of
+  `prod.stage0.runner.custody.file` to reflect the PR #282 RB-ROTATE:
+  - `current_status` `blocked` → **`active`**;
+  - `current_custody_value_status` `broken_until_rewritten_by_rb_rotate` →
+    **`corrected_by_pr282_rb_rotate_evidence`**;
+  - `future_custody_write_required` `true` → **`false`**;
+  - added `correction_pr=282`,
+    `correction_commit=dadb458bde5e7de0e980749829f11e9308920f91`,
+    `correction_doc_path=docs/sprint3-stage0-rb-rotate-pr281-applied-evidence.md`,
+    `live_auth_proven=false`, and `historical_broken_value_pr=274` /
+    `historical_broken_value_commit=b63f2b7b454609a36b1fe9f1c882ce562cee369d`;
+  - updated `shape_contract` `partial` → `complete`, `validation_method` to the PR #282
+    evidence booleans, and `stop_line_if_missing` to `custody_value_not_corrected_or_verified`.
+  - Updated the custody.key and dsn.shape notes and the §9 status table/two-axis model
+    accordingly.
+- **Evidence cited (PR #282, merge `dadb458bde5e7de0e980749829f11e9308920f91`,
+  `docs/sprint3-stage0-rb-rotate-pr281-applied-evidence.md`):** `db_rotation_applied=true`,
+  `custody_written=true`, `custody_file_exists=true`, `custody_file_owner_root=true`,
+  `custody_file_chmod_600=true`, `custody_key_present=true`, `db_custody_in_sync=true`,
+  `execution_result=applied`, `stop_line=none`, `corrected_dsn_derived_locally=true`,
+  `corrected_dsn_printed=false`, `raw_values_printed=false`.
+- **Preserved history:** PR #274 (`b63f2b7b…`) remains the historical broken-value finding;
+  PR #280/#281 remain the source-of-truth derivation activation. The prior `broken` state is
+  superseded by the PR #282 rewrite, not erased.
+- **Explicitly NOT claimed (bounded interpretation):**
+  - **Live authentication is NOT proven** (`live_auth_proven=false`): PR #282 made **no**
+    psql/auth attempt; `db_custody_in_sync=true` is a same-chain completion fact, not an auth
+    test.
+  - **Stage 0 readiness is NOT claimed**; no psql/auth test occurred.
+  - Live auth still requires a **separately GO-gated Option A binding/auth preflight rerun**;
+    **Step 2E / Stage 0 remain separately GO-gated.**
+- **Effect on gates:** value-consuming gates (§6.1) may now treat the custody value as
+  corrected/verified; the prior `stop_line=parameter_only_available_from_broken_custody` no
+  longer applies. This does **not** authorize any execution.
+
+**Non-authorization.** This amendment authorizes no RB-ROTATE retry, credential rotation,
+custody write, psql/auth rerun, Option A rerun, Step 2E, Stage 0, run-lock touch, grants,
+schema/data changes, source-selection change, Option B code change, remediation, downstream
+runtime, Lane/scoring/AMS/customer output, Gate 4E, or Gate 4F. It only updates registry state
+based on PR #282 evidence. **Stage 0 execution remains separately GO-gated.**
+
+**Appendix D safety boundary.** No raw DSN, raw host, raw port, password, token,
+`.env.production` value, raw database URL, raw connection string, custody contents, psql raw
+output, customer payload, or PII appears in this amendment; the correction is recorded by
+booleans / category tokens / non-secret path & key names / public git PR & commit references
+only, and live authentication is explicitly not claimed.
