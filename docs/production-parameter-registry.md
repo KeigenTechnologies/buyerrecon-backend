@@ -658,3 +658,158 @@ literal placeholders, not values. (Per the PR #218 Codex note: "no secret used o
 to be read as "no secret value exposed, printed, or recorded.") All values above are safe
 labels / booleans / category tokens / non-secret identifiers / public git commit hashes —
 not secret or row values.
+
+---
+
+# Appendix A — Stage 0 Runner DSN Source-of-Truth Registry-Amendment Plan (Planning Only)
+
+**Appendix status:** `STAGE0_RUNNER_DSN_REGISTRY_AMENDMENT_PLANNING_ONLY`
+
+This appendix is **planning only**. It does **not** change any parameter `current_status` in
+the machine-readable `buyerrecon-production-parameter-registry-v1` block above (the Stage 0
+runner DSN dependency remains `blocked`), and it **executes nothing**. It plans a **future
+docs-only amendment** that could move the Stage 0 runner DSN dependency from `blocked` →
+`verified active`, **or** prove exactly which source-of-truth dependency remains missing. The
+final executable amendment **must update this same canonical registry**
+(`docs/production-parameter-registry.md`) — including the v1 block — **before** any RB-ROTATE
+retry. This appendix authorizes **no** RB-ROTATE retry, credential rotation, custody write,
+psql/auth rerun, Option A rerun, Step 2E, Stage 0, run-lock touch, grants, schema/data
+changes, source-selection change, Option B code change, remediation, downstream runtime,
+Lane/scoring/AMS/customer output, Gate 4E, or Gate 4F. No raw secret, DSN, host, port,
+username, password, `.env.production` value, or connection string appears here.
+
+> Provenance: PR #275 establishes this registry
+> (`385b068db4a07a8738f64bed7361b8ff8a0c4ab7`); PR #274 proved the existing custody value
+> incomplete (`b63f2b7b454609a36b1fe9f1c882ce562cee369d`); PR #199 seed
+> (`193cdc96bfabe9893b330910b36cf681db77a20a`).
+
+## A.1 Current Registry Baseline (must be confirmed before amending)
+
+A future amendment/gate must first confirm:
+- the current base tip contains the **PR #275 merge** `385b068db4a07a8738f64bed7361b8ff8a0c4ab7`;
+- `docs/production-parameter-registry.md` **exists**;
+- the `buyerrecon-production-parameter-registry-v1` block **exists** and parses
+  (`registry_version=1`, `registry_status=active`, `registry_seed_commit=193cdc96…`);
+- current Stage 0 runner DSN-related status (as recorded in the v1 block above):
+  - `prod.stage0.runner.custody.file` → **`current_status=blocked`** (incomplete custody
+    value; finding PR #274 `b63f2b7b…`);
+  - `prod.stage0.runner.dsn.shape` → shape is defined but **not yet usable for execution**
+    because the custody value does not satisfy it;
+  - therefore any RB-ROTATE retry must **fail closed** at
+    `stop_line=parameter_only_available_from_broken_custody`.
+
+## A.2 Source-of-Truth Discovery Candidates (safe; no raw values)
+
+Candidates to establish the missing **complete** DSN structure, **without printing raw
+secrets** — each must resolve to a registry entry with verified provenance, not a guess:
+
+| candidate | use | secret-safety constraint |
+|---|---|---|
+| PR #199 seed registry entries | scheme, db name, role, DSN shape, host/port custody pointer | already non-secret; cite `source_commit` |
+| PR #195 host/port category provenance | confirm host/port **presence** in approved custody | booleans only; **never** print host/port; record exact PR #195 merge commit (currently `TBD`) |
+| merged production environment/runtime registry doc (`docs/ops/buyerrecon-production-environment-runtime-registry.md`) | structural/custody narrative source | non-secret; structure/custody only |
+| approved custody source metadata | confirm the approved location holds a complete value | presence/authority booleans only; never read value into docs |
+| `.env.production` | **only** as a local operator-derived source | **never printed/committed/parsed into output**; local in-memory derivation only |
+| PostgreSQL local metadata | only if **read-only and secret-safe** | booleans/categories only; no rows, no DSN, no host/port |
+| `/etc/buyerrecon/stage0-runner.env` | **only** as broken-evidence (PR #274), **not** source of truth | never treated as authority |
+
+> Rule: a candidate becomes a registry source only when it yields a **verified** value or a
+> **verifiable presence/shape**, recorded as category/shape/custody-pointer — never the raw
+> value.
+
+## A.3 Required Parameters to Move Active
+
+The amendment must drive these to `current_status=active` **only when verified** (else leave
+`blocked`/`unknown` and record exactly what is missing):
+
+- `prod.stage0.runner.role`
+- `prod.stage0.runner.custody.file`
+- `prod.stage0.runner.custody.key`
+- `prod.stage0.runner.dsn.shape`
+- `prod.database.scheme.category`
+- `prod.database.host.category`
+- `prod.database.port.category`
+- `prod.database.name.category`
+
+## A.4 Amendment Strategy (future docs-only edit to this file)
+
+For each required parameter, the future amendment updates its v1-block record with:
+- `current_status=active` **only if verified from an approved source-of-truth** (otherwise
+  keep `blocked`/`unknown` and state the missing dependency);
+- `source_pr`, `source_commit`, `source_doc_path` (concrete merged provenance; **no** `TBD`
+  for any parameter required by the imminent RB-ROTATE);
+- `shape_contract` (must be `complete` for the params RB-ROTATE constructs/verifies);
+- `validation_method` (the secret-safe check a command-pack runs — booleans only);
+- `stop_line_if_missing`;
+- safe `notes`;
+- **no** raw secret / DSN / host / port / username / password value printed.
+
+The amendment is **docs-only** and updates **this canonical registry**. If it cannot verify a
+parameter safely, it records the parameter as still-blocked with the precise missing
+dependency — it does **not** guess.
+
+## A.5 Future Executable Gate (before any RB-ROTATE retry)
+
+A future `parameter_registry_gate` (in the RB-ROTATE command-pack, before password input / DB
+rotation) must:
+- fast-forward to the current base tip;
+- confirm HEAD contains the registry **seed + amendment merge commits** required;
+- parse the `buyerrecon-production-parameter-registry-v1` block;
+- assert **every required Stage 0 DSN parameter** (§A.3) is present and `current_status=active`;
+- assert their `shape_contract` is **complete**;
+- assert **no** required parameter has `source_commit=TBD`;
+- assert **no** dependency is only available from broken custody;
+- assert **no** conflicting active parameter for the same category/environment;
+- emit **safe labels only**;
+- **stop before any password input or DB rotation** if any check fails
+  (`parameter_registry_gate_result=blocked`).
+
+Illustrative safe labels: `amendment_required_ids_active=true|false`,
+`amendment_no_tbd_source_commits=true|false`,
+`amendment_no_broken_custody_dependency=true|false`,
+`amendment_shape_contracts_complete=true|false`,
+`parameter_registry_gate_result=<pass|blocked>`, `stop_line=<none_or_safe_stop_line>`.
+
+## A.6 Secret-Safe Local Derivation
+
+If an approved source-of-truth requires local raw values, future operator commands must
+**derive them locally without printing** any of: raw DSN, host, port, username, password,
+`.env.production` value, raw connection string, or custody contents. The **only** output is
+booleans / categories / shape checks (e.g. `dsn_shape_complete=true|false`,
+`host_present_in_approved_custody=true|false`) — never the value or any component.
+
+## A.7 Explicit Blockers (RB-ROTATE stays blocked if any hold)
+
+- any required parameter is **missing**;
+- any required parameter is `blocked`, `unknown`, `TBD`, `superseded`, or **conflicting**;
+- host / port / db / user **cannot be derived from an approved source**;
+- the existing **broken custody** is the only source;
+- **operator guessing** would be required;
+- **raw secrets would need to be printed**.
+
+In any of these cases the gate fails closed (no password input, no DB rotation) and the state
+is recorded in a docs-only evidence PR (safe labels only).
+
+## A.8 Non-Authorization
+
+This appendix authorizes **no** RB-ROTATE retry, credential rotation, custody write, psql/auth
+rerun, Option A rerun, Step 2E, Stage 0, run-lock touch, grants, schema/data changes,
+source-selection change, Option B code change, remediation, downstream runtime,
+Lane/scoring/AMS/customer output, Gate 4E, or Gate 4F. The **executable amendment** is a
+future, separately-reviewed, separately GO-gated docs-only edit to this canonical registry;
+**Stage 0 execution remains separately GO-gated.**
+
+## A.9 Appendix Safety / Raw-Data Boundary
+
+This appendix contains no secret value, DSN URI, connection string, raw password, raw
+secret-manager payload, service-file content, `.env.production` content/value, token, raw
+UUID, IP address, IPv6 address, **host value, port value**, real URI, SSH banner, login
+source, host/network detail, raw payload, `canonical_jsonb` payload, row data, real
+`session_id`/`request_id`, raw SQL, raw psql output, or customer data. It plans a future
+docs-only amendment that records only category / shape-contract / custody-pointer / verified
+provenance per parameter, derives any raw values **locally without printing**, and **keeps
+RB-ROTATE blocked** until every required Stage 0 DSN parameter is verified `active` with
+complete shape and concrete (non-`TBD`) provenance. (Per the PR #218 Codex note: "no secret
+used or exposed" is to be read as "no secret value exposed, printed, or recorded.") All values
+above are safe labels / booleans / category tokens / non-secret identifiers / public git
+commit hashes — not secret or row values.
