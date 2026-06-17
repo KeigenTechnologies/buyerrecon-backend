@@ -38,6 +38,41 @@ password, token, custody contents, customer payload, or PII appears in this docu
   `auth_database_expected_match=false` / `transaction_read_only_enforced=false` are
   **unconfirmed** (auth did not complete) — **not** assertions about user/database/read-only.
 
+### PR #284 carry-forward evidence
+
+PR #284 merge `f710696b20278d406f0b5f5a457ac7b81ccb5664` recorded the Option A
+live-auth preflight evidence used by this plan:
+
+```text
+active_option_a_live_auth_preflight_script_sha=82c023868083212efa8c1e10964dd904fcaab3f1c8c2b1d2539ebae736bc5c39
+superseded_script_sha=5273d1525cdcfe8e9c40819bc69fe2e007534c73db0f3c25499c096e35665181
+previous_script_not_run=true
+non_argv_connection_method=true
+dsn_passed_on_argv=false
+psql_command_uses_service_name_only=true
+psql_auth_attempted=true
+psql_auth_succeeded=false
+raw_psql_output_printed=false
+live_auth_preflight_result=auth_failed
+stop_line=psql_auth_failed_raw_withheld
+preflight_invocation_count=2
+duplicate_invocation=true
+duplicate_invocation_result_same=true
+stage0_executed=false
+run_lock_touched=false
+```
+
+The superseded script passed the DSN via argv / `psql -d "$dsn"` and was not run. PR #284
+conservatively recorded two identical read-only live-auth preflight invocations because the
+operator transcript showed two command/output blocks; both produced the same safe-label result.
+Neither invocation printed raw values or raw psql/PostgreSQL output.
+
+PR #284 created no persistent runtime or data-plane effects: no Stage 0 execution, no run-lock
+touch, no schema changes, no data reads, no grants, no custody write, no credential rotation,
+and no runtime/downstream action. The registry custody correction remains recorded from PR #283,
+`live_auth_proven=false` remains the current registry state, and the original `auth_or_credential`
+finding remains unresolved at the live-auth level.
+
 ---
 
 ## 2. Candidate Investigation Routes (compared; none executed)
