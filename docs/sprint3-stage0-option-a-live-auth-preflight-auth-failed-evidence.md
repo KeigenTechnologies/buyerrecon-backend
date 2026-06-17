@@ -7,10 +7,12 @@ This is a **docs-only evidence record**. Under the GO
 non-argv Option A live-auth preflight script (active SHA
 `82c023868083212efa8c1e10964dd904fcaab3f1c8c2b1d2539ebae736bc5c39`,
 `sha256_match=true`, `syntax_check=pass`) on production. Phase 0 and the registry/custody
-preconditions passed, a non-argv (`PGSERVICEFILE`) connection method was used, and **exactly
-one** read-only psql/auth preflight was attempted as `buyerrecon_stage0_runner` — which
-**failed** with raw output withheld. **Result: `live_auth_preflight_result=auth_failed`,
-`stop_line=psql_auth_failed_raw_withheld`.**
+preconditions passed, a non-argv (`PGSERVICEFILE`) connection method was used, and a read-only
+psql/auth preflight was attempted as `buyerrecon_stage0_runner` — which **failed** with raw
+output withheld. (The GO scope was exactly one; the operator transcript showed **two
+identical** command/output blocks, so this evidence **conservatively records two identical
+read-only invocations** — both `auth_failed` — see §2.) **Result:
+`live_auth_preflight_result=auth_failed`, `stop_line=psql_auth_failed_raw_withheld`.**
 
 **This records a live-auth FAILURE with raw output withheld — it does NOT inspect or expose
 raw psql/PostgreSQL output, does NOT prove the exact failure subcase, and does NOT authorize
@@ -30,7 +32,8 @@ string, custody contents, or raw psql output.
 
 ## 1. Authorization & Pre-Run Verification
 
-- GO: `HELEN OPTION A STAGE0 RUNNER LIVE-AUTH PREFLIGHT GO` — exactly one live-auth preflight.
+- GO: `HELEN OPTION A STAGE0 RUNNER LIVE-AUTH PREFLIGHT GO` — exactly one live-auth preflight
+  (GO scope; conservatively recorded as two identical read-only invocations — see §2).
 - Active script SHA: `82c023868083212efa8c1e10964dd904fcaab3f1c8c2b1d2539ebae736bc5c39`
   (verified `sha256_match=true`, `syntax_check=pass` before the GO).
 - Superseded script SHA: `5273d1525cdcfe8e9c40819bc69fe2e007534c73db0f3c25499c096e35665181`
@@ -42,22 +45,39 @@ string, custody contents, or raw psql output.
 
 ---
 
-## 2. Duplicate-Run Handling (transparency)
+## 2. Duplicate-Run Handling (conservative; honest)
 
-- Claude Code observed **one** safe-label set for this preflight and has **no** terminal
-  history or operator note indicating a second actual invocation.
-- Recorded accordingly:
+- The operator transcript included **two identical** command/output blocks for this preflight.
+- There is **no operator-confirmed terminal-history proof** that this was only a duplicate
+  paste. Therefore, **conservatively**, the evidence records **two identical invocations**
+  rather than assuming a single run:
   ```text
-  preflight_invocation_count=1
-  duplicate_invocation=false
-  output_pasted_twice=not_determinable_by_claude_code
+  preflight_invocation_count=2
+  duplicate_invocation=true
+  duplicate_invocation_result_same=true
+  output_pasted_twice=false_or_not_relied_on
+  operator_transcript_showed_two_invocations=true
   ```
-- This is **not** concealment: if the operator actually invoked the preflight **twice**, that
-  must be corrected in a follow-up note recording `preflight_invocation_count=2`,
-  `duplicate_invocation=true`, `duplicate_invocation_result_same=true` — noting both were
-  read-only auth preflight attempts with raw output withheld and **no** Stage 0 / run-lock /
-  data / schema / grant / downstream action. Absent any such evidence, this record reflects a
-  single observed invocation.
+- **Both** invocations produced the **same** safe-label result:
+  ```text
+  live_auth_preflight_result=auth_failed
+  stop_line=psql_auth_failed_raw_withheld
+  psql_auth_attempted=true
+  psql_auth_succeeded=false
+  raw_psql_output_printed=false
+  stage0_executed=false
+  run_lock_touched=false
+  ```
+- **Both** invocations were **read-only live-auth preflight attempts**; **neither** printed raw
+  values; **neither** authorized or performed Stage 0, run-lock touch, data reads, DML, DDL,
+  grants, schema changes, custody writes, credential rotation, RB-ROTATE retry, remediation,
+  downstream runtime, Lane/scoring/AMS/customer output, Gate 4E, or Gate 4F.
+- The duplicate invocation is an **operator-process deviation** from the intended
+  exactly-once instruction. This is **not ideal** and is recorded **honestly** (not hidden):
+  it did **not** change the result category (`auth_failed` both times) and created **no**
+  persistent DB / schema / custody / runtime effects (both attempts were read-only and failed
+  at auth with raw output withheld).
+- Remediation of the process deviation is **not** created in this PR.
 
 ---
 
@@ -125,8 +145,9 @@ removed (`temp_service_file_created=true`, `temp_service_file_chmod_600=true`,
 (`previous_script_sha_superseded=true`, `previous_script_not_run=true`).
 
 ### 4.3 Auth preflight (FAILED, raw withheld)
-Exactly one read-only auth preflight was attempted (`psql_auth_attempted=true`) and **did not
-succeed** (`psql_auth_succeeded=false`); raw psql/PostgreSQL output was **withheld**
+The read-only auth preflight (conservatively recorded as two identical invocations — §2) was
+attempted (`psql_auth_attempted=true`) and **did not succeed** (`psql_auth_succeeded=false`,
+same result both times); raw psql/PostgreSQL output was **withheld**
 (`raw_psql_output_printed=false`). Result: `live_auth_preflight_result=auth_failed`,
 `stop_line=psql_auth_failed_raw_withheld`.
 
@@ -153,7 +174,8 @@ proof of a wrong user, wrong database, or a read-only-enforcement failure. They 
 
 ## 5. What Did Not Happen
 
-- No preflight rerun (this records the single observed run); no Option A retry.
+- No preflight rerun beyond the conservatively-recorded two identical read-only attempts
+  (§2); no Option A retry authorized or performed.
 - No raw psql/PostgreSQL output inspected, printed, or exposed.
 - No secret/custody value read into output; no DSN/host/port/username(beyond role)/password
   printed; no `.env.production` read/print.
@@ -173,8 +195,9 @@ proof of a wrong user, wrong database, or a read-only-enforcement failure. They 
 
 - **AUTH_FAILED (raw withheld) — Option A live-auth preflight is
   `live_auth_preflight_result=auth_failed`, `stop_line=psql_auth_failed_raw_withheld`**: Phase 0
-  / registry / custody / shape / non-argv connection all passed, but the single read-only
-  psql/auth attempt as `buyerrecon_stage0_runner` failed with raw output withheld.
+  / registry / custody / shape / non-argv connection all passed, but the read-only
+  psql/auth attempt(s) as `buyerrecon_stage0_runner` (conservatively recorded as two identical
+  invocations — §2) failed with raw output withheld.
 - This is **not** a valid live-auth proof, **not** an exact-subcase determination, **not**
   authorization for any rerun/remediation/credential action, and **not** a Stage 0 execution.
   `live_auth_proven` remains **false**.
@@ -205,8 +228,9 @@ bearer token, AWS/OpenAI-style token, raw UUID, IP address (public or local), IP
 **host value, port value**, real URI, SSH banner, login source, host/network detail, raw
 payload, `canonical_jsonb` payload, `accepted_events` row data, raw behavioural row data, real
 `session_id` / `request_id` value, user-agent value, raw SQL, raw psql output, raw PostgreSQL
-error text, Node stack trace, or customer data. The preflight ran a **single read-only**
-auth attempt using a **non-argv** connection method (a chmod-600 `PGSERVICEFILE` under a
+error text, Node stack trace, or customer data. The preflight ran **read-only** (conservatively
+recorded as two identical invocations — §2)
+auth attempt(s) using a **non-argv** connection method (a chmod-600 `PGSERVICEFILE` under a
 chmod-700 temp dir, removed on exit; only the non-secret service name on argv); it **withheld**
 raw psql/PostgreSQL output (`raw_psql_output_printed=false`), did **not** print the DSN or any
 component (`custody_value_printed=false`, `raw_values_printed=false`), and the superseded
