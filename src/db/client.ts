@@ -21,9 +21,10 @@ export async function initDb(): Promise<void> {
 // "false", "FALSE", "0", "" or any other accidental value from disabling
 // schema bootstrap. The skip path lets production deployments avoid
 // running schema.sql DDL through a least-privilege runtime role
-// (e.g. buyerrecon_prod_collector_app) when the production schema
-// lifecycle is operator-managed (PR#17f baseline + migrations 002–016
-// per PR#17h proof). See docs/sprint2-pr17k-initdb-startup-compatibility.md.
+// (e.g. the PRODUCTION_DB_ROLE_COLLECTOR_APP role; see config/constants.ts)
+// when the production schema lifecycle is operator-managed (PR#17f baseline
+// + migrations 002–016 per PR#17h proof).
+// See docs/sprint2-pr17k-initdb-startup-compatibility.md.
 export function shouldSkipDbInit(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
