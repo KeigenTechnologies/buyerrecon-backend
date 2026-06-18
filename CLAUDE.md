@@ -15,3 +15,10 @@ Guidance for working in this repository.
   `config/constants.ts` first.
 - If a value is missing, add it to both registry files before using it.
 - Each PR must run `npm run check:constants` before completion.
+
+## Project Vocabulary
+
+- For canonical concept definitions (Stage0, Route A/B/C, Option A/B/C, `auth_or_credential`,
+  `role_missing_or_not_login`, HELEN GO, run-lock, customer output, Lane A/B, AMS runtime,
+  etc.), read `.claude/glossary.md`. It defines concepts only — it is not part of
+  `check:constants` and authorizes no execution.
