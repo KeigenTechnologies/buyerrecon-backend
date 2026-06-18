@@ -71,7 +71,8 @@ Current status · Review status (CONFIRMED | PENDING_HELEN_REVIEW)**.
   any fix; diagnostic and separately GO-gated.
 - **Forbidden aliases / drift:** `route_c`, `route-c`, `C`, "policy route". Use `Route C` /
   `RouteC`.
-- **Current status:** Planned (PR #292); not yet run.
+- **Current status:** Recommended next route after PR #291; Route C planning is proposed in
+  open PR #292 and is not authoritative until reviewed/merged; not yet run.
 - **Review status:** CONFIRMED.
 
 ## Option A
