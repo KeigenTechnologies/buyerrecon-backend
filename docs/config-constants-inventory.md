@@ -1,11 +1,11 @@
 # BuyerRecon — Configuration Constants Inventory (Registry/Guardrail PR)
 
 **This is a registry/guardrail PR only.** It adds a constants registry
-(`config/constants.ts`), human/Claude registries (`.claude/constants.md`,
-`.claude/glossary.md`), a local guardrail (`scripts/check-no-raw-constants.mjs` →
-`npm run check:constants`), and this inventory. **No source replacement was performed
-in this PR** — existing files are intentionally NOT yet migrated to use the constants;
-that happens in follow-up PRs, file-by-file.
+(`config/constants.ts`), a human/Claude registry (`.claude/constants.md`), a local guardrail
+(`scripts/check-no-raw-constants.mjs` → `npm run check:constants`), and this inventory.
+**No glossary** is created here (`.claude/glossary.md` is deferred to a separate follow-up PR).
+**No source replacement was performed in this PR** — existing files are intentionally NOT yet
+migrated to use the constants; that happens in follow-up PRs, file-by-file.
 
 It changes **no runtime behavior**, no schema/migrations/deploy/env/secrets, and ran
 **no** production command, SQL, psql, Stage 0, worker, extractor, or deploy. No secret
@@ -20,15 +20,22 @@ registered).
 
 ## 1. Method
 
-- Inventory grep (reporting): `git grep -E` over `*.ts *.js *.md *.json`, tracked files
-  only.
-- Guardrail enforcement (`npm run check:constants`): `git grep -F` over **source code only**
-  (`*.ts *.tsx *.js *.jsx *.mjs *.cjs`), exempting the registry/guardrail files.
+- **Inventory grep (reporting) stays BROAD:** `git grep -E` over `*.ts *.js *.md *.json`,
+  tracked files only — scans everything for visibility (§2).
+- **Guardrail enforcement (`npm run check:constants`) stays NARROW:** it FAILS (exit 1) only
+  on the **four project-unique literals** — `buyerrecon_production`,
+  `buyerrecon_prod_collector_app`, `buyerrecon_stage0_runner`, `/opt/buyerrecon-backend` —
+  searched via `git grep -F` over **source code only** (`*.ts *.tsx *.js *.jsx *.mjs *.cjs`),
+  exempting the registry/guardrail files.
+- **NOT fail conditions (inventory-only, candidate / pending Helen review):** `RouteA`,
+  `RouteB`, `RouteC`, `Stage0`, `STAGE0`, `DATABASE_URL`, `STAGE0_RUNNER_DSN`, and any
+  `postgres://` / `postgresql://` / DSN-style connection strings. These are reported here only
+  (§4, §6, §6.1); they never fail the guardrail in this PR.
 - **Scope decision (important):** the guardrail enforces over **source code**, not markdown.
-  The vast majority of registered-literal hits are in `docs/*.md` evidence/prose (which
-  legitimately reference role names and cannot be replaced by TS constants). Enforcing over
-  docs would be noisy and non-actionable; the inventory still reports the markdown corpus
-  below for visibility.
+  The vast majority of literal hits are in `docs/*.md` evidence/prose (which legitimately
+  reference role names and cannot be replaced by TS constants). Enforcing over docs would be
+  noisy and non-actionable; the inventory still reports the markdown corpus below for
+  visibility.
 
 ---
 
@@ -74,29 +81,29 @@ registered).
 
 ## 3. Guardrail first-run result (expected current-state failure)
 
-`npm run check:constants` (source-code scope) — **FAILED (exit 1)**, as expected for a
-registry/guardrail-first PR. Grouped result:
+`npm run check:constants` (NARROW: four project-unique literals; source-code scope) —
+**FAILED (exit 1)**, as expected for a registry/guardrail-first PR. Grouped result:
 
-| Literal | occurrences | files |
+| Literal (fail condition) | occurrences | files |
 |---|---:|---:|
 | `buyerrecon_prod_collector_app` | 1 | 1 (`src/db/client.ts`) |
-| `DATABASE_URL` | 111 | 41 |
-| (all others) | 0 | 0 |
-| **Total** | **112** | **41 (union)** |
+| `buyerrecon_production` | 0 | 0 (docs-only) |
+| `buyerrecon_stage0_runner` | 0 | 0 (docs-only) |
+| `/opt/buyerrecon-backend` | 0 | 0 (docs-only) |
+| **Total** | **1** | **1** |
 
-Top source files to migrate (by `DATABASE_URL` count): `tests/v1/db/_setup.ts` (10),
-`scripts/collector-observation-report.ts` (7),
-`tests/v1/stage0-record-only-worker.test.ts` (6),
-`scripts/poi-sequence-observation-report.ts` (5),
-`scripts/poi-sequence-table-observation-report.ts` (5), then a long tail of
-`scripts/*observation-report.ts`, `scripts/run-*-worker.ts`, `scripts/extract-*.ts`,
-`src/scoring/**/worker.ts`, `src/db/client.ts`, `src/reports/external/safe-claims.ts`,
-`src/evidence-review-snapshot/sanitize.ts`, and `tests/**`.
+The single source-code violation is `buyerrecon_prod_collector_app` in `src/db/client.ts`.
+The other three project-unique literals appear only in documentation/evidence (out of
+enforcement scope), so they raise **no** code violations.
 
-**This failure is expected and is the current-state evidence.** Do **not** fix these in this
-PR. Follow-up PRs should replace literals **file-by-file** (e.g. `process.env.DATABASE_URL` →
-`process.env[DATABASE_URL_ENV]`, importing from `config/constants.ts`), each re-running
-`npm run check:constants`.
+> Earlier (broad) draft of this guardrail also failed on `DATABASE_URL` (111 occurrences /
+> 41 files) and would have on the route/Stage0/DSN-name terms; per the narrowing decision,
+> those are **no longer fail conditions** and are tracked as candidates (§4, §6) only.
+
+**This failure is expected and is the current-state evidence.** Do **not** fix it in this PR.
+A follow-up PR should migrate `src/db/client.ts` **file-by-file** to import
+`PRODUCTION_DB_ROLE_COLLECTOR_APP` from `config/constants.ts`, then re-run
+`npm run check:constants` (which should then pass for the four enforced literals).
 
 ---
 
@@ -119,15 +126,17 @@ PR. Follow-up PRs should replace literals **file-by-file** (e.g. `process.env.DA
 
 ---
 
-## 5. Candidate glossary terms
+## 5. Candidate glossary terms (for a SEPARATE follow-up PR)
 
-Registered in `.claude/glossary.md`: `Stage0`, `RouteA`, `RouteB`, `RouteC`, `Option A`,
-`Option B`, `Option C`, `auth_or_credential`, `role_missing_or_not_login`, `HELEN GO`,
-`run-lock`, `customer output`, `Lane A/B`, `AMS runtime`.
+> A project glossary is intentionally **NOT created in this PR**. `.claude/glossary.md` is out
+> of scope here and is deferred to a separate follow-up PR. The terms below are recorded as
+> candidates only.
 
-Additional recurring terms worth a future glossary pass (seen across docs): `Option A
-binding/auth preflight`, `Step2E`, `Gate 4E` / `Gate 4F`, `RB-ROTATE`, `STAGE0_RUNNER_DSN`
-custody/source-of-truth, `production parameter registry`.
+Candidate vocabulary: `Stage0`, `RouteA`, `RouteB`, `RouteC`, `Option A`, `Option B`,
+`Option C`, `auth_or_credential`, `role_missing_or_not_login`, `HELEN GO`, `run-lock`,
+`customer output`, `Lane A/B`, `AMS runtime`. Additional recurring terms seen across docs:
+`Option A binding/auth preflight`, `Step2E`, `Gate 4E` / `Gate 4F`, `RB-ROTATE`,
+`STAGE0_RUNNER_DSN` custody/source-of-truth, `production parameter registry`.
 
 ---
 
@@ -142,17 +151,46 @@ custody/source-of-truth, `production parameter registry`.
 - Whether the runner **custody file path** should be promoted to a code constant —
   `PENDING_REVIEW`.
 
+### 6.1 Raw DSN / connection strings (inventory-only; NO secret values recorded)
+
+`postgres://` / `postgresql://` connection strings exist in the repo. They are **inventory-only
+candidates pending Helen review** and are **never** a guardrail fail condition. **No secret or
+password values from inside any connection string were printed, copied, or stored** — only the
+fact that raw DSN strings exist and their file locations (counts) are recorded:
+
+| metric | value |
+|---|---:|
+| files containing a `postgres(ql)://` string (`*.ts/*.js/*.md/*.json`) | 47 |
+| total occurrences | 81 |
+| of which in `docs/` (prose/evidence) | 36 files |
+| of which in `tests/` | 11 files |
+| in source/test code globs (`*.ts/...`) | 12 files |
+
+- Many such strings are placeholder/shape-only DSNs (e.g. `postgresql://<role>:<PASSWORD>@<HOST>:<PORT>/<db>`)
+  in docs; some are local test DSNs. **This inventory records presence + location only**; it
+  does **not** reproduce any DSN line, host, port, user, or password.
+- Action (deferred): Helen review to decide which (if any) DSN handling belongs behind
+  constants vs. custody; no change in this PR.
+
 ---
 
 ## 7. Explicit statements
 
 - **No source replacement was performed in this PR.** Existing files still contain their
   current raw literals; none were rewritten to use the new constants.
-- **This is a registry/guardrail PR only.** It adds the constants registry, the human/Claude
-  registry + glossary, the local `npm run check:constants` guardrail, and this inventory.
-- The guardrail's first run **fails by design** (112 source occurrences, 41 files) and that
-  failure is recorded here as current-state evidence; follow-up PRs migrate literals
-  file-by-file.
+- **This is a registry/guardrail PR only.** It adds `config/constants.ts`, the human/Claude
+  registry `.claude/constants.md`, the local `npm run check:constants` guardrail, and this
+  inventory. **No glossary** is created here (`.claude/glossary.md` is deferred to a separate
+  follow-up PR).
+- The guardrail is **narrow**: it fails only on the four project-unique literals
+  (`buyerrecon_production`, `buyerrecon_prod_collector_app`, `buyerrecon_stage0_runner`,
+  `/opt/buyerrecon-backend`). Its first run **fails by design** with **1** source occurrence
+  (`buyerrecon_prod_collector_app` in `src/db/client.ts`); recorded here as current-state
+  evidence; a follow-up PR migrates it.
+- All other terms (`RouteA/B/C`, `Stage0`, `STAGE0`, `DATABASE_URL`, `STAGE0_RUNNER_DSN`) and
+  raw DSN/connection strings are **inventory-only candidates pending Helen review**, never fail
+  conditions.
 - **No runtime behavior changed**; no schema/migration/deploy/env/secret change; **no**
   production command, SQL, psql, Stage 0, worker, extractor, deploy, env mutation, or secret
-  inspection occurred. Only non-secret identifiers and env-var **names** are registered.
+  inspection occurred. **No secret/password values were printed or stored** — only non-secret
+  identifiers, env-var **names**, and DSN presence/locations are recorded.

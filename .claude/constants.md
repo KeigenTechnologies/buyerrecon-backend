@@ -7,17 +7,26 @@ here **before reuse**. Do not invent aliases. Mark uncertain values as
 `PENDING_REVIEW` instead of guessing.
 
 - Machine-consumed constants: `config/constants.ts`
-- Project vocabulary: `.claude/glossary.md`
 - Guardrail: `npm run check:constants` (enforced over source code; see
   `scripts/check-no-raw-constants.mjs`)
+
+(A project glossary is intentionally **not** part of this PR; it is a separate follow-up.
+Sources of truth here are `config/constants.ts` and this file only.)
 
 "Allowed files" below means: the symbol's **raw literal value** may appear directly
 only in the listed registry/guardrail files; **source code** must import the symbol
 from `config/constants.ts` instead of hard-coding the literal.
 
 Registry/guardrail files where these literals are always allowed:
-`config/constants.ts`, `.claude/constants.md`, `.claude/glossary.md`,
+`config/constants.ts`, `.claude/constants.md`,
 `scripts/check-no-raw-constants.mjs`, `docs/config-constants-inventory.md`.
+
+**Guardrail enforcement scope (this PR):** `npm run check:constants` **fails** only on the
+four project-unique literals — `buyerrecon_production`, `buyerrecon_prod_collector_app`,
+`buyerrecon_stage0_runner`, `/opt/buyerrecon-backend`. The remaining registered symbols below
+(`STAGE0_ROUTE_A/B/C`, `STAGE0_LABEL`, `STAGE0_ENV_PREFIX`, `DATABASE_URL_ENV`,
+`STAGE0_RUNNER_DSN_ENV`) are **registered but not yet enforced** — they are tracked as
+candidates pending Helen review in `docs/config-constants-inventory.md`.
 
 ---
 
@@ -52,9 +61,9 @@ Registry/guardrail files where these literals are always allowed:
 
 | Symbol | Value | Meaning | Allowed files | Forbidden aliases / notes |
 |---|---|---|---|---|
-| `STAGE0_ROUTE_A` | `RouteA` | Stage 0 correction/diagnostic Route A label | registry files; import in code | No `route_a`, `route-a`, `A`. See glossary. |
-| `STAGE0_ROUTE_B` | `RouteB` | Stage 0 correction/diagnostic Route B label | registry files; import in code | No `route_b`, `route-b`, `B`. See glossary. |
-| `STAGE0_ROUTE_C` | `RouteC` | Stage 0 correction/diagnostic Route C label | registry files; import in code | No `route_c`, `route-c`, `C`. See glossary. |
+| `STAGE0_ROUTE_A` | `RouteA` | Stage 0 correction/diagnostic Route A label | registry files; import in code | No `route_a`, `route-a`, `A`. Registered, not yet guardrail-enforced. |
+| `STAGE0_ROUTE_B` | `RouteB` | Stage 0 correction/diagnostic Route B label | registry files; import in code | No `route_b`, `route-b`, `B`. Registered, not yet guardrail-enforced. |
+| `STAGE0_ROUTE_C` | `RouteC` | Stage 0 correction/diagnostic Route C label | registry files; import in code | No `route_c`, `route-c`, `C`. Registered, not yet guardrail-enforced. |
 | `STAGE0_LABEL` | `Stage0` | Canonical Stage 0 label | registry files; import in code | No `stage 0`, `stage-0`, `S0`, `stage_zero`. |
 
 ## URLs / endpoints

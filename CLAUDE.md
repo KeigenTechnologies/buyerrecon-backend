@@ -9,7 +9,6 @@ Guidance for working in this repository.
   registered before reuse.
 - Machine-consumed constants live in `config/constants.ts`.
 - Human/Claude registry lives in `.claude/constants.md`.
-- Project vocabulary lives in `.claude/glossary.md`.
 - Do not invent aliases.
 - Do not introduce raw literals for registered constants.
 - Before writing code that uses a constant-like value, check `.claude/constants.md` and

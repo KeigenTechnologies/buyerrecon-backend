@@ -22,24 +22,25 @@
 
 import { spawnSync } from "node:child_process";
 
-// Registered forbidden raw literals (must match config/constants.ts values).
+// FORBIDDEN raw literals that FAIL the guardrail (exit 1).
+//
+// Intentionally NARROW: only project-unique identifiers that must never be hard-coded raw in
+// source. Generic / vocabulary / env-var-name terms (RouteA/B/C, Stage0, STAGE0,
+// DATABASE_URL, STAGE0_RUNNER_DSN) and any postgres:// / DSN-style connection strings are NOT
+// fail conditions — they are tracked as "candidate, pending Helen review" in
+// docs/config-constants-inventory.md only. (config/constants.ts still registers the broader
+// skeleton; this guardrail simply does not enforce those yet.)
 const FORBIDDEN = [
   "buyerrecon_production",
   "buyerrecon_prod_collector_app",
   "buyerrecon_stage0_runner",
   "/opt/buyerrecon-backend",
-  "STAGE0_RUNNER_DSN",
-  "DATABASE_URL",
-  "RouteA",
-  "RouteB",
-  "RouteC",
 ];
 
 // Files where the raw literals are always allowed (registry + guardrail).
 const ALLOWLIST = new Set([
   "config/constants.ts",
   ".claude/constants.md",
-  ".claude/glossary.md",
   "scripts/check-no-raw-constants.mjs",
   "docs/config-constants-inventory.md",
 ]);
