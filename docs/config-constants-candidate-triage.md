@@ -21,7 +21,9 @@
 
 ## Summary
 
-- **Total candidate clusters reviewed:** 23
+- **Total candidate clusters reviewed:** 26 (= A 5 + B 5 + C 11 + D 5).
+- **Categories are mutually exclusive:** each candidate cluster is counted in exactly one of
+  A/B/C/D, so the category counts sum to the total with no double-counting.
 - **Recommended A candidates (project-unique non-secret literals):** 5 total — **4 already
   registered + enforced** (`buyerrecon_production`, `buyerrecon_prod_collector_app`,
   `buyerrecon_stage0_runner`, `/opt/buyerrecon-backend`; no further action) + **1 new
