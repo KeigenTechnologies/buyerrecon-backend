@@ -1,11 +1,19 @@
-# BuyerRecon — Configuration Constants Inventory (Registry/Guardrail PR)
+# BuyerRecon — Configuration Constants Inventory (Registry/Guardrail)
 
-**This is a registry/guardrail PR only.** It adds a constants registry
+> **Status refresh (post-PR #294).** The constants-discipline registry + guardrail were
+> introduced by **PR #293**; **PR #294** (`6abe7b6ea2cf0474e7f0c68ce474ef018508e0cd`) then
+> cleared the final known source violation, and **`npm run check:constants` now passes on the
+> base branch** (`sprint2-architecture-contracts-d4cc2bf`). See §3. This doc is the living
+> inventory and reflects that current state.
+
+**Origin (PR #293) was a registry/guardrail PR only.** It added a constants registry
 (`config/constants.ts`), a human/Claude registry (`.claude/constants.md`), a local guardrail
 (`scripts/check-no-raw-constants.mjs` → `npm run check:constants`), and this inventory.
 **No glossary** is created here (`.claude/glossary.md` is deferred to a separate follow-up PR).
-**No source replacement was performed in this PR** — existing files are intentionally NOT yet
-migrated to use the constants; that happens in follow-up PRs, file-by-file.
+**PR #293 itself performed no source replacement;** the only flagged source occurrence (a
+**comment** in `src/db/client.ts`) was subsequently resolved by **PR #294** (comment-only —
+no import/tsconfig/runtime change). Any further broad migration of the candidate terms (§4)
+remains a future, per-file effort pending Helen review.
 
 It changes **no runtime behavior**, no schema/migrations/deploy/env/secrets, and ran
 **no** production command, SQL, psql, Stage 0, worker, extractor, or deploy. No secret
@@ -79,31 +87,35 @@ registered).
 
 ---
 
-## 3. Guardrail first-run result (expected current-state failure)
+## 3. Guardrail status (RESOLVED — passes on base after PR #294)
 
 `npm run check:constants` (NARROW: four project-unique literals; source-code scope) —
-**FAILED (exit 1)**, as expected for a registry/guardrail-first PR. Grouped result:
+**PASSES (exit 0)** on the base branch as of PR #294
+(`6abe7b6ea2cf0474e7f0c68ce474ef018508e0cd`). Current grouped result:
 
 | Literal (fail condition) | occurrences | files |
 |---|---:|---:|
-| `buyerrecon_prod_collector_app` | 1 | 1 (`src/db/client.ts`) |
 | `buyerrecon_production` | 0 | 0 (docs-only) |
+| `buyerrecon_prod_collector_app` | 0 | 0 |
 | `buyerrecon_stage0_runner` | 0 | 0 (docs-only) |
 | `/opt/buyerrecon-backend` | 0 | 0 (docs-only) |
-| **Total** | **1** | **1** |
+| **Total** | **0** | **0** |
 
-The single source-code violation is `buyerrecon_prod_collector_app` in `src/db/client.ts`.
-The other three project-unique literals appear only in documentation/evidence (out of
-enforcement scope), so they raise **no** code violations.
+**Resolved:** the single source occurrence flagged when this registry/guardrail first landed
+(PR #293) was `buyerrecon_prod_collector_app` in a **code comment** in `src/db/client.ts`.
+**PR #294 cleared the final known source violation** by rewording that comment to reference
+the canonical symbol `PRODUCTION_DB_ROLE_COLLECTOR_APP` (pointing to `config/constants.ts`) —
+a comment-only change, with no import/tsconfig/runtime change (a real import was not viable
+because `config/` is outside `tsconfig` `rootDir: "src"` and there is no path alias). With
+that merged, `src/db/client.ts` is **no longer a violation**, and the four enforced
+project-unique literals now have **zero** source-code occurrences outside the registry files.
 
-> Earlier (broad) draft of this guardrail also failed on `DATABASE_URL` (111 occurrences /
-> 41 files) and would have on the route/Stage0/DSN-name terms; per the narrowing decision,
-> those are **no longer fail conditions** and are tracked as candidates (§4, §6) only.
-
-**This failure is expected and is the current-state evidence.** Do **not** fix it in this PR.
-A follow-up PR should migrate `src/db/client.ts` **file-by-file** to import
-`PRODUCTION_DB_ROLE_COLLECTOR_APP` from `config/constants.ts`, then re-run
-`npm run check:constants` (which should then pass for the four enforced literals).
+> Historical note: when first introduced (PR #293), the guardrail failed by design with **1**
+> source occurrence (`buyerrecon_prod_collector_app` in `src/db/client.ts`); that is now
+> resolved by PR #294. An earlier (broad) draft of the guardrail would also have failed on
+> `DATABASE_URL` (111 occurrences / 41 files) and the route/Stage0/DSN-name terms; per the
+> narrowing decision those are **no longer fail conditions** and are tracked as candidates
+> (§4, §6) only.
 
 ---
 
@@ -176,17 +188,17 @@ fact that raw DSN strings exist and their file locations (counts) are recorded:
 
 ## 7. Explicit statements
 
-- **No source replacement was performed in this PR.** Existing files still contain their
-  current raw literals; none were rewritten to use the new constants.
-- **This is a registry/guardrail PR only.** It adds `config/constants.ts`, the human/Claude
-  registry `.claude/constants.md`, the local `npm run check:constants` guardrail, and this
-  inventory. **No glossary** is created here (`.claude/glossary.md` is deferred to a separate
-  follow-up PR).
+- **No source replacement was performed in the original registry PR (PR #293).** That PR added
+  the registry/guardrail/inventory only; the one source occurrence it flagged was later
+  resolved by **PR #294** (comment-only — see §3).
+- **The registry/guardrail itself adds** `config/constants.ts`, the human/Claude registry
+  `.claude/constants.md`, the local `npm run check:constants` guardrail, and this inventory.
+  **No glossary** is created (`.claude/glossary.md` is deferred to a separate follow-up PR).
 - The guardrail is **narrow**: it fails only on the four project-unique literals
   (`buyerrecon_production`, `buyerrecon_prod_collector_app`, `buyerrecon_stage0_runner`,
-  `/opt/buyerrecon-backend`). Its first run **fails by design** with **1** source occurrence
-  (`buyerrecon_prod_collector_app` in `src/db/client.ts`); recorded here as current-state
-  evidence; a follow-up PR migrates it.
+  `/opt/buyerrecon-backend`). It first landed (PR #293) failing by design on **1** source
+  occurrence (`buyerrecon_prod_collector_app` in `src/db/client.ts`); **PR #294 resolved it**,
+  and `npm run check:constants` now **passes on base** with **0** source violations (§3).
 - All other terms (`RouteA/B/C`, `Stage0`, `STAGE0`, `DATABASE_URL`, `STAGE0_RUNNER_DSN`) and
   raw DSN/connection strings are **inventory-only candidates pending Helen review**, never fail
   conditions.
