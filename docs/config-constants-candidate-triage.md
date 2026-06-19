@@ -85,7 +85,7 @@ concepts only and authorizing no execution. Do **not** silently convert these in
 
 | Candidate label | Reason | Evidence count | Existing glossary coverage | Recommended handling | Helen approval required |
 |---|---:|---|---|---|---|
-| `Stage0` | Core project concept (the auth/credential investigation stage) | 315 (`Stage0`) / 893 (`STAGE0`) | ✅ CONFIRMED | No change (covered) | No |
+| `Stage0` | Core project concept: the first scoring stage; currently referenced throughout the auth/credential investigation docs. | 315 (`Stage0`) / 893 (`STAGE0`) | ✅ CONFIRMED | No change (covered) | No |
 | Route A / Route B / Route C | Correction/diagnostic route concepts | 0 (token form) | ✅ all CONFIRMED (Route C status softened in PR #296) | No change (covered) | No |
 | Option A / Option B / Option C | Credential/custody option concepts | recurring in docs | ✅ all CONFIRMED | No change (covered) | No |
 | `auth_or_credential` | Stage 0 failure-class concept | recurring in docs | ✅ CONFIRMED | No change (covered) | No |
@@ -107,8 +107,8 @@ status and should **not** enter the guardrail.
 | Candidate label | Reason | Evidence count | Recommended action |
 |---|---:|---|---|
 | `https?://` URLs | Mostly generic links, doc examples, and placeholder URLs; no canonical production/canary URL set established | 591 hits / 64 files | **No action** now; a canonical URL set is `PENDING_HELEN_REVIEW` in the inventory — do not register from guesses |
-| `localhost` / `127.0.0.1` / port-shaped `:[0-9]{3,5}` | Test fixtures and doc examples; production host/port are **custody-only** and must never be hard-coded | `localhost` 40, `127.0.0.1` 77, ports 200 | **No action** — never hard-code production host/port; leave fixtures as-is |
-| `5432` (default PG port) | Appears only as a **negative "do not assume"** example in docs | included in port count above | **No action** — keep as negative example; do not register |
+| local loopback host literals / local dev hostname literals / port-shaped examples | Test fixtures and doc examples; production host/port are **custody-only** and must never be hard-coded | local dev hostname literals 40; local loopback host literals 77; port-shaped tokens 200 | **No action** — D-class ignore / false-positive / historical-local examples unless later proven production-relevant; never hard-code production host/port; leave fixtures as-is |
+| default database port examples | Appears only as a **negative "do not assume"** example in docs | included in port-shaped count above | **No action** — D-class ignore / historical-local example unless later proven production-relevant; keep as negative example; do not register |
 | `postgres://` / `postgresql://` strings | Placeholder/shape-only DSNs in docs + local test DSNs; never canonical; never copied | 81 occ / 47 files (see safety review) | **No action** / inventory-only; never promote, never forbid, never reproduce |
 | Historical PR evidence / superseded names (e.g. RB-ROTATE evidence trails, deep-research report files) | Point-in-time evidence/prose; not canonical vocabulary or constants | docs-dominant | **No action** — historical record; leave untouched |
 
@@ -153,7 +153,7 @@ Small, single-purpose PRs only — none of these are performed here:
    defined as concepts only, authorizing no execution. Mark Superseded, never silently rewrite.
 4. **(B)** Leave all B-class values as **registered-but-not-forbidden**. Confirm canonical
    `APP_DSN`/`ADMIN_DSN`/`RUNNER_DSN` naming with Helen before registering any name; never forbid.
-5. **(D)** Do nothing for D-class items (URLs, localhost/ports, `5432`, placeholder/test DSNs,
+5. **(D)** Do nothing for D-class items (URLs, local host/port-shaped examples, default database port examples, placeholder/test DSNs,
    historical evidence).
 
 ---
