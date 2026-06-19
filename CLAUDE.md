@@ -22,3 +22,11 @@ Guidance for working in this repository.
   `role_missing_or_not_login`, HELEN GO, run-lock, customer output, Lane A/B, AMS runtime,
   etc.), read `.claude/glossary.md`. It defines concepts only — it is not part of
   `check:constants` and authorizes no execution.
+
+## Production Parameters
+
+- Before any PR touching `DATABASE_URL`, `STAGE0_RUNNER_DSN`, `APP_DSN`, `ADMIN_DSN`,
+  `RUNNER_DSN`, DSN custody, deployment env, database roles, production connection handling,
+  Stage 0 runner auth, or host/port/URL handling, read `.claude/production-parameters.md`.
+- This file is a decision/registry layer only. It does not authorize production execution or
+  secret inspection.
