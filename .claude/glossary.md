@@ -165,37 +165,46 @@ Current status · Review status (CONFIRMED | PENDING_HELEN_REVIEW)**.
 
 ## Lane A/B
 
-- **Meaning:** BuyerRecon downstream **scoring/output lane** concepts (`Lane A` / `Lane B`) in
-  the scoring pipeline, beyond Stage 0. The **precise A-vs-B distinction is not crisply defined
-  in current repo docs** (referenced e.g. by a lane-ab preview report).
-- **Refinement (glossary follow-up):** clarified that `Lane A/B` denotes BuyerRecon
-  scoring/output lane concepts, and that glossary presence does **not** authorize lane writes,
-  scoring runtime, customer output, or production execution. The A-vs-B semantics remain
-  unresolved; this is a clarification, not a material change of meaning.
-- **Does NOT authorize:** running lanes, lane writes, scoring runtime, AMS, customer output,
-  production execution, or any Lane A/B / Gate 4E / Gate 4F action; all out of scope for Stage 0
-  auth investigation and separately gated.
+- **Meaning:** BuyerRecon scoring-output lanes, schema-defined in migration 011
+  (`scoring_output_lane_a` / `scoring_output_lane_b`).
+  - **Lane A** = the invalid-traffic / behavioural risk-verification lane (carries
+    `verification_score`); it is the customer-facing lane only via the redacted customer-facing
+    view — the lane Helen may discuss with the customer.
+  - **Lane B** = the declared-agent observation lane; internal-only in v1 (internal learning /
+    founder-review inputs), never exposed as customer-facing claims, and not a bad-traffic
+    verdict by default.
+- **Superseded:** the prior PENDING_HELEN_REVIEW wording ("precise A-vs-B distinction not
+  crisply defined in current repo docs") is superseded — the A/B roles and customer-facing
+  boundary are now established from merged source (migration 011 + lane-ab-preview).
+- **Does NOT authorize:** lane writes, scoring runtime, customer output, any Lane A/B / Gate 4E /
+  Gate 4F (Lane/Gate) action, AMS runtime, deploys, or production execution; all out of scope for
+  Stage 0 auth investigation and separately gated.
 - **Forbidden aliases / drift:** `LaneA/LaneB`, `lane-a`, `lanes`. Use `Lane A` / `Lane B`.
-- **Current status:** Out of scope for current work; not run.
-- **Review status:** PENDING_HELEN_REVIEW (precise A-vs-B semantics not safely known from
-  current docs).
+- **Current status:** Schema-only contract layer exists; durable Lane A/B writers are NOT
+  approved; no lane is run in current work.
+- **Review status:** CONFIRMED (A/B roles and customer-facing boundary established in merged
+  migration 011 and lane-ab-preview source).
 
 ## AMS runtime
 
-- **Meaning:** The downstream/related **"AMS" scoring-output runtime boundary** that consumes
-  scoring results — an external/related runtime distinct from the Stage 0 worker runtime. The
-  **exact expansion/definition of "AMS" is not safely established in current repo docs.**
-- **Refinement (glossary follow-up):** clarified that AMS runtime is an external/related runtime
-  boundary, and that glossary presence does **not** authorize AMS Trust/Pass runtime, integration
-  execution, customer output, or deploy. The acronym expansion remains unresolved; this is a
-  clarification, not a material change of meaning.
-- **Does NOT authorize:** invoking AMS, AMS Trust/Pass runtime, integration execution, downstream
-  runtime, customer output, or deploy; none of the current Stage 0 steps touch AMS.
+- **Meaning:** The authoritative downstream **AMS BuyerRecon Product Layer** scoring runtime
+  (Product Layer / Trust Core / Series Core / Risk Core) and its "AMS runtime bridge". This repo
+  deliberately never executes it or wires the bridge; its observers emit only non-authoritative,
+  internal-only previews alignable with the AMS Product Layer JSON shape, which MUST NOT be
+  treated as AMS runtime output.
+- **Superseded:** the prior wording ("external/related runtime ... exact definition not safely
+  established") is superseded for the runtime-boundary meaning, now established from merged
+  source; only the literal acronym expansion of "AMS" remains pending.
+- **Does NOT authorize:** AMS Product Layer execution, Trust Core / Series Core / Risk Core
+  execution, runtime bridge wiring, customer output, deploys, or production execution; none of
+  the current Stage 0 steps touch AMS.
 - **Forbidden aliases / drift:** `AMS`, `ams-runtime`, "the runtime" generically. Keep "AMS
   runtime" distinct from the Stage 0 worker runtime.
 - **Current status:** Out of scope for current work; not invoked.
-- **Review status:** PENDING_HELEN_REVIEW (acronym expansion / precise definition not safely
-  known).
+- **Review status:** CONFIRMED for the runtime-boundary / non-execution meaning (established in
+  merged source: lane-ab-preview, product-context-timing-observer, namespace bridge, and
+  migration 016). **Acronym expansion of "AMS" remains PENDING_HELEN_REVIEW** because it is never
+  spelled out in merged source.
 
 ## Step2E
 
@@ -280,8 +289,8 @@ Current status · Review status (CONFIRMED | PENDING_HELEN_REVIEW)**.
 
 ## Pending Helen review (summary)
 
-- **Lane A/B** — precise A-vs-B semantics.
-- **AMS runtime** — acronym expansion / precise definition.
+- **AMS runtime** — acronym expansion of "AMS" only (runtime-boundary meaning now CONFIRMED from
+  merged source).
 - **run-lock** — canonical run-lock path (`TBD` in the production parameter registry).
 - **Step2E** — exact definition.
 - **Gate 4E / Gate 4F** — exact definitions / pass-fail criteria.
