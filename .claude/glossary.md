@@ -145,11 +145,11 @@ Current status · Review status (CONFIRMED | PENDING_HELEN_REVIEW)**.
 ## run-lock
 
 - **Meaning:** The Stage 0 run-lock guarding single execution.
-- **Does NOT authorize:** touching/acquiring/releasing it; no current step touches the
-  run-lock, and doing so is separately gated.
+- **Does NOT authorize:** touching, creating, deleting, acquiring, releasing, bypassing, or
+  mutating run-lock state; no current step touches the run-lock, and doing so is separately gated.
 - **Forbidden aliases / drift:** `runlock`, `lock file`, ad-hoc lock paths.
-- **Current status:** Concept known; **canonical run-lock path is `TBD`** in the production
-  parameter registry (resolve before any use).
+- **Current status:** Concept known. **Canonical run-lock path: PENDING_HELEN_REVIEW** (tracked
+  as `TBD` in the production parameter registry; resolve before any use).
 - **Review status:** CONFIRMED (concept); canonical path **PENDING_HELEN_REVIEW**.
 
 ## customer output
@@ -165,27 +165,96 @@ Current status · Review status (CONFIRMED | PENDING_HELEN_REVIEW)**.
 
 ## Lane A/B
 
-- **Meaning:** Downstream scoring lanes (`Lane A` / `Lane B`) in the scoring pipeline, beyond
-  Stage 0. The **precise A-vs-B distinction is not crisply defined in current repo docs**
-  (referenced e.g. by a lane-ab preview report).
-- **Does NOT authorize:** running lanes, scoring, AMS, or any Lane A/B / Gate 4E / Gate 4F
-  action; all out of scope for Stage 0 auth investigation and separately gated.
+- **Meaning:** BuyerRecon scoring-output lanes, schema-defined in migration 011
+  (`scoring_output_lane_a` / `scoring_output_lane_b`).
+  - **Lane A** = the invalid-traffic / behavioural risk-verification lane (carries
+    `verification_score`); it is the customer-facing lane only via the redacted customer-facing
+    view — the lane Helen may discuss with the customer.
+  - **Lane B** = the declared-agent observation lane; internal-only in v1 (internal learning /
+    founder-review inputs), never exposed as customer-facing claims, and not a bad-traffic
+    verdict by default.
+- **Superseded:** the prior PENDING_HELEN_REVIEW wording ("precise A-vs-B distinction not
+  crisply defined in current repo docs") is superseded — the A/B roles and customer-facing
+  boundary are now established from merged source (migration 011 + lane-ab-preview).
+- **Does NOT authorize:** lane writes, scoring runtime, customer output, any Lane A/B / Gate 4E /
+  Gate 4F (Lane/Gate) action, AMS runtime, deploys, or production execution; all out of scope for
+  Stage 0 auth investigation and separately gated.
 - **Forbidden aliases / drift:** `LaneA/LaneB`, `lane-a`, `lanes`. Use `Lane A` / `Lane B`.
-- **Current status:** Out of scope for current work; not run.
-- **Review status:** PENDING_HELEN_REVIEW (precise A-vs-B semantics not safely known from
-  current docs).
+- **Current status:** Schema-only contract layer exists; durable Lane A/B writers are NOT
+  approved; no lane is run in current work.
+- **Review status:** CONFIRMED (A/B roles and customer-facing boundary established in merged
+  migration 011 and lane-ab-preview source).
 
 ## AMS runtime
 
-- **Meaning:** The downstream "AMS" scoring/output runtime that consumes scoring results. The
-  **exact expansion/definition of "AMS" is not safely established in current repo docs.**
-- **Does NOT authorize:** invoking AMS, downstream runtime, or customer output; none of the
-  current Stage 0 steps touch AMS.
+- **Meaning:** The authoritative downstream **AMS BuyerRecon Product Layer** scoring runtime
+  (Product Layer / Trust Core / Series Core / Risk Core) and its "AMS runtime bridge". This repo
+  deliberately never executes it or wires the bridge; its observers emit only non-authoritative,
+  internal-only previews alignable with the AMS Product Layer JSON shape, which MUST NOT be
+  treated as AMS runtime output.
+- **Superseded:** the prior wording ("external/related runtime ... exact definition not safely
+  established") is superseded for the runtime-boundary meaning, now established from merged
+  source; only the literal acronym expansion of "AMS" remains pending.
+- **Does NOT authorize:** AMS Product Layer execution, Trust Core / Series Core / Risk Core
+  execution, runtime bridge wiring, customer output, deploys, or production execution; none of
+  the current Stage 0 steps touch AMS.
 - **Forbidden aliases / drift:** `AMS`, `ams-runtime`, "the runtime" generically. Keep "AMS
   runtime" distinct from the Stage 0 worker runtime.
 - **Current status:** Out of scope for current work; not invoked.
-- **Review status:** PENDING_HELEN_REVIEW (acronym expansion / precise definition not safely
-  known).
+- **Review status:** CONFIRMED for the runtime-boundary / non-execution meaning (established in
+  merged source: lane-ab-preview, product-context-timing-observer, namespace bridge, and
+  migration 016). **Acronym expansion of "AMS" remains PENDING_HELEN_REVIEW** because it is never
+  spelled out in merged source.
+
+## Step2E
+
+- **Meaning:** A post-fix diagnostic/checkpoint label in the Stage 0 auth/credential
+  investigation sequence (referenced alongside Option A as a separately-gated follow-up step).
+  Exact definition is not safely established in current repo docs.
+- **Does NOT authorize:** diagnostic execution, psql, SQL, Stage 0, credential changes, env
+  mutation, or production access; it is a label, not a command.
+- **Forbidden aliases / drift:** `Step 2E`, `step2e`, `2E`, "the post-fix step" as a rename. Use
+  `Step2E`.
+- **Current status:** Out of scope for current work; not run.
+- **Review status:** PENDING_HELEN_REVIEW (exact definition not safely known from current docs).
+
+## Gate 4E / Gate 4F
+
+- **Meaning:** Named process/checkpoint gate labels (`Gate 4E`, `Gate 4F`) referenced in the
+  downstream Lane/scoring context. Their exact definitions and pass/fail criteria are not safely
+  established in current repo docs.
+- **Does NOT authorize:** gate execution, customer output, Lane/scoring, AMS runtime, deploy, or
+  any production action; they are labels, not commands.
+- **Forbidden aliases / drift:** `Gate4E`, `gate-4e`, `4E`, `Gate4F`, `gate-4f`, `4F`. Use
+  `Gate 4E` / `Gate 4F`.
+- **Current status:** Out of scope for current work; not run.
+- **Review status:** PENDING_HELEN_REVIEW (exact definitions not safely known from current docs).
+
+## RB-ROTATE
+
+- **Meaning:** An operator confirmation token/label used in the Route B credential-rotation
+  command-pack context (associated with the Option B rotation+custody-write evidence trail, PR
+  #282). Exact semantics are not safely established in current repo docs.
+- **Does NOT authorize:** credential rotation, password reset, custody write, secret read,
+  SQL/psql, or any production action; it is a label, not a command, and never a stored/printed
+  secret value.
+- **Forbidden aliases / drift:** `RB_ROTATE`, `rb-rotate`, `ROTATE`. Use `RB-ROTATE`.
+- **Current status:** Historical evidence reference (PR #282); not re-run.
+- **Review status:** PENDING_HELEN_REVIEW (exact semantics not safely known from current docs).
+
+## Option A binding/auth preflight
+
+- **Meaning:** The preflight check path for Stage 0 runner binding/auth classification (the
+  live-auth preflight described under `Option A`); it is **not** Stage 0 execution. Exact
+  standalone semantics are not safely established in current repo docs.
+- **Does NOT authorize:** runner source loading, DSN binding, psql/auth rerun, Stage 0, env
+  mutation, remediation, or any production action; a passing/failing preflight is evidence only.
+- **Forbidden aliases / drift:** `Option A preflight`, `binding preflight`, "the preflight"
+  generically. Keep distinct from Stage 0 execution and from `Option A` the route concept.
+- **Current status:** Out of scope for current work; not run. See `Option A` (CONFIRMED) for the
+  route concept this preflight belongs to.
+- **Review status:** PENDING_HELEN_REVIEW (exact standalone semantics not safely known from
+  current docs).
 
 ## constants guardrail
 
@@ -220,9 +289,13 @@ Current status · Review status (CONFIRMED | PENDING_HELEN_REVIEW)**.
 
 ## Pending Helen review (summary)
 
-- **Lane A/B** — precise A-vs-B semantics.
-- **AMS runtime** — acronym expansion / precise definition.
+- **AMS runtime** — acronym expansion of "AMS" only (runtime-boundary meaning now CONFIRMED from
+  merged source).
 - **run-lock** — canonical run-lock path (`TBD` in the production parameter registry).
+- **Step2E** — exact definition.
+- **Gate 4E / Gate 4F** — exact definitions / pass-fail criteria.
+- **RB-ROTATE** — exact semantics.
+- **Option A binding/auth preflight** — exact standalone semantics.
 
 All other terms above are CONFIRMED from current repo docs/evidence. This glossary defines
 concepts only; it is not part of `check:constants` and authorizes no execution.
