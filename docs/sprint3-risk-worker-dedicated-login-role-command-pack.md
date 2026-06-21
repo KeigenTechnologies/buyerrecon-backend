@@ -46,9 +46,12 @@ reads `stage0_decisions` + `session_behavioural_features_v0_2`; writes
 > **PLANNING ONLY — DO NOT RUN.** The shapes below are **illustrative and
 > non-executable** until separately reviewed and GO-gated. This PR does **not**
 > run, stage, or authorize them. No real password, DSN, host, port, or env value
-> appears; `<hidden password>` is a **literal placeholder**, never a value. Any
-> real password must be read via a hidden prompt into approved custody and
-> **never** printed, echoed, committed, or placed on a command line.
+> appears. **The pack deliberately contains no password literal and no password
+> shell variable**: the role is created **without** a password, and the password
+> is set **only** via the interactive psql `\password` meta-command (operator
+> types it at the prompt). A password must **never** be rendered into SQL text,
+> printed, echoed, stored in a shell variable, written to repo/logs, passed via
+> argv, or passed via env.
 
 ```bash
 #!/usr/bin/env bash
@@ -79,21 +82,15 @@ fi
 echo "tracked_working_tree_clean=true"
 echo "candidate_role=buyerrecon_risk_worker"
 
-# ---- Phase 2: hidden password input (NEVER printed/logged/argv) ------------
-# read -s -> no echo; not written to repo/logs; passed to psql via stdin-only
-# mechanism (\password or a here-doc \set from a hidden prompt), NEVER on argv;
-# unset on every exit path.
-PGRW_PASSWORD=""
-read -r -s -p "risk-worker role password (hidden): " PGRW_PASSWORD; echo
-trap 'unset PGRW_PASSWORD' EXIT
-if [ -z "$PGRW_PASSWORD" ]; then
-  echo "STOP_LINE=password_missing"
-  echo "dedicated_risk_worker_role_proof_result=blocked_or_failed"; exit 2
-fi
+# ---- Password handling: NONE in this script -------------------------------
+# This pack sets NO password. There is intentionally no password shell variable,
+# no hidden-prompt-into-variable, and no password literal in any SQL text. The
+# password is set later by the operator via the interactive psql \password
+# meta-command (Phase A, manual step) — never by this automation.
 
 # ---- Private temp dir (0700); stderr captured, NEVER printed ---------------
 TMPDIR_PROOF="$(mktemp -d)"; chmod 700 "$TMPDIR_PROOF"
-trap 'rm -rf "$TMPDIR_PROOF"; unset PGRW_PASSWORD' EXIT
+trap 'rm -rf "$TMPDIR_PROOF"' EXIT
 
 # ---- Phase 3: preflight existing role state (read-only) --------------------
 # If the role already exists, prove its attributes BEFORE any change. Stop if it
@@ -117,34 +114,64 @@ cat "$TMPDIR_PROOF/pre.safe.out"
 # Operator/gate must STOP here if pre_role_exists=true with unexpected attributes
 # (e.g. pre_role_superuser=true) — do not proceed to create/alter an unexpected role.
 
-# ---- Phases 4+5: create role + direct minimal grants (single txn) ----------
-# Password supplied via psql \set from a hidden variable read on stdin (NOT argv,
-# NOT echoed). ON_ERROR_STOP aborts -> rolled back. stderr withheld.
-# (Illustrative; DO NOT RUN here.)
+# ---- Phase A: create role WITHOUT any password literal ---------------------
+# NO PASSWORD clause. The SQL text contains no password and no password variable.
+# CREATE ROLE defaults to NOBYPASSRLS, so NOBYPASSRLS is stated explicitly for
+# clarity rather than via a later ALTER. ON_ERROR_STOP aborts; stderr withheld.
 if ! sudo -u postgres psql -X -q -A -t -v ON_ERROR_STOP=1 -d buyerrecon_production \
-      > "$TMPDIR_PROOF/apply.safe.out" 2> "$TMPDIR_PROOF/apply.err" <<SQL
--- Phase 4: role creation (NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION).
--- BYPASSRLS is NOT granted; CREATE ROLE defaults to NOBYPASSRLS, so no ALTER is
--- needed. The password value is bound from a hidden prompt and never printed.
-CREATE ROLE buyerrecon_risk_worker LOGIN PASSWORD '${PGRW_PASSWORD}'
-  NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
+      > "$TMPDIR_PROOF/createA.safe.out" 2> "$TMPDIR_PROOF/createA.err" <<'SQL'
+CREATE ROLE buyerrecon_risk_worker
+  LOGIN
+  NOSUPERUSER
+  NOCREATEDB
+  NOCREATEROLE
+  NOREPLICATION
+  NOBYPASSRLS;
+SQL
+then
+  echo "candidate_role_created=false"
+  echo "STOP_LINE=role_create_error_suppressed"
+  echo "db_mutation_executed=unknown"
+  echo "dedicated_risk_worker_role_proof_result=blocked_or_failed"; exit 3
+fi
+echo "candidate_role_created=true"
 
--- Phase 5: direct minimal grants (exactly four; no DELETE/TRUNCATE/etc.)
+# ---- Phase A (manual, interactive): set the password via \password ---------
+# OPERATOR-MANUAL STEP — NOT automated, NO password in SQL text, NO variable.
+# The operator opens an interactive admin psql session and runs the \password
+# meta-command; psql prompts for the password (hidden), hashes it client-side,
+# and transmits only the SCRAM-hashed verifier (never the cleartext) in the
+# role-alter it issues. The cleartext is never placed in SQL text by the
+# operator. The operator types the password at the prompt only; it must NOT be
+# pasted into shell text, argv, env, or logs.
+#
+#   sudo -u postgres psql -X -d buyerrecon_production
+#   -- then, inside the interactive psql session:
+#   \password buyerrecon_risk_worker
+#   -- (psql prompts: "Enter new password:" / "Enter it again:")
+#   \q
+#
+# If the interactive \password path is unavailable or not acceptable, STOP and
+# escalate to a separately reviewed password-custody plan. Do NOT fall back to
+# any mechanism that renders the raw password into SQL text, argv, env, a shell
+# variable, repo, or logs.
+
+# ---- Phase B: direct minimal grants (exactly four; no DELETE/TRUNCATE/etc.) -
+if ! sudo -u postgres psql -X -q -A -t -v ON_ERROR_STOP=1 -d buyerrecon_production \
+      > "$TMPDIR_PROOF/grantB.safe.out" 2> "$TMPDIR_PROOF/grantB.err" <<'SQL'
 GRANT SELECT ON TABLE public.stage0_decisions                 TO buyerrecon_risk_worker;
 GRANT SELECT ON TABLE public.session_behavioural_features_v0_2 TO buyerrecon_risk_worker;
 GRANT INSERT ON TABLE public.risk_observations_v0_1            TO buyerrecon_risk_worker;
 GRANT UPDATE ON TABLE public.risk_observations_v0_1            TO buyerrecon_risk_worker;
 SQL
 then
-  echo "candidate_role_created=false"
-  echo "STOP_LINE=role_create_or_grant_error_suppressed"
-  echo "db_mutation_executed=unknown"
+  echo "STOP_LINE=grant_error_suppressed"
+  echo "db_mutation_executed=true"
+  echo "grants_or_role_changes_executed=dedicated_risk_worker_only"
   echo "dedicated_risk_worker_role_proof_result=blocked_or_failed"; exit 3
 fi
-unset PGRW_PASSWORD
-echo "candidate_role_created=true"
 
-# ---- Phase 6: proof (read-only; booleans only) -----------------------------
+# ---- Phase C: proof (read-only; booleans only) -----------------------------
 if ! sudo -u postgres psql -X -q -A -t -v ON_ERROR_STOP=1 -d buyerrecon_production \
       > "$TMPDIR_PROOF/proof.safe.out" 2> "$TMPDIR_PROOF/proof.err" <<'SQL'
 \set role 'buyerrecon_risk_worker'
@@ -220,7 +247,7 @@ echo "raw_accepted_events_payload_printed=false"
 echo "raw_canonical_jsonb_printed=false"
 echo "raw_request_or_session_identifier_printed=false"
 
-# ---- Phase 7: readiness gate (re-derive PASS from proof.safe.out) ----------
+# ---- Phase C (cont.): readiness gate (re-derive PASS from proof.safe.out) --
 # psql exit 0 is NOT sufficient. PASS only if all required conditions hold.
 SAFE="$TMPDIR_PROOF/proof.safe.out"
 need_true()  { grep -qx "$1=true"  "$SAFE" || { echo "dedicated_risk_worker_role_blocked_reason=missing_or_false_${1}"; return 1; }; }
@@ -310,10 +337,12 @@ the result from `proof.safe.out`. Any of the following → `blocked_or_failed`:
 ```text
 STOP_LINE=pr323_merge_not_present
 STOP_LINE=dirty_tracked_tree
-STOP_LINE=password_missing
 STOP_LINE=preflight_error_suppressed
-STOP_LINE=role_create_or_grant_error_suppressed
+STOP_LINE=role_create_error_suppressed
+STOP_LINE=grant_error_suppressed
 STOP_LINE=proof_error_suppressed
+STOP_LINE=interactive_password_path_unavailable
+STOP_LINE=raw_password_would_be_needed_by_automation
 
 candidate_role_exists_after=false|unknown
 candidate_role_can_login_after=false|unknown
@@ -377,7 +406,14 @@ The future command-pack (and this plan) must stop if:
 - any required privilege is `false`/`unknown`;
 - any disallowed privilege is `true`;
 - the role is superuser or has `CREATEDB`/`CREATEROLE`/`REPLICATION`/`BYPASSRLS`;
-- a password would be printed or logged;
+- a password **would be rendered into SQL text**;
+- a password **would be stored in a shell variable, argv, env, repo, logs, or
+  output**;
+- the **interactive password-setting path (`\password`) is unavailable** or not
+  acceptable;
+- a **raw password would be needed by automation** (i.e. any non-interactive
+  password mechanism);
+- a password would otherwise be printed or logged;
 - a DSN/env/host/port value would be needed;
 - a raw PostgreSQL error would be printed; `pg_hba` would be printed;
 - any raw row/payload/identifier would be needed;
@@ -455,10 +491,19 @@ value, port value, real URI, login source, **raw `pg_hba` lines**, raw
 `accepted_events` payload, raw `canonical_jsonb`, real `session_id` /
 `request_id` / user identifier, user-agent, header, body value, customer row
 data, **raw psql output, raw PostgreSQL error text**, or env-var value. The SQL /
-shell shapes are **illustrative and non-executable**; `<hidden password>` is a
-**literal placeholder**, and the future password is read via a hidden prompt into
-a shell variable that is **never printed, logged, placed on a command line, or
-committed**, and is `unset` on exit. The role names (`buyerrecon_risk_worker`,
+shell shapes are **illustrative and non-executable**.
+
+**Password handling (raw-password avoidance).** This command-pack **intentionally
+avoids raw password SQL interpolation**: it contains **no password literal and no
+password shell variable**, and the `CREATE ROLE` shape has **no `PASSWORD`
+clause**. Password setting must use the **interactive psql `\password`
+meta-command** (which hashes the password client-side and never places the
+cleartext in SQL text) **or another separately reviewed custody mechanism that
+likewise does not render the raw password into SQL text**. If interactive
+`\password` is unavailable or not acceptable, **execution must stop** and a
+**separate password-custody plan must be reviewed**. The password must **never**
+be printed, logged, stored, committed, passed in argv, passed in env, stored in a
+shell variable, or embedded into SQL text. The role names (`buyerrecon_risk_worker`,
 `buyerrecon_scoring_worker`, `buyerrecon_app`, `buyerrecon_prod_collector_app`,
 `buyerrecon_stage0_runner`, `postgres`), the table names (`stage0_decisions`,
 `session_behavioural_features_v0_2`, `risk_observations_v0_1`), the database name
