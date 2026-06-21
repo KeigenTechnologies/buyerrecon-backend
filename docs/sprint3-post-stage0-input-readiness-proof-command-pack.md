@@ -213,6 +213,57 @@ fi
 # ---- Emit ONLY the safe stdout labels (never proof.err) -------------------
 cat "$TMPDIR_PROOF/proof.safe.out"
 
+# ---- Readiness gate: re-derive PASS from the captured safe labels ----------
+# psql can exit 0 while proof.safe.out still holds BLOCKING facts (zero counts,
+# missing tables, false/unknown privileges). Emitting PASS solely on psql exit 0
+# would be fail-open. This gate validates proof.safe.out (safe labels only —
+# never proof.err, never raw rows) and only declares PASS if every required
+# condition holds.
+require_label() {
+  local label="$1"
+  if ! grep -qx "$label" "$TMPDIR_PROOF/proof.safe.out"; then
+    echo "post_stage0_input_readiness_blocked_reason=missing_or_false_${label%%=*}"
+    return 1
+  fi
+}
+
+require_nonzero_count() {
+  local key="$1"
+  local value
+  value="$(grep -E "^${key}=[0-9]+$" "$TMPDIR_PROOF/proof.safe.out" | head -n1 | cut -d= -f2)"
+  if [ -z "$value" ] || [ "$value" -lt 1 ]; then
+    echo "post_stage0_input_readiness_blocked_reason=${key}_zero_or_missing"
+    return 1
+  fi
+}
+
+READINESS_OK=true
+
+# exact-match boolean/label requirements
+for required in \
+  "proof_execution_path=local_postgres_admin" \
+  "transaction_read_only=true" \
+  "stage0_decisions_table_present=true" \
+  "session_behavioural_features_table_present=true" \
+  "session_features_table_present=true" \
+  "risk_observations_table_present=true" \
+  "risk_worker_role_present=true" \
+  "stage0_decisions_populated=true" \
+  "risk_worker_stage0_decisions_select_privilege=true" \
+  "risk_worker_session_behavioural_features_select_privilege=true" \
+  "risk_worker_risk_observations_insert_privilege=true" \
+  "risk_worker_risk_observations_update_privilege=true" ; do
+  require_label "$required" || READINESS_OK=false
+done
+
+# nonzero aggregate-count requirements
+for key in \
+  "stage0_decisions_aggregate_count" \
+  "session_behavioural_features_row_count" \
+  "session_features_aggregate_count" ; do
+  require_nonzero_count "$key" || READINESS_OK=false
+done
+
 # ---- Explicit guard labels (static; this pack mutated nothing) ------------
 echo "db_mutation_executed=false"
 echo "stage0_rerun_executed=false"
@@ -227,8 +278,14 @@ echo "gate4f_executed=false"
 echo "grants_or_role_changes_executed=false"
 echo "collector_dsn_used=false"
 
-# ---- Final result label ----------------------------------------------------
-echo "post_stage0_input_readiness_proof_result=pass"
+# ---- Final result label (gated on the readiness validation above) ---------
+# PASS is emitted ONLY when the shell readiness gate confirmed every required
+# condition in proof.safe.out; otherwise blocked_or_failed.
+if [ "$READINESS_OK" = true ]; then
+  echo "post_stage0_input_readiness_proof_result=pass"
+else
+  echo "post_stage0_input_readiness_proof_result=blocked_or_failed"
+fi
 ```
 
 ---
@@ -236,7 +293,17 @@ echo "post_stage0_input_readiness_proof_result=pass"
 ## 3. Expected PASS labels
 
 When the proof passes, the risk-evidence worker becomes a **candidate** (it is
-**not** run by this proof):
+**not** run by this proof).
+
+**The final `post_stage0_input_readiness_proof_result=pass` is emitted only after
+the shell readiness gate validates `proof.safe.out`** — i.e. `psql` exiting `0`
+is **not** sufficient. The gate re-reads the captured safe labels and requires
+every boolean/presence/privilege condition to be `true` **and** every aggregate
+count (`stage0_decisions_aggregate_count`, `session_behavioural_features_row_count`,
+`session_features_aggregate_count`) to be nonzero. If any condition fails, the
+gate emits one or more `post_stage0_input_readiness_blocked_reason=…` labels and
+`post_stage0_input_readiness_proof_result=blocked_or_failed` instead. A full PASS
+therefore looks like:
 
 ```text
 pr319_merge_present=true
@@ -275,7 +342,12 @@ post_stage0_input_readiness_proof_result=pass
 
 ## 4. Blocking labels / stop-lines
 
-Any of these means the risk-evidence worker is **not input-ready** → stop:
+Any of these means the risk-evidence worker is **not input-ready** → stop. The
+pre-`psql` stop-lines `exit` early; the post-`psql` conditions are caught by the
+**shell readiness gate** over `proof.safe.out`, which emits a
+`post_stage0_input_readiness_blocked_reason=…` label for each failed condition
+and forces `post_stage0_input_readiness_proof_result=blocked_or_failed` (never a
+fail-open PASS on `psql` exit `0` alone):
 
 ```text
 STOP_LINE=wrong_base                       pr319_merge_present=false
@@ -292,6 +364,23 @@ risk_worker_stage0_decisions_select_privilege=false|unknown
 risk_worker_session_behavioural_features_select_privilege=false|unknown
 risk_worker_risk_observations_insert_privilege=false|unknown
 risk_worker_risk_observations_update_privilege=false|unknown
+```
+
+The shell readiness gate surfaces each failed post-`psql` condition as a safe
+`blocked_reason` label (key-only, no values), for example:
+
+```text
+post_stage0_input_readiness_blocked_reason=stage0_decisions_aggregate_count_zero_or_missing
+post_stage0_input_readiness_blocked_reason=session_behavioural_features_row_count_zero_or_missing
+post_stage0_input_readiness_blocked_reason=session_features_aggregate_count_zero_or_missing
+post_stage0_input_readiness_blocked_reason=missing_or_false_stage0_decisions_populated
+post_stage0_input_readiness_blocked_reason=missing_or_false_risk_observations_table_present
+post_stage0_input_readiness_blocked_reason=missing_or_false_risk_worker_role_present
+post_stage0_input_readiness_blocked_reason=missing_or_false_risk_worker_stage0_decisions_select_privilege
+post_stage0_input_readiness_blocked_reason=missing_or_false_risk_worker_session_behavioural_features_select_privilege
+post_stage0_input_readiness_blocked_reason=missing_or_false_risk_worker_risk_observations_insert_privilege
+post_stage0_input_readiness_blocked_reason=missing_or_false_risk_worker_risk_observations_update_privilege
+post_stage0_input_readiness_proof_result=blocked_or_failed
 ```
 
 A privilege/presence gap is **not** fixed by this proof — it feeds a **separate**
