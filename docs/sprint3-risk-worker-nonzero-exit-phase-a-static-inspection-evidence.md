@@ -38,7 +38,7 @@ No production command, SQL, psql, DB mutation, worker rerun, runtime classifier,
 - run_err_copied_to_evidence=false
 - diagnostic_classifier_used=false
 - diagnostic_category=unknown_or_unclassified
-- diagnostic_result=classified
+- diagnostic_result=inconclusive
 - worker_rerun_executed=false
 - db_mutation_executed=false
 - sql_or_psql_executed=false
