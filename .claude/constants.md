@@ -42,6 +42,29 @@ candidates pending Helen review in `docs/config-constants-inventory.md`.
 |---|---|---|---|---|
 | `PRODUCTION_DB_ROLE_COLLECTOR_APP` | `buyerrecon_prod_collector_app` | Production collector application DB role (bound to `DATABASE_URL`); NOT the Stage 0 runner | registry files; import in code | No `collector_app`, `prod_collector`, `buyerrecon_app`. Never use as the Stage 0 DSN role. |
 | `STAGE0_RUNNER_ROLE` | `buyerrecon_stage0_runner` | Dedicated least-privilege Stage 0 runner DB role | registry files; import in code | No `stage0_runner`, `runner`, `br_stage0`. Distinct from the collector role. |
+| `RISK_WORKER_ROLE` | `buyerrecon_risk_worker` | Dedicated least-privilege risk-evidence worker DB **LOGIN** role; the intended `RISK_WORKER_ROLE` runtime identity (non-secret name only) | registry files; import in code | No `risk_worker`, `buyerrecon_app`. **Not** `buyerrecon_scoring_worker` (that is a NOLOGIN group). Separate from collector and Stage 0 roles. Registered, not yet guardrail-enforced. See "Production non-secret runtime role candidates" below. |
+
+## Production non-secret runtime role candidates
+
+**Status:** `RISK_WORKER_ROLE_REGISTERED_DOC_ONLY`
+
+- `RISK_WORKER_ROLE=buyerrecon_risk_worker` — the intended production risk-evidence
+  worker LOGIN identity. **This is a non-secret role name only.**
+- **Provenance:** PR #323 planned the dedicated role path; PR #324 merged the
+  command-pack planning; PR #325 recorded the create/grant/proof PASS.
+- **Proof status (from PR #325):** `buyerrecon_risk_worker` exists; can login; is
+  **not** superuser; does **not** have `CREATEDB`, `CREATEROLE`, `REPLICATION`, or
+  `BYPASSRLS`; and holds exactly the four proven minimal privileges:
+  - `SELECT` on `public.stage0_decisions`
+  - `SELECT` on `public.session_behavioural_features_v0_2`
+  - `INSERT` on `public.risk_observations_v0_1`
+  - `UPDATE` on `public.risk_observations_v0_1`
+- **Boundary:** this registration contains and implies **no** password, DSN, host,
+  port, env value, or connection string. It does **not** authorize running the risk
+  worker, executing the PR #321 confirmation diagnostic or the PR #320
+  input-readiness proof, or any Lane/scoring, AMS runtime, customer output, Gate4E,
+  or Gate4F action. Any proof or runtime use of `buyerrecon_risk_worker` still
+  requires its own separate scoped Helen GO.
 
 ## Deployment paths
 
