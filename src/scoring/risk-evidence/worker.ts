@@ -32,6 +32,7 @@ import {
   assertScoringContractsOrThrow,
 } from '../contracts.js';
 import { buyerreconBehaviouralToRiskInputs } from './adapter.js';
+import { isRiskEvidenceRecordOnlyMode } from './record-only.js';
 import {
   CURRENT_BEHAVIOURAL_FEATURE_VERSION,
   OBSERVATION_VERSION_DEFAULT,
@@ -70,18 +71,40 @@ export interface RiskEvidenceWorkerOptions {
    * the value here.
    */
   behavioural_feature_version?: string;
+  /**
+   * Explicit RECORD_ONLY override. When omitted, the worker derives
+   * RECORD_ONLY mode from the environment via `isRiskEvidenceRecordOnlyMode()`
+   * (RISK_EVIDENCE_RECORD_ONLY / RISK_EVIDENCE_CAPTURE_MODE). In RECORD_ONLY
+   * mode the orchestrator computes candidates + safe counts but DOES NOT call
+   * `persistRiskEvidenceCandidates(...)` — no UPSERT occurs. The default
+   * (normal `risk-evidence:run`) is a write-capable run and is unchanged.
+   */
+  record_only?:             boolean;
   /** Repo root for the PR#4 contract loader (defaults to auto-detect). */
   rootDir?:                 string;
 }
 
 export interface RiskEvidenceWorkerResult {
+  candidate_count:             number;
   upserted_rows:               number;
+  record_only:                 boolean;
+  record_only_write_suppressed: boolean;
   bytespider_tagged:           number;
   observation_version:         string;
   scoring_version:             string;
   behavioural_feature_version: string;
   window_start:                Date;
   window_end:                  Date;
+}
+
+/**
+ * A computed, NON-persisted risk observation. RECORD_ONLY mode produces these
+ * (read + compute) and stops; only `persistRiskEvidenceCandidates(...)` turns a
+ * candidate into a `risk_observations_v0_1` UPSERT.
+ */
+export interface RiskEvidenceCandidate {
+  row:               RiskObservationRow;
+  bytespider_tagged: boolean;
 }
 
 /* --------------------------------------------------------------------------
@@ -289,49 +312,31 @@ function toStage0ReadView(j: JoinedRow): Stage0DecisionRowReadView {
   };
 }
 
-export async function runRiskEvidenceWorker(
-  pool: pg.Pool | pg.PoolClient | pg.Client,
-  opts: RiskEvidenceWorkerOptions,
-): Promise<RiskEvidenceWorkerResult> {
-  // §1–§2 — PR#4 startup guards.
-  const contracts = assertScoringContractsOrThrow({ rootDir: opts.rootDir });
-  assertActiveScoringSourceCleanOrThrow({ rootDir: opts.rootDir });
+/* --------------------------------------------------------------------------
+ * §4 — Compute path (pure; NO DB). Builds non-persisted RiskEvidenceCandidate
+ * objects from joined input rows. This is the path RECORD_ONLY mode runs.
+ * It performs no UPSERT and no customer-visible output.
+ * ------------------------------------------------------------------------ */
 
-  const scoring_version     = opts.scoring_version_override ?? contracts.version.scoring_version;
-  const observation_version = opts.observation_version;
-  const stage0_version_filter = opts.stage0_version_filter ?? null;
-  const behavioural_feature_version =
-    opts.behavioural_feature_version ?? CURRENT_BEHAVIOURAL_FEATURE_VERSION;
+export function buildRiskEvidenceCandidates(
+  rows: JoinedRow[],
+  ctx: { observation_version: string; scoring_version: string },
+): RiskEvidenceCandidate[] {
+  const candidates: RiskEvidenceCandidate[] = [];
 
-  // §3 — SELECT eligible joined rows. The behavioural_feature_version
-  // filter is REQUIRED (not nullable) — see SELECT_SQL doc comment for
-  // the Hetzner-staging double-process bug under commit de76950.
-  const select = await pool.query<JoinedRow>(SELECT_SQL, [
-    scoring_version,
-    behavioural_feature_version,
-    stage0_version_filter,
-    opts.workspace_id,
-    opts.site_id,
-    opts.window_start,
-    opts.window_end,
-  ]);
-
-  let upserted = 0;
-  let bytespider_tagged = 0;
-
-  for (const j of select.rows) {
+  for (const j of rows) {
     const sbf    = toSbfRow(j);
     const stage0 = toStage0ReadView(j);
 
-    // §4 — pure adapter call.
+    // pure adapter call.
     const inputs = buyerreconBehaviouralToRiskInputs(sbf, stage0);
 
     const row: RiskObservationRow = {
       workspace_id:         sbf.workspace_id,
       site_id:              sbf.site_id,
       session_id:           sbf.session_id,
-      observation_version,
-      scoring_version,
+      observation_version:  ctx.observation_version,
+      scoring_version:      ctx.scoring_version,
       velocity:             inputs.velocity,
       device_risk_01:       inputs.device_risk_01,
       network_risk_01:      inputs.network_risk_01,
@@ -354,7 +359,30 @@ export async function runRiskEvidenceWorker(
       ],
     };
 
-    // §5 — UPSERT.
+    candidates.push({
+      row,
+      bytespider_tagged: row.tags.includes('BYTESPIDER_PASSTHROUGH'),
+    });
+  }
+
+  return candidates;
+}
+
+/* --------------------------------------------------------------------------
+ * §5 — Persist path. This is the ONLY function permitted to reference
+ * UPSERT_SQL and to UPSERT `risk_observations_v0_1`. RECORD_ONLY mode never
+ * calls this function; the normal `risk-evidence:run` reaches a write ONLY
+ * through here.
+ * ------------------------------------------------------------------------ */
+
+export async function persistRiskEvidenceCandidates(
+  pool: pg.Pool | pg.PoolClient | pg.Client,
+  candidates: RiskEvidenceCandidate[],
+): Promise<number> {
+  let upserted = 0;
+
+  for (const candidate of candidates) {
+    const row = candidate.row;
     await pool.query<{ risk_observation_id: string; behavioural_risk_01: number }>(
       UPSERT_SQL,
       [
@@ -374,11 +402,66 @@ export async function runRiskEvidenceWorker(
       ],
     );
     upserted++;
-    if (row.tags.includes('BYTESPIDER_PASSTHROUGH')) bytespider_tagged++;
+  }
+
+  return upserted;
+}
+
+export async function runRiskEvidenceWorker(
+  pool: pg.Pool | pg.PoolClient | pg.Client,
+  opts: RiskEvidenceWorkerOptions,
+): Promise<RiskEvidenceWorkerResult> {
+  // §1–§2 — PR#4 startup guards.
+  const contracts = assertScoringContractsOrThrow({ rootDir: opts.rootDir });
+  assertActiveScoringSourceCleanOrThrow({ rootDir: opts.rootDir });
+
+  const scoring_version     = opts.scoring_version_override ?? contracts.version.scoring_version;
+  const observation_version = opts.observation_version;
+  const stage0_version_filter = opts.stage0_version_filter ?? null;
+  const behavioural_feature_version =
+    opts.behavioural_feature_version ?? CURRENT_BEHAVIOURAL_FEATURE_VERSION;
+
+  // RECORD_ONLY gate: an explicit option wins; otherwise derive from the
+  // environment (RISK_EVIDENCE_RECORD_ONLY / RISK_EVIDENCE_CAPTURE_MODE).
+  // Normal `risk-evidence:run` sets neither -> record_only=false -> the worker
+  // writes exactly as before.
+  const record_only = opts.record_only ?? isRiskEvidenceRecordOnlyMode();
+
+  // §3 — SELECT eligible joined rows. The behavioural_feature_version
+  // filter is REQUIRED (not nullable) — see SELECT_SQL doc comment for
+  // the Hetzner-staging double-process bug under commit de76950.
+  const select = await pool.query<JoinedRow>(SELECT_SQL, [
+    scoring_version,
+    behavioural_feature_version,
+    stage0_version_filter,
+    opts.workspace_id,
+    opts.site_id,
+    opts.window_start,
+    opts.window_end,
+  ]);
+
+  // §4 — compute candidates (pure; no DB).
+  const candidates = buildRiskEvidenceCandidates(select.rows, {
+    observation_version,
+    scoring_version,
+  });
+  const bytespider_tagged = candidates.filter((c) => c.bytespider_tagged).length;
+
+  // §5 — persist ONLY when not in RECORD_ONLY mode. RECORD_ONLY computes
+  // candidates + safe counts and suppresses ALL writes (no persist call).
+  let upserted_rows = 0;
+  let record_only_write_suppressed = false;
+  if (record_only) {
+    record_only_write_suppressed = true;
+  } else {
+    upserted_rows = await persistRiskEvidenceCandidates(pool, candidates);
   }
 
   return {
-    upserted_rows:               upserted,
+    candidate_count:             candidates.length,
+    upserted_rows,
+    record_only,
+    record_only_write_suppressed,
     bytespider_tagged,
     observation_version,
     scoring_version,
