@@ -19,7 +19,7 @@ trusted_base=373d89e6cc33458b0f3d141047d69d69cfee81b7
 
 ```text
 PR_333_phase_a_static_inspection=diagnostic_result_inconclusive
-PR_334_phase_b_output_pair_locator=runtime_output_pair_count_0
+PR_334_phase_b_classification_blocked=stored_private_run_err_plus_run_safe_out_pair_not_found
 PR_335_record_only_capture_planning=merged
 PR_336_capture_attempt_blocked=record_only_control_not_proven_from_source
 PR_337_command_contract_resolution_plan=merged
@@ -50,11 +50,13 @@ inspection_result=inconclusive
 worker_execution_authorized=false
 ```
 
-## Interpretation
+## Interpretation / Next Gate
 
 This evidence PR does not authorize worker execution.
 
 If `inspection_result=requires_wrapper_or_code_change`, the next safe step is a separate planning PR for a minimal wrapper/flag/code path. If `inspection_result=inconclusive`, no capture GO should proceed.
+
+Because `inspection_result=inconclusive`, the next safe step is not a capture GO. The next safe step is a more precise docs-only repo-source inspection plan/evidence to map the entrypoint import chain and resolve the specific RECORD_ONLY control identifier. If that follow-up review concludes the current evidence already shows proof is insufficient, then the next step is a separate planning PR for a minimal wrapper/flag/code path. No worker execution, classifier execution, fix, or downstream/Gate action is authorized.
 
 ## Boundary Confirmation
 
