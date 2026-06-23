@@ -46,9 +46,18 @@ export {
   type Stage0DecisionRowReadView,
 } from './types.js';
 export {
+  buildRiskEvidenceCandidates,
   parseRiskEvidenceEnvOptions,
+  persistRiskEvidenceCandidates,
   runRiskEvidenceWorker,
+  type RiskEvidenceCandidate,
   type RiskEvidenceEnvOpts,
   type RiskEvidenceWorkerOptions,
   type RiskEvidenceWorkerResult,
 } from './worker.js';
+export {
+  RISK_EVIDENCE_CAPTURE_MODE_ENV,
+  RISK_EVIDENCE_RECORD_ONLY_ENV,
+  isRiskEvidenceRecordOnlyMode,
+  recordOnlyWriteSuppressedLabels,
+} from './record-only.js';
