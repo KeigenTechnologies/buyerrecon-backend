@@ -21,6 +21,7 @@ Gate 4E/Gate 4F action.
 ```text
 sprint2-architecture-contracts-d4cc2bf
 3f5b5b2586da6cfb4ab528d790d1d49a94c66966
+verified_base_tip=3f5b5b2586da6cfb4ab528d790d1d49a94c66966
 ```
 
 ---
