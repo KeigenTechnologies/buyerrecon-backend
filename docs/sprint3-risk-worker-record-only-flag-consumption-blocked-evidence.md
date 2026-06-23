@@ -54,6 +54,9 @@ implementation_attempted=true
 implementation_branch=buyerrecon-risk-worker-record-only-flag-consumption
 partial_pr=344
 partial_pr_closed=true
+partial_pr_merged=false
+partial_pr_further_patch_applied=false
+partial_branch_deleted=false
 stop_line=write_path_pattern_not_patchable_safely
 static_test_failed=true
 worker_consumes_record_only_flag=false
@@ -93,6 +96,8 @@ runtime_cause=unknown_or_unclassified
 - **PR #344 must remain unmerged** — it overclaimed flag consumption that does
   not exist; it has been **closed as blocked / superseded**
   (`partial_pr=344`, `partial_pr_closed=true`).
+- No further patch was applied to PR #344 after it was blocked/closed, and the
+  partial branch was not deleted.
 - **No capture GO may proceed.** `worker_execution_authorized=false`;
   `runtime_cause=unknown_or_unclassified` (unchanged).
 - **No secret / DSN / raw / customer / request / session / IP / header / body /
