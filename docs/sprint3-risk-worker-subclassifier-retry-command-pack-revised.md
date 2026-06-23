@@ -55,7 +55,7 @@ subclassifier_category=none_not_classified
 | --- | --- |
 | §7 skeleton was illustrative placeholder (`classifyInternally` returned a hard-coded `unknown`; no capture located/read; no signals) | §7 here is a **real reviewed classifier**: it internally locates the capture pair, reads `run.err` / `run.safe.out` **inside the process only**, and derives **exactly one** allowlisted category from internal signal rules (§6). |
 | STOP path emitted only `subclassifier_result=blocked` + `blocked_reason` | **Every** STOP / blocked path now emits the **full required safe-label set** (§5) via a single label emitter. |
-| Server preflight insufficient/stale (no `cd`, no fresh fetch, stale origin ref, stale `PR #355` merge check, stale `pr355_merge_not_present`) | Preflight now `cd /opt/buyerrecon-backend`, runs a **fresh `git fetch`** before reading `origin/...`, verifies remote tip + local HEAD against execution-time expected SHAs, verifies the **current base / PR #357 merge** presence, and the stale `pr355_merge_not_present` stop-line is **renamed** to `current_base_merge_not_present`. |
+| Server preflight insufficient/stale (no `cd`, no fresh fetch, stale origin ref, stale `PR #355` merge check, stale PR-#355 merge stop-line) | Preflight now `cd /opt/buyerrecon-backend`, runs a **fresh `git fetch`** before reading `origin/...`, verifies remote tip + local HEAD against execution-time expected SHAs, verifies the **current base / PR #357 merge** presence, and the stale PR-#355 merge stop-line is **renamed** to `current_base_merge_not_present`. |
 | Exact substituted artifact/payload not verifiable | The payload remains a **named placeholder** `<RETRY_CLASSIFIER_B64>`, generated from the §7 reviewed source **only under the later GO**; no payload blob is embedded here. |
 
 Shell-hazard protections from PR #356 are **preserved**: no Markdown fences in the operator
@@ -240,10 +240,14 @@ function classify(text) {
   return 'unknown_runtime_dependency_or_build_failure';
 }
 
+// Design: classifier-internal blocked paths emit the FULL safe-label set and exit 0
+// (a complete, single emission). The shell treats exit 0 as "labels already emitted" and
+// does NOT re-emit. Only a node exit BEFORE emitting labels (a crash) yields a nonzero
+// status, which the shell turns into a single classifier_nonzero_exit emission.
 const dir = resolveCaptureDir(CAPTURE_ID);
 if (dir === null) {
   emitLabels('blocked', 'none_not_classified', true, 1); // private_capture_pair_not_found
-  process.exit(4);
+  process.exit(0);
 }
 
 let text = '';
@@ -255,7 +259,7 @@ try {
 } catch (e) {
   // Do not print the exception text / stack trace.
   emitLabels('blocked', 'none_not_classified', true, 1); // private_capture_pair_read_failed
-  process.exit(5);
+  process.exit(0);
 }
 
 const category = classify(text);
@@ -322,7 +326,7 @@ LOCAL_HEAD=stale
 
 if cd /opt/buyerrecon-backend; then :; else EMIT_BLOCKED wrong_working_directory false 0; fi
 
-git fetch origin sprint2-architecture-contracts-d4cc2bf
+if git fetch origin sprint2-architecture-contracts-d4cc2bf; then :; else EMIT_BLOCKED git_fetch_failed false 0; fi
 
 REMOTE_TIP=$(git rev-parse origin/sprint2-architecture-contracts-d4cc2bf)
 LOCAL_HEAD=$(git rev-parse HEAD)
@@ -333,7 +337,7 @@ if [ "$LOCAL_HEAD" = "$EXPECTED_LOCAL_HEAD" ]; then :; else EMIT_BLOCKED local_h
 if [ "$REMOTE_TIP" = "$EXPECTED_BASE_TIP" ] && git log --oneline -n 80 | grep -q "Merge PR #357"; then :; else EMIT_BLOCKED current_base_merge_not_present false 0; fi
 
 CLASSIFIER_TMP=$(mktemp -t retry_subclassifier_XXXXXX.cjs)
-printf '%s' '<RETRY_CLASSIFIER_B64>' | base64 -d > "$CLASSIFIER_TMP"
+if printf '%s' '<RETRY_CLASSIFIER_B64>' | base64 -d > "$CLASSIFIER_TMP"; then :; else rm -f "$CLASSIFIER_TMP"; EMIT_BLOCKED classifier_payload_decode_failed false 0; fi
 
 FENCE=$(printf '\140\140\140')
 BANG=$(printf '\041')
@@ -347,13 +351,22 @@ rm -f "$CLASSIFIER_TMP"
 if [ "$CLS_STATUS" = "0" ]; then :; else EMIT_BLOCKED classifier_nonzero_exit true 1; fi
 ```
 
-Notes:
+Notes (single, unambiguous emission — exactly once on every path):
+- `git fetch` is **fail-closed**: a fetch failure emits the full §5 blocked set
+  (`git_fetch_failed`, `attempted=false`, `count=0`) and exits **before** any remote-tip read.
+- The base64 decode is **fail-closed**: a decode failure removes the temp file, emits the
+  full §5 blocked set (`classifier_payload_decode_failed`, `attempted=false`, `count=0`),
+  and exits **before** any `node` execution.
 - The classifier is written to a temp file from base64 and removed after the single run
   (`subclassifier_execution_count=1`).
 - `EMIT_BLOCKED` prints the **full** §5 safe-label set on every preflight stop (with
   `attempted=false`, `count=0`) so no blocked path is under-specified.
-- The classifier's own internal blocks (pair not found / read failed) emit the full label
-  set with `attempted=true`, `count=1` and exit non-zero; the shell then does not re-emit.
+- **Classifier ↔ shell contract:** the classifier's own internal blocked paths (pair not
+  found / read failed) emit the **full** label set (`attempted=true`, `count=1`) and **exit
+  0**. The shell treats **exit 0 as "labels already emitted"** and does **not** re-emit.
+  `EMIT_BLOCKED classifier_nonzero_exit true 1` fires **only** when `node` exits **nonzero**,
+  i.e. it crashed **before** emitting labels — guaranteeing the blocked label set is emitted
+  **exactly once** on every path (no duplicate, no gap).
 
 ---
 
@@ -361,10 +374,12 @@ Notes:
 
 ```text
 wrong_working_directory
+git_fetch_failed
 unexpected_remote_base_tip
 tracked_worktree_not_clean
 local_head_not_expected_base
 current_base_merge_not_present
+classifier_payload_decode_failed
 private_capture_pair_not_found_without_path_printing
 private_capture_pair_read_failed_inside_classifier
 classifier_payload_contains_interactive_shell_hazard
@@ -372,7 +387,7 @@ classifier_payload_contains_markdown_fence
 classifier_would_emit_non_allowlisted_category
 ```
 
-The stale `pr355_merge_not_present` stop-line is **removed/renamed** to
+The stale PR-#355 merge stop-line is **removed/renamed** to
 `current_base_merge_not_present` (checks the **PR #357 / current base** merge).
 
 ---
