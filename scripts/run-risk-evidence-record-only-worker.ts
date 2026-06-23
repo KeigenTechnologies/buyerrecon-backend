@@ -1,3 +1,4 @@
+import { assertRiskEvidenceRecordOnlyMode } from '../src/scoring/risk-evidence/record-only';
 /**
  * RECORD_ONLY wrapper for the risk evidence worker.
  *
@@ -32,6 +33,8 @@ if (process.env.RISK_EVIDENCE_RECORD_ONLY !== REQUIRED_RECORD_ONLY_VALUE) {
 if (process.env.RISK_EVIDENCE_CAPTURE_MODE !== 'RECORD_ONLY') {
   failClosed('record_only_capture_mode_not_confirmed');
 }
+
+assertRiskEvidenceRecordOnlyMode();
 
 console.log('record_only_entrypoint_present=true');
 console.log('record_only_mode_required=true');
