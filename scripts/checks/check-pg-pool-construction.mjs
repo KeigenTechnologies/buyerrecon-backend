@@ -52,7 +52,7 @@ const CLI_OBSERVATION_POOL = [
   "scripts/risk-core-bridge-observation-report.ts",
   "scripts/timing-product-context-observation-report.ts",
 ];
-// Class CLI_SINGLE_CLIENT: single-connection CLI scripts using new pg.Client (not a pool).
+// Class CLI_SINGLE_CLIENT: single-connection CLI scripts using a pg Client rather than a pool.
 const CLI_SINGLE_CLIENT = [
   "scripts/collector-observation-report.ts",
   "scripts/extract-behavioural-features.ts",
@@ -66,7 +66,7 @@ const CONSTRUCTION_ALLOWLIST = new Set([
   ...CLI_SINGLE_CLIENT,
 ]);
 
-// ---- Allowed DATABASE_URL connection-READ sites (process.env.DATABASE_URL / env.DATABASE_URL)
+// ---- Allowed DATABASE_URL connection-READ sites (the runtime env read of the DATABASE_URL name)
 // Same families as above plus the src worker modules that parse env into a connection string.
 const ENV_READ_ALLOWLIST = new Set([
   "src/db/client.ts",
@@ -124,7 +124,10 @@ function fail(msg) {
   console.log(`FAIL  ${msg}`);
 }
 
-const SCOPE = ["src", "scripts"];
+// Scan tracked src/ + scripts/, but exclude ONLY this checker file so its own pattern
+// literals / examples cannot self-match. The rest of scripts/ (where real DB construction
+// sites live) is still fully scanned.
+const SCOPE = ["src", "scripts", ":(exclude)scripts/checks/check-pg-pool-construction.mjs"];
 
 // Rule 1 — every construction site must be allowlisted, and none may sit on a forbidden surface.
 const constructionLines = gitGrepLines(CONSTRUCTION_RE, SCOPE);
