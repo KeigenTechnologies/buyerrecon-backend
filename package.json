@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "check:constants": "node scripts/check-no-raw-constants.mjs",
+    "check:static-boundaries": "node scripts/checks/check-static-dependency-boundaries.mjs",
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
