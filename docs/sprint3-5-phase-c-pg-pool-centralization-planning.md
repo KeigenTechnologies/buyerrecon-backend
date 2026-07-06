@@ -75,6 +75,16 @@ appears outside this allowlist, or if any appears in a customer-output/observer 
   reviewed place, reducing inconsistent configuration.
 - **Auditability** — a single construction seam is easier to characterize and to reason about for
   least-privilege posture (which the guardrails already track).
+- **Testability** — a single factory seam can later be exercised by pure/static characterization
+  tests (no DB/network), and call sites become easier to test in isolation than inline `new pg.Pool`
+  blocks scattered across ~15 scripts.
+- **Role / connection custody** — one construction/read seam makes the `DATABASE_URL` connection
+  custody (who opens a connection, with which config) easier to reason about in one reviewed place,
+  rather than tracing ~18 duplicated read sites.
+- **Prepares for future least-privilege role-binding improvements** — centralizing the seam creates
+  the single, reviewed point at which a **future, separately-approved** role-scoped binding could be
+  introduced (e.g. distinct app/worker/runner connection sources). **This is preparation only — no
+  role/DSN binding is proposed or authorized here** (see §3 and §5 invariants).
 
 ---
 
