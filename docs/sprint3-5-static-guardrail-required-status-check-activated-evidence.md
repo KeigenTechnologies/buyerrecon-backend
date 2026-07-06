@@ -2,6 +2,16 @@
 
 **Status:** `SPRINT3_5_STATIC_GUARDRAIL_REQUIRED_STATUS_CHECK_ACTIVATED_EVIDENCE`
 
+> **Correction:** `SPRINT3_5_STATIC_GUARDRAIL_REQUIRED_STATUS_CHECK_EVIDENCE_CORRECTION` —
+> the activation-evidence block below (§3) originally **omitted the required-approvals state**. After
+> the operator finalized the ruleset, the corrected, current state is: **a pull request IS required to
+> merge, but human approval is NOT required (`required_approvals: 0`)**. The `required_approvals: 0`
+> adjustment was a **manual human GitHub-UI ruleset change made outside git**, and PR #374 merged
+> **after** that adjustment. This correction is **docs-only** and performs **no** repo-settings /
+> ruleset / branch-protection change. `require_status_checks_to_pass`, the `static-guardrails` required
+> check, `require_pull_request_before_merging`, `block_force_pushes`, `restrict_deletions`, and the
+> empty `bypass_list` are unchanged.
+
 ## 1. Scope
 
 This is a **docs-only evidence record**. It records that a **human operator manually configured the
@@ -47,14 +57,18 @@ target_branch: sprint2-architecture-contracts-d4cc2bf
 ruleset_enforcement_status: Active
 required_status_check: static-guardrails
 require_status_checks_to_pass: enabled
-require_pull_request_before_merging: enabled (operator-confirmed)
+require_pull_request_before_merging: enabled
+required_approvals: 0
 block_force_pushes: enabled
 restrict_deletions: enabled
-bypass_list: empty (operator-confirmed)
+bypass_list: empty
 ```
 
-Items marked **(operator-confirmed)** are recorded as attested by the operator; they were not
-independently re-verified by this docs-only PR.
+**Pull requests are required, but human approval is not required** (`required_approvals: 0`). These are
+the final operator-attested ruleset values (corrected — see the Correction note at the top); they were
+not independently re-verified via a repo-settings API by this docs-only PR. The `required_approvals: 0`
+value was set by a **manual human GitHub-UI ruleset change outside git**, and **PR #374 merged after
+that adjustment**.
 
 ---
 
@@ -65,6 +79,9 @@ independently re-verified by this docs-only PR.
 - PRs targeting that branch **should require `static-guardrails` to pass before merge**.
 - This **upgrades the guardrail bundle from advisory CI to an enforced merge gate**, subject to
   GitHub ruleset behavior and any operator-configured bypass (recorded as empty above).
+- **A pull request is required to merge, but human approval is not** (`required_approvals: 0`): the
+  merge gate is the green `static-guardrails` status check, not a human review. `REVIEW_REQUIRED` is
+  **not** part of the final ruleset.
 
 ---
 
