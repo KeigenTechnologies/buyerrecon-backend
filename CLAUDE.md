@@ -69,3 +69,116 @@ Before reporting completion:
 - Confirm no secrets or connection components were printed or stored.
 - Confirm no runtime, production, SQL/psql, Stage0, worker/extractor, deploy, Lane/scoring, AMS
   runtime, or customer-output action occurred unless explicitly GO-authorized.
+## PR Test-Layering Delivery Requirements
+
+> Governance addition — `SPRINT3_5_CLAUDE_TEST_LAYERING_DELIVERY_REQUIREMENTS`. Process/config only;
+> authorizes no execution (see **Non-Authorization** at the end of this section).
+
+Every PR must classify its validation scope before implementation.
+
+### Test / Validation Layers
+
+Use these layers consistently:
+
+- **L1 — Pure logic / static / unit validation**
+  - No DB.
+  - No network.
+  - No server.
+  - No production data.
+  - No env/secret reads.
+  - No application boot unless explicitly justified.
+  - No worker/classifier/risk-evidence execution.
+  - No Lane/scoring/AMS/customer-output generation.
+  - No Gate4E/Gate4F.
+  - Should be fully automated through npm scripts or unit tests.
+  - Examples: constants checks, static boundary / import / coupling / topology checks, shape checks,
+    pure helper tests, schema/contract text checks.
+
+- **L2 — Integration / contract validation in non-production only**
+  - May test module interaction, API contract, or DB behavior only against mock, fixture, or test database.
+  - Must not use production credentials, production data, private captures, or live server.
+  - Must be automated once the test environment is defined.
+  - If a PR needs L2 but no safe test environment exists, the PR must document that gap and remain L1/static-only.
+
+- **L3 — Production verification**
+  - Touches production server, production DB, production credentials, real captures, real workers, deploys, Gate actions, or customer-output surfaces.
+  - Requires explicit human authorization / GO.
+  - Must be separately planned.
+  - Must be narrowly scoped.
+  - Must produce safe labels / evidence only.
+  - Must not be hidden inside a normal code PR.
+
+### Required PR Author Output
+
+Every PR report must include:
+
+1. **Layer classification**
+   - L1 only / L1+L2 / L3 required.
+   - If L3 is required, state why L1/L2 cannot prove the claim.
+
+2. **Automated validation commands**
+   - List exact commands run.
+   - Prefer npm scripts.
+   - Example:
+     - `npm run check:constants`
+     - `npm run check:static-boundaries`
+     - `npm run check:pg-pool-construction`
+     - `npm run check:observer-shape`
+     - `npm run check:record-only-gate`
+     - `npm run check:customer-output-boundary`
+     - `npm run check:db-pool-factory-scaffold`
+
+3. **Forbidden-action confirmation**
+   - Confirm whether the PR did or did not:
+     - access server
+     - run production commands
+     - connect to DB/network
+     - read env/secrets
+     - execute workers/classifiers/risk-evidence
+     - read private captures / run.err / run.safe.out
+     - generate Lane/scoring/AMS/customer output
+     - execute Gate4E/Gate4F
+     - deploy
+     - change runtime behavior
+
+4. **Manual validation requirement**
+   - State whether any human/manual validation remains.
+   - If yes, state **why** it remains (why it cannot be automated at L1/L2), and classify it as:
+     - architecture judgment
+     - merge authorization
+     - L3 production authorization
+     - L3 result interpretation
+
+5. **No silent escalation**
+   - A PR that starts as L1/static may not silently perform L2 or L3 actions.
+   - Any DB/network/server/runtime/customer-output/Gate action requires a separate planning PR and explicit GO.
+
+### BuyerRecon Current Baseline
+
+The current safe static guardrail bundle is:
+
+```bash
+npm run check:constants
+npm run check:static-boundaries
+npm run check:pg-pool-construction
+npm run check:observer-shape
+npm run check:record-only-gate
+npm run check:customer-output-boundary
+npm run check:db-pool-factory-scaffold
+```
+
+### CI Enforcement (current)
+
+- `static-guardrails` (GitHub Actions) is now **enforced by the repository ruleset** on PRs targeting
+  `sprint2-architecture-contracts-d4cc2bf`: a pull request is required, `required_approvals: 0`, the
+  `static-guardrails` status check must pass, force pushes are blocked, deletions are restricted, and the
+  bypass list is empty.
+- Passing `static-guardrails` proves the **L1 / static** bundle only. It does **not** prove runtime
+  behavior, DB role binding, worker behavior, customer-output behavior, Gate behavior, L2, or L3.
+
+### Non-Authorization
+
+These requirements are **process/config only**. They do **not** authorize: L3 execution; production access;
+DB/network tests; worker/classifier/risk-evidence execution; customer-output generation; Gate4E/Gate4F;
+deploy; secret/env reads; or refactor. Any such action requires its **own separate planning PR and explicit
+GO**, and must never be silently escalated inside a code PR.
