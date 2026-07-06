@@ -10,6 +10,7 @@
     "check:observer-shape": "node scripts/checks/check-observer-module-shape.mjs",
     "check:record-only-gate": "node scripts/checks/check-record-only-contract-gate.mjs",
     "check:customer-output-boundary": "node scripts/checks/check-customer-output-boundary.mjs",
+    "check:db-pool-factory-scaffold": "node scripts/checks/check-db-pool-factory-scaffold.mjs",
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
