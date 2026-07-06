@@ -1,50 +1,42 @@
 /**
- * Sprint 3.5 — Phase C1: DB pool factory SCAFFOLD (no runtime use).
+ * Sprint 3.5 — Phase C2: shared DB pool factory (minimal, behavior-neutral).
  *
- * Status: SPRINT3_5_PHASE_C1_DB_POOL_FACTORY_SCAFFOLD_NO_RUNTIME_USE
+ * Status: SPRINT3_5_PHASE_C2_LOW_RISK_CLI_OBSERVATION_POOL_FACTORY_MIGRATION
  *
- * This module is an INTENTIONALLY UNWIRED scaffold. In Phase C1 it is:
- *   - not imported by any runtime source, worker, report, observer, or customer-output path,
- *   - not called anywhere,
- *   - env-free: it reads no environment values and references no connection-source env name,
- *   - connection-free: it constructs no database pool/client and runs no SQL,
- *   - import-free: it imports no application modules and no database driver.
+ * Phase C1 introduced this module as an unwired scaffold. Phase C2 wires it to EXACTLY ONE
+ * low-risk CLI observation/report path (scripts/poi-table-observation-report.ts), moving that
+ * script's inline pool construction here WITHOUT changing behavior:
+ *   - same connection input (the caller passes its already-resolved connection string),
+ *   - same pool options (max: 4, idleTimeoutMillis: 5000),
+ *   - no new env variable names, no role-scoped DSN, no hidden fallback, no global singleton.
  *
- * It exists only to establish a single, reviewed seam for a FUTURE, separately-approved
- * centralization (Phase C planning: SPRINT3_5_PHASE_C_PG_POOL_CENTRALIZATION_PLANNING_ONLY).
- * It migrates NO existing construction site and changes NO existing behavior.
+ * Invariants:
+ *   - reads NO environment values (the connection string is passed in by the caller),
+ *   - opens NO connection on import and NO connection on construction (pg.Pool is lazy;
+ *     it connects on first query, exactly as the inline construction did),
+ *   - imports only the pg driver; no application-module import.
  *
- * The `check:db-pool-factory-scaffold` guardrail statically proves the invariants above, and the
- * Phase B `check:pg-pool-construction` guardrail proves the existing construction topology is
- * unchanged.
+ * The check:pg-pool-construction guardrail allowlists this single construction site, and
+ * check:db-pool-factory-scaffold proves this module has exactly one runtime importer (the migrated
+ * CLI) and no worker / risk-evidence / record-only / customer-output importer.
  */
 
-/** Explicit marker: the factory is NOT wired into any runtime path in C1. */
-export const POOL_FACTORY_WIRING_ENABLED = false as const;
+import pg from "pg";
 
-/** Pool classes that a future factory would serve (names only — data, not behavior). */
+/** The factory is now wired to exactly one low-risk CLI observation path (Phase C2). */
+export const POOL_FACTORY_WIRING_ENABLED = true as const;
+
+/** Pool classes a future slice would serve (names only — data, not behavior). */
 export type PoolClassName = "server_app" | "cli_worker" | "cli_single_client";
 
-/** Pure, env-free description of an intended pool configuration (data only; NOT applied). */
+/** Pure, env-free description of an intended pool configuration (data only). */
 export interface IntendedPoolConfig {
   readonly poolClass: PoolClassName;
   readonly max: number;
   readonly idleTimeoutMillis: number;
 }
 
-/**
- * The CURRENT per-class pool configuration values, recorded as inert DATA so a future slice can
- * migrate call sites to identical settings. Nothing here is applied to any real connection in C1.
- */
-export const INTENDED_POOL_CONFIGS: readonly IntendedPoolConfig[] = [
-  { poolClass: "server_app", max: 10, idleTimeoutMillis: 30000 },
-  { poolClass: "cli_worker", max: 4, idleTimeoutMillis: 5000 },
-];
-
-/**
- * Pure config normalizer — no I/O, no env, no connection. Takes an explicit config and returns a
- * normalized copy. Deterministic; safe to unit-test without a database or network.
- */
+/** Pure config normalizer — no I/O, no env, no connection. Deterministic; unit-testable. */
 export function normalizeIntendedPoolConfig(input: IntendedPoolConfig): IntendedPoolConfig {
   return {
     poolClass: input.poolClass,
@@ -54,13 +46,17 @@ export function normalizeIntendedPoolConfig(input: IntendedPoolConfig): Intended
 }
 
 /**
- * Future factory-shape stub — INTENTIONALLY UNWIRED in C1.
+ * Create the CLI observation pool for a read-only observation/report CLI.
  *
- * It constructs nothing, reads no env, and is called nowhere. If it is ever invoked before it is
- * properly wired under a later, separately-approved GO, it FAILS CLOSED so an accidental early call
- * cannot silently open a database connection. The real construction body is deferred to a future,
- * separately-reviewed slice (PR C1+ / C2), never to this scaffold.
+ * Behavior-neutral replacement for the inline construction that previously lived in
+ * scripts/poi-table-observation-report.ts: identical options (max: 4, idleTimeoutMillis: 5000) and
+ * the same `connectionString` the caller already resolved from its own connection-source env read.
+ * No env is read here; no connection is opened until the caller issues a query (pg.Pool is lazy).
  */
-export function createPoolScaffoldUnwired(_config: IntendedPoolConfig): never {
-  throw new Error("db_pool_factory_scaffold_unwired");
+export function createCliObservationPool(connectionString: string): pg.Pool {
+  return new pg.Pool({
+    connectionString,
+    max:               4,
+    idleTimeoutMillis: 5000,
+  });
 }
