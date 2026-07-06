@@ -1,0 +1,62 @@
+# Sprint 3.5 — Static Guardrail Bundle CI (GitHub Actions).
+#
+# Status: SPRINT3_5_STATIC_GUARDRAIL_BUNDLE_GITHUB_ACTIONS
+#
+# ADVISORY UNTIL REQUIRED: this workflow reports red/green but does NOT block merges until it is
+# configured as a REQUIRED status check in branch protection for sprint2-architecture-contracts-d4cc2bf.
+# Required-check activation is a MANUAL repo-settings action, performed OUTSIDE this PR under separate
+# human authorization (it is not part of this or any code PR).
+#
+# Runs ONLY the seven L1 / static guardrail checks (git ls-files + git grep text scans). No secrets,
+# no env secrets, no DB service container, no server access, no app boot, no DB connection, no SQL,
+# no worker/classifier/risk-evidence execution, no Lane/scoring/AMS/customer output, no Gate action,
+# no deploy. The only network use is the normal GitHub checkout + npm dependency install.
+
+name: static-guardrails
+
+on:
+  pull_request:
+    branches:
+      - sprint2-architecture-contracts-d4cc2bf
+
+permissions:
+  contents: read
+
+jobs:
+  static-guardrails:
+    name: static-guardrails
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      # Reproducible install from the committed package-lock.json (no dependency/lockfile changes).
+      - name: Install dependencies
+        run: npm ci
+
+      - name: check:constants
+        run: npm run check:constants
+
+      - name: check:static-boundaries
+        run: npm run check:static-boundaries
+
+      - name: check:pg-pool-construction
+        run: npm run check:pg-pool-construction
+
+      - name: check:observer-shape
+        run: npm run check:observer-shape
+
+      - name: check:record-only-gate
+        run: npm run check:record-only-gate
+
+      - name: check:customer-output-boundary
+        run: npm run check:customer-output-boundary
+
+      - name: check:db-pool-factory-scaffold
+        run: npm run check:db-pool-factory-scaffold
