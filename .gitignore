@@ -12,3 +12,4 @@ _smoke_start.sh
 _smoke_run.cjs
 _smoke_verify.cjs
 _smoke_run.json
+.claude/settings.local.json
