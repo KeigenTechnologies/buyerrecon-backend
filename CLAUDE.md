@@ -165,7 +165,13 @@ npm run check:observer-shape
 npm run check:record-only-gate
 npm run check:customer-output-boundary
 npm run check:db-pool-factory-scaffold
+npm run check:no-runtime-imports
 ```
+
+`check:no-runtime-imports` verifies only the **statically-representable** no-runtime / import drift on
+protected L1 surfaces (checker scripts, workflows, markdown, and the guardrail bundle wiring in
+`package.json`). It does **not** parse PR-body layer declarations and does **not** prove full PR
+declaration truth, L2, L3, runtime behavior, or DB role binding.
 
 ### CI Enforcement (current)
 
