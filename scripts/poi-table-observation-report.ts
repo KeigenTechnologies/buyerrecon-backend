@@ -32,7 +32,7 @@
  */
 
 import 'dotenv/config';
-import pg from 'pg';
+import { createCliObservationPool } from '../src/db/pool-factory.js';
 import { POI_CORE_INPUT_VERSION } from '../src/scoring/poi-core/index.js';
 import {
   parseDatabaseUrl,
@@ -140,11 +140,7 @@ async function main(): Promise<void> {
   const parsed = parseEnv();
   const { host, name } = parseDatabaseUrl(parsed.databaseUrl);
 
-  const pool = new pg.Pool({
-    connectionString:  parsed.databaseUrl,
-    max:               4,
-    idleTimeoutMillis: 5000,
-  });
+  const pool = createCliObservationPool(parsed.databaseUrl);
 
   let report;
   try {

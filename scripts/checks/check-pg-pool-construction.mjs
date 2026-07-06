@@ -40,18 +40,22 @@ const CLI_WORKER_POOL = [
   "scripts/run-poi-sequence-worker.ts",
 ];
 // Class CLI_OBSERVATION_POOL: per-process read-only observation/report CLI pools.
+// NOTE: scripts/poi-table-observation-report.ts was migrated to the shared factory in Phase C2
+// (its inline construction moved to SHARED_POOL_FACTORY); it no longer constructs a pool here.
 const CLI_OBSERVATION_POOL = [
   "scripts/evidence-review-snapshot-report.ts",
   "scripts/lane-ab-preview-report.ts",
   "scripts/poi-core-input-observation-report.ts",
   "scripts/poi-sequence-observation-report.ts",
   "scripts/poi-sequence-table-observation-report.ts",
-  "scripts/poi-table-observation-report.ts",
   "scripts/product-context-timing-observation-report.ts",
   "scripts/product-features-bridge-candidate-observation-report.ts",
   "scripts/risk-core-bridge-observation-report.ts",
   "scripts/timing-product-context-observation-report.ts",
 ];
+// Class SHARED_POOL_FACTORY: the Phase C2 shared factory. Phase C2 moved exactly one CLI
+// observation construction site here from scripts/poi-table-observation-report.ts (behavior-neutral).
+const SHARED_POOL_FACTORY = ["src/db/pool-factory.ts"];
 // Class CLI_SINGLE_CLIENT: single-connection CLI scripts using a pg Client rather than a pool.
 const CLI_SINGLE_CLIENT = [
   "scripts/collector-observation-report.ts",
@@ -63,6 +67,7 @@ const CONSTRUCTION_ALLOWLIST = new Set([
   ...SERVER_APP_POOL,
   ...CLI_WORKER_POOL,
   ...CLI_OBSERVATION_POOL,
+  ...SHARED_POOL_FACTORY,
   ...CLI_SINGLE_CLIENT,
 ]);
 
@@ -76,6 +81,9 @@ const ENV_READ_ALLOWLIST = new Set([
   "src/scoring/stage0/run-stage0-worker.ts",
   ...CLI_WORKER_POOL,
   ...CLI_OBSERVATION_POOL,
+  // Phase C2: the migrated CLI still reads env.DATABASE_URL (to pass the connection string to the
+  // shared factory); only its pool CONSTRUCTION moved. The factory itself reads no env.
+  "scripts/poi-table-observation-report.ts",
   ...CLI_SINGLE_CLIENT,
 ]);
 
@@ -98,8 +106,9 @@ const DEFERRED = [
     "is not statically representable in code (grants live in migrations/016; governance-verified).",
   "Role-scoped DSNs (APP_DSN/ADMIN_DSN/RUNNER_DSN/STAGE0_RUNNER_DSN) — not present in code today; " +
     "no construction site to characterize until a separately-gated change introduces them.",
-  "pg.Pool centralization/dedup — a Phase C mechanical refactor, out of scope for this " +
-    "characterize-only PR; this guardrail intentionally does not require it.",
+  "pg.Pool centralization/dedup — Phase C is in progress: Phase C2 migrated ONE CLI observation " +
+    "site (poi-table) to SHARED_POOL_FACTORY. Remaining sites are migrated only under their own " +
+    "separately-approved slices (worker paths remain frozen until Phase C3 approval).",
 ];
 
 function gitGrepLines(pattern, pathspecs) {
@@ -159,6 +168,7 @@ const CLASSES = [
   ["SERVER_APP_POOL", SERVER_APP_POOL],
   ["CLI_WORKER_POOL", CLI_WORKER_POOL],
   ["CLI_OBSERVATION_POOL", CLI_OBSERVATION_POOL],
+  ["SHARED_POOL_FACTORY", SHARED_POOL_FACTORY],
   ["CLI_SINGLE_CLIENT", CLI_SINGLE_CLIENT],
 ];
 for (const [name, files] of CLASSES) {
