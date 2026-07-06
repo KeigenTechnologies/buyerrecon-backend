@@ -138,11 +138,12 @@ Every PR report must include:
      - read private captures / run.err / run.safe.out
      - generate Lane/scoring/AMS/customer output
      - execute Gate4E/Gate4F
+     - deploy
      - change runtime behavior
 
 4. **Manual validation requirement**
    - State whether any human/manual validation remains.
-   - If yes, classify it as:
+   - If yes, state **why** it remains (why it cannot be automated at L1/L2), and classify it as:
      - architecture judgment
      - merge authorization
      - L3 production authorization
