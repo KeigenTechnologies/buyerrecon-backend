@@ -6,6 +6,7 @@
   "scripts": {
     "check:constants": "node scripts/check-no-raw-constants.mjs",
     "check:static-boundaries": "node scripts/checks/check-static-dependency-boundaries.mjs",
+    "check:pg-pool-construction": "node scripts/checks/check-pg-pool-construction.mjs",
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
