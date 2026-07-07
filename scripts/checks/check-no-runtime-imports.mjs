@@ -32,8 +32,6 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
-// Binaries a checker must never spawn/exec (runtime / production-touching).
-const EXEC_BINARY_BLOCKLIST = ["psql", "ssh", "scp", "rsync", "curl", "wget"];
 // The static-guardrails BUNDLE scripts — these must each be a `node scripts/...` command
 // (kept static; no tsx/worker/runtime). Non-bundle scripts (e.g. worker-run scripts) are NOT
 // audited here — they legitimately exist and their runtime-ness is not cleanly representable.
@@ -82,10 +80,17 @@ if (checkerFiles.length === 0 && workflowFiles.length === 0) {
 
 // ---- Rule set for CHECKER scripts (scripts/checks/*.mjs) --------------------------------------
 // I1: only `node:` module specifiers may be imported/required (no runtime pkg, no app module).
-// E1: must not spawn/exec a runtime/production binary.
-const EXEC_RE = new RegExp(
-  "(spawnSync|execSync|execFile|exec)\\s*\\(\\s*[\"'](" + EXEC_BINARY_BLOCKLIST.join("|") + ")\\b",
-);
+// E1 (fail-closed): the ONLY permitted child_process execution is a READ-ONLY `git` invocation via
+// the binary form (spawn / spawnSync / execFile / execFileSync with "git" as argv[0], e.g.
+// execFileSync("git", ["ls-files", ...]) / spawnSync("git", ["grep", ...])). Any other binary
+// (npm / npx / node / bash / sh / zsh / python / ts-node / tsx / psql / ssh / scp / rsync / curl /
+// wget / docker / systemctl / kubectl / ...) is BLOCKED, and shell-string execution (exec / execSync)
+// is BLOCKED entirely — a checker must not run a shell command line.
+const ALLOWED_EXEC_BINARY = "git";
+// argv[0]-form execution: capture the binary in the first quoted argument.
+const BINARY_EXEC_RE = /\b(spawnSync|spawn|execFileSync|execFile)\s*\(\s*["']([^"']+)["']/g;
+// shell-string-form execution (first arg is a shell command line, not a binary): never allowed here.
+const SHELL_EXEC_RE = /\b(execSync|exec)\s*\(/;
 for (const file of checkerFiles) {
   const src = read(file);
   const lines = src.split("\n");
@@ -104,15 +109,29 @@ for (const file of checkerFiles) {
       fail(`${file}:${i + 1} checker require()s a non-node module "${rq[1]}" (only node: built-ins allowed)`);
     }
   }
-  if (EXEC_RE.test(src)) {
-    fail(`${file} spawns/execs a runtime/production binary (${EXEC_BINARY_BLOCKLIST.join("/")})`);
+  // E1a: every argv[0]-form execution must target only the read-only git binary.
+  for (const m of src.matchAll(BINARY_EXEC_RE)) {
+    const binary = m[2];
+    if (binary !== ALLOWED_EXEC_BINARY) {
+      fail(`${file} runs child_process ${m[1]}(argv0="${binary}") — only read-only ${ALLOWED_EXEC_BINARY} execution is allowed in checkers`);
+    }
+  }
+  // E1b: no shell-string execution in checkers.
+  if (SHELL_EXEC_RE.test(src)) {
+    fail(`${file} uses shell-string execution (exec / execSync) — not permitted in checkers (only binary-form ${ALLOWED_EXEC_BINARY})`);
   }
 }
 
 // ---- Rule set for WORKFLOWS (.github/workflows/*.yml) -----------------------------------------
-// W1: no service containers. W2: no secrets. W3: no DATABASE_URL env. W4: run: commands must be
-// single-line and in the safe allowlist (npm ci | npm run check:*).
-const RUN_ALLOW_RE = /^(npm ci|npm run check:[A-Za-z0-9:_-]+)$/;
+// W1: no service containers. W2: no secrets. W3: no DATABASE_URL env. W4 (fail-closed): each `run:`
+// step must be single-line and one of the EXACT approved commands — `npm ci` or `npm run <exact
+// static-guardrail bundle script>`. Arbitrary `npm run check:*` is NOT accepted; a run step is only
+// allowed if it invokes a command in this exact allowlist. `uses:` action steps are not `run:`
+// commands and are not checked here.
+const WORKFLOW_RUN_ALLOWLIST = new Set([
+  "npm ci",
+  ...BUNDLE_SCRIPTS.map((s) => `npm run ${s}`),
+]);
 for (const file of workflowFiles) {
   const lines = read(file).split("\n");
   for (let i = 0; i < lines.length; i++) {
@@ -124,9 +143,9 @@ for (const file of workflowFiles) {
     if (rm) {
       const cmd = rm[1].trim();
       if (cmd === "|" || cmd === ">" || cmd === "|-" || cmd === ">-" || cmd === "") {
-        fail(`${file}:${i + 1} workflow uses a multi-line run block — keep run steps single-line + allowlisted`);
-      } else if (RUN_ALLOW_RE.test(cmd) === false) {
-        fail(`${file}:${i + 1} workflow run command not in the safe allowlist (npm ci | npm run check:*): "${cmd}"`);
+        fail(`${file}:${i + 1} workflow uses a multi-line run block — keep run steps single-line + exactly allowlisted`);
+      } else if (WORKFLOW_RUN_ALLOWLIST.has(cmd) === false) {
+        fail(`${file}:${i + 1} workflow run command not in the EXACT approved allowlist (npm ci + the static-guardrail bundle only): "${cmd}"`);
       }
     }
   }
@@ -162,8 +181,8 @@ try {
 
 // ---- Characterization report -----------------------------------------------------------------
 console.log("no-runtime-imports — protected L1/static surfaces scanned:");
-console.log(`  checker scripts (scripts/checks/*.mjs): ${checkerFiles.length}  (node: imports only; no runtime-binary exec)`);
-console.log(`  workflows (.github/workflows/*):        ${workflowFiles.length}  (no services/secrets/DATABASE_URL; run: allowlist)`);
+console.log(`  checker scripts (scripts/checks/*.mjs): ${checkerFiles.length}  (node: imports only; child_process limited to read-only git; no shell-string exec)`);
+console.log(`  workflows (.github/workflows/*):        ${workflowFiles.length}  (no services/secrets/DATABASE_URL; run: EXACT allowlist = npm ci + bundle)`);
 console.log(`  markdown (docs/** + CLAUDE.md):         ${markdownFiles.length}  (enumerated for visibility; secret/DSN enforcement DEFERRED)`);
 console.log(`  package.json bundle scripts:            ${BUNDLE_SCRIPTS.length}  (each a static \`node scripts/...\` command)`);
 console.log("");
@@ -186,7 +205,7 @@ if (violations > 0) {
   process.exit(1);
 }
 console.log(
-  "check:no-runtime-imports OK — protected L1/static surfaces carry no runtime-risk imports/exec (checkers), no service/secret/DATABASE_URL and only allowlisted run: commands (workflows), and the guardrail bundle stays static (package.json). Markdown secret/DSN enforcement is deferred.",
+  "check:no-runtime-imports OK — checkers import only node: built-ins and run child_process only as read-only git (no shell-string exec); workflows carry no service/secret/DATABASE_URL and only the EXACT approved run: allowlist (npm ci + the static-guardrail bundle); the guardrail bundle stays static (package.json). Markdown secret/DSN enforcement is deferred.",
 );
 console.log(
   "Scope: static text scan (git ls-files + node:fs) of tracked L1 surfaces; no DB/network/runtime; no module execution; no API; no secrets.",
