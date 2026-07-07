@@ -80,17 +80,47 @@ if (checkerFiles.length === 0 && workflowFiles.length === 0) {
 
 // ---- Rule set for CHECKER scripts (scripts/checks/*.mjs) --------------------------------------
 // I1: only `node:` module specifiers may be imported/required (no runtime pkg, no app module).
-// E1 (fail-closed): the ONLY permitted child_process execution is a READ-ONLY `git` invocation via
-// the binary form (spawn / spawnSync / execFile / execFileSync with "git" as argv[0], e.g.
-// execFileSync("git", ["ls-files", ...]) / spawnSync("git", ["grep", ...])). Any other binary
-// (npm / npx / node / bash / sh / zsh / python / ts-node / tsx / psql / ssh / scp / rsync / curl /
-// wget / docker / systemctl / kubectl / ...) is BLOCKED, and shell-string execution (exec / execSync)
-// is BLOCKED entirely — a checker must not run a shell command line.
+// E1 (fail-closed): the ONLY permitted child_process execution is a READ-ONLY `git` invocation using
+// an approved read-only SUBCOMMAND. Every other binary (npm / npx / node / bash / sh / zsh / python /
+// python3 / ts-node / tsx / psql / ssh / scp / rsync / curl / wget / docker / docker-compose /
+// systemctl / service / kubectl / ...) is BLOCKED; shell-string execution (exec / execSync) is BLOCKED
+// entirely; and mutating/network git subcommands (push/fetch/pull/checkout/commit/worktree/...) are
+// BLOCKED. A git invocation whose subcommand cannot be statically determined fails closed.
 const ALLOWED_EXEC_BINARY = "git";
+// Read-only git subcommands the checker family may invoke (defined via split so no `[...]` literal
+// containing a subcommand token exists in this file — avoids self-flagging by E1d).
+const SAFE_GIT_SUBCOMMANDS = new Set(
+  "ls-files grep diff status rev-parse merge-base show cat-file log".split(" "),
+);
+// Mutating / network git subcommands that must never appear in a checker.
+const UNSAFE_GIT_SUBCOMMANDS = new Set(
+  ("push fetch pull checkout switch reset merge rebase commit add restore clean rm mv tag branch " +
+    "remote clone submodule worktree sparse-checkout lfs").split(" "),
+);
 // argv[0]-form execution: capture the binary in the first quoted argument.
 const BINARY_EXEC_RE = /\b(spawnSync|spawn|execFileSync|execFile)\s*\(\s*["']([^"']+)["']/g;
 // shell-string-form execution (first arg is a shell command line, not a binary): never allowed here.
 const SHELL_EXEC_RE = /\b(execSync|exec)\s*\(/;
+// A DIRECT git spawn with an inline args array: capture the array body.
+const GIT_ARRAY_EXEC_RE = /\b(?:spawnSync|spawn|execFileSync|execFile)\s*\(\s*["']git["']\s*,\s*\[([^\]]*)\]/g;
+// Any array literal (used to validate subcommands at git-helper CALL SITES, e.g. git([...])).
+const ARRAY_LITERAL_RE = /\[([^\]]*)\]/g;
+
+// First non-option token of an args-array body: {kind:"string",value} | {kind:"dynamic"} | {kind:"none"}.
+function firstArgToken(body) {
+  for (const raw of body.split(",")) {
+    const t = raw.trim();
+    if (t === "") continue;
+    const sm = t.match(/^["']([^"']*)["']$/);
+    if (sm) {
+      if (sm[1].startsWith("-")) continue; // an option flag — skip to the subcommand
+      return { kind: "string", value: sm[1] };
+    }
+    return { kind: "dynamic" }; // first meaningful element is not a plain string literal
+  }
+  return { kind: "none" };
+}
+
 for (const file of checkerFiles) {
   const src = read(file);
   const lines = src.split("\n");
@@ -109,16 +139,37 @@ for (const file of checkerFiles) {
       fail(`${file}:${i + 1} checker require()s a non-node module "${rq[1]}" (only node: built-ins allowed)`);
     }
   }
-  // E1a: every argv[0]-form execution must target only the read-only git binary.
+  // E1a: only the read-only `git` binary may be used in argv[0]-form execution.
   for (const m of src.matchAll(BINARY_EXEC_RE)) {
-    const binary = m[2];
-    if (binary !== ALLOWED_EXEC_BINARY) {
-      fail(`${file} runs child_process ${m[1]}(argv0="${binary}") — only read-only ${ALLOWED_EXEC_BINARY} execution is allowed in checkers`);
+    if (m[2] !== ALLOWED_EXEC_BINARY) {
+      fail(`${file} runs child_process ${m[1]}(argv0="${m[2]}") — only read-only ${ALLOWED_EXEC_BINARY} execution is allowed in checkers`);
     }
   }
-  // E1b: no shell-string execution in checkers.
+  // E1b: no shell-string execution.
   if (SHELL_EXEC_RE.test(src)) {
-    fail(`${file} uses shell-string execution (exec / execSync) — not permitted in checkers (only binary-form ${ALLOWED_EXEC_BINARY})`);
+    fail(`${file} uses shell-string execution (exec / execSync) — not permitted in checkers`);
+  }
+  // E1c: a DIRECT git spawn with an inline args array must use an approved read-only subcommand; a
+  //      dynamic/undeterminable first element fails closed.
+  for (const m of src.matchAll(GIT_ARRAY_EXEC_RE)) {
+    const tok = firstArgToken(m[1]);
+    if (tok.kind === "string") {
+      if (SAFE_GIT_SUBCOMMANDS.has(tok.value) === false) {
+        fail(`${file} runs a direct git "${tok.value}" — not an approved read-only git subcommand`);
+      }
+    } else {
+      fail(`${file} runs a direct git spawn with a dynamic/undeterminable subcommand — failing closed`);
+    }
+  }
+  // E1d: validate subcommands at git-helper CALL SITES (and anywhere): any array literal whose first
+  //      non-option token is a MUTATING/NETWORK git subcommand is flagged. Arrays whose first token is
+  //      a safe subcommand or not a git subcommand at all (paths, config lists) are left alone — this
+  //      keeps the established spawnSync("git", args) helper pattern (validated via its call sites) safe.
+  for (const m of src.matchAll(ARRAY_LITERAL_RE)) {
+    const tok = firstArgToken(m[1]);
+    if (tok.kind === "string" && UNSAFE_GIT_SUBCOMMANDS.has(tok.value)) {
+      fail(`${file} passes a mutating/network git subcommand "${tok.value}" to a git invocation`);
+    }
   }
 }
 
@@ -181,7 +232,7 @@ try {
 
 // ---- Characterization report -----------------------------------------------------------------
 console.log("no-runtime-imports — protected L1/static surfaces scanned:");
-console.log(`  checker scripts (scripts/checks/*.mjs): ${checkerFiles.length}  (node: imports only; child_process limited to read-only git; no shell-string exec)`);
+console.log(`  checker scripts (scripts/checks/*.mjs): ${checkerFiles.length}  (node: imports only; child_process limited to read-only git SUBCOMMANDS; no shell-string exec)`);
 console.log(`  workflows (.github/workflows/*):        ${workflowFiles.length}  (no services/secrets/DATABASE_URL; run: EXACT allowlist = npm ci + bundle)`);
 console.log(`  markdown (docs/** + CLAUDE.md):         ${markdownFiles.length}  (enumerated for visibility; secret/DSN enforcement DEFERRED)`);
 console.log(`  package.json bundle scripts:            ${BUNDLE_SCRIPTS.length}  (each a static \`node scripts/...\` command)`);
@@ -205,7 +256,7 @@ if (violations > 0) {
   process.exit(1);
 }
 console.log(
-  "check:no-runtime-imports OK — checkers import only node: built-ins and run child_process only as read-only git (no shell-string exec); workflows carry no service/secret/DATABASE_URL and only the EXACT approved run: allowlist (npm ci + the static-guardrail bundle); the guardrail bundle stays static (package.json). Markdown secret/DSN enforcement is deferred.",
+  "check:no-runtime-imports OK — checkers import only node: built-ins and run child_process only as approved read-only git subcommands (no other binary, no shell-string exec, no mutating/network git); workflows carry no service/secret/DATABASE_URL and only the EXACT approved run: allowlist (npm ci + the static-guardrail bundle); the guardrail bundle stays static (package.json). Markdown secret/DSN enforcement is deferred.",
 );
 console.log(
   "Scope: static text scan (git ls-files + node:fs) of tracked L1 surfaces; no DB/network/runtime; no module execution; no API; no secrets.",
