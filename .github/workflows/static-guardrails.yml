@@ -60,3 +60,6 @@ jobs:
 
       - name: check:db-pool-factory-scaffold
         run: npm run check:db-pool-factory-scaffold
+
+      - name: check:no-runtime-imports
+        run: npm run check:no-runtime-imports
