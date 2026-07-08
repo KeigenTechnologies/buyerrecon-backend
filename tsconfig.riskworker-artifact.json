@@ -1,0 +1,16 @@
+{
+  "//": "Option B Slice 1 scaffold — compiled build-artifact config for the risk-worker.",
+  "//scope": "Build-scaffold only. NOT run in the registering PR; wires no runtime path. Emits into the gitignored dist/ (COMPILED_ARTIFACT_ROOT=dist/riskworker). The base tsconfig.json excludes scripts/, so this scaffold is required to make risk-worker compiled-artifact creation possible without changing the server build.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "dist/riskworker",
+    "noEmit": false
+  },
+  "include": [
+    "src",
+    "scripts/run-risk-evidence-worker.ts",
+    "scripts/run-risk-evidence-record-only-worker.ts"
+  ],
+  "exclude": ["node_modules", "dist", "tests"]
+}

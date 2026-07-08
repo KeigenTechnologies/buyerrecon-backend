@@ -89,6 +89,40 @@ candidates pending Helen review in `docs/config-constants-inventory.md`.
 | `STAGE0_ROUTE_C` | `RouteC` | Stage 0 correction/diagnostic Route C label | registry files; import in code | No `route_c`, `route-c`, `C`. Registered, not yet guardrail-enforced. |
 | `STAGE0_LABEL` | `Stage0` | Canonical Stage 0 label | registry files; import in code | No `stage 0`, `stage-0`, `S0`, `stage_zero`. |
 
+## Risk-worker Option B — compiled build artifact / compiled runtime path
+
+| Symbol | Value | Meaning | Allowed files | Forbidden aliases / notes |
+|---|---|---|---|---|
+| `COMPILED_ARTIFACT_ROOT` | `dist/riskworker` | Root directory for Option B compiled risk-worker artifacts; a dedicated subtree under the already-gitignored `dist/` (kept separate from the server build output `dist/server.js`) | registry files; import in code | Non-secret path. No `build/`, `out/`, or bare `dist/` for the risk-worker artifact subtree. Registered, not yet guardrail-enforced. |
+| `RISKWORKER_COMPILED_ENTRYPOINT` | `dist/riskworker/scripts/run-risk-evidence-worker.js` | Compiled (`node`-runnable) form of the risk-evidence worker entrypoint | registry files; import in code | Non-secret path. The compiled runtime path is **not active** in Slice 1; the `tsx scripts/run-risk-evidence-worker.ts` script is unchanged. Registered, not yet guardrail-enforced. |
+| `RECORD_ONLY_COMPILED_ENTRYPOINT` | `dist/riskworker/scripts/run-risk-evidence-record-only-worker.js` | Compiled form of the distinct record-only worker wrapper entrypoint | registry files; import in code | Non-secret path. Not active in Slice 1; the `tsx` record-only script is unchanged. Registered, not yet guardrail-enforced. |
+| `RISKWORKER_BUILD_COMMAND` | `build:riskworker-artifact` | Name of the static, build-only npm script that compiles the risk-worker entrypoints into `COMPILED_ARTIFACT_ROOT` (via `tsconfig.riskworker-artifact.json`) | registry files; import in code | Build-only (`tsc`); runs no worker/DB/network/customer-output. Additive; does not change existing scripts. Registered, not yet guardrail-enforced. |
+| `RISKWORKER_COMPILED_RUN_COMMAND` | `run:riskworker-compiled` | **RESERVED** name for the future compiled-runtime run script (runtime switch) | registry files; import in code | **Not wired in Slice 1** (no package script). Wiring the compiled runtime path is a later slice under its own review/GO. Registered, not yet guardrail-enforced. |
+| `RISKWORKER_RUNTIME_PREFLIGHT_PROOF_COMMAND` | `proof:riskworker-runtime-preflight` | **RESERVED** name for the future runtime preflight proof command | registry files; import in code | **Not wired in Slice 1.** L3 preflight belongs to a later slice under a separate exact GO. Registered, not yet guardrail-enforced. |
+| `RISKWORKER_CI_BUILD_PARITY_PROOF_COMMAND` | `proof:riskworker-ci-build-parity` | **RESERVED** name for the future CI/build parity proof command (Option C) | registry files; import in code | **Not wired in Slice 1.** Parity proof belongs to a later slice. Registered, not yet guardrail-enforced. |
+
+## Risk-worker Option B compiled-artifact scaffold status
+
+**Status:** `RISKWORKER_OPTION_B_SLICE1_CONSTANTS_AND_BUILD_SCAFFOLD_L1_STATIC`
+
+- **Provenance:** Preferred architecture chosen in PR #389 (Option B: compiled build artifact /
+  compiled runtime path); design in PR #390; constants registry planning in PR #391; Slice 1
+  planning in PR #392. This entry is the **first-use registration** for Slice 1.
+- **Scope of Slice 1 (this registration):** register the constants above **and** introduce a minimal
+  static build scaffold (`tsconfig.riskworker-artifact.json` + the `build:riskworker-artifact` npm
+  script) that makes compiled-artifact creation *possible*. It is **build-scaffold only**.
+- **Boundary:** Slice 1 changes **no runtime behavior**. The compiled runtime path is **not active**;
+  the existing `tsx` risk-worker run scripts (`risk-evidence:run`, `risk-evidence:record-only`) are
+  unchanged; the `RUN` / `PREFLIGHT` / `PARITY` command names are reserved-not-wired. The scaffold
+  build is **not run** in the registering PR and emits only into the gitignored `dist/`; no generated
+  artifact is committed. Slice 1 executes no worker/classifier/risk-evidence/record-only, performs no
+  DB/network/SQL, generates no customer output, moves no Gate D/E, and claims no root cause. The
+  sealed risk-worker state (`runtime_dependency_or_build_failure`; `blocked_none_not_classified`;
+  `build_surface` / `unknown_build_surface` / `structurally_expected_dual_signal`;
+  `runtime_cause_inference=false`) is unchanged and **unblocks no Gate**. Wiring the compiled runtime
+  path (RUN), the preflight proof, and the parity proof are later slices under their own review and,
+  where server/runtime is touched, a separate exact GO.
+
 ## URLs / endpoints
 
 | Symbol | Value | Meaning | Allowed files | Forbidden aliases / notes |
