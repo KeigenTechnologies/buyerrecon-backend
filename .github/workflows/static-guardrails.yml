@@ -63,3 +63,6 @@ jobs:
 
       - name: check:no-runtime-imports
         run: npm run check:no-runtime-imports
+
+      - name: proof:riskworker-ci-build-parity
+        run: npm run proof:riskworker-ci-build-parity
