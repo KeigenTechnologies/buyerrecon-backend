@@ -1,21 +1,25 @@
 #!/usr/bin/env node
-// BuyerRecon — Sprint 3 Risk-Worker Option B Slice 2: CI / build-parity proof (STATIC).
+// BuyerRecon — Sprint 3 Risk-Worker Option B: CI / build-parity + run-wiring proof (STATIC).
 //
 // Status: SPRINT3_RISKWORKER_OPTION_B_SLICE2_CI_BUILD_PARITY_PROOF_L1_STATIC_IMPLEMENTATION
+//         + SPRINT3_RISKWORKER_OPTION_B_SLICE3_COMPILED_RUN_COMMAND_L1_STATIC_WIRING
 //
-// This is the Slice 2 CI / build-parity PROOF. It statically proves that the Option B
+// This is the Option B build-parity + run-wiring PROOF. It statically proves that the Option B
 // compiled-artifact BUILD PATH registered (as scaffold only) in PR #393 is present, referenced,
 // and internally consistent — i.e. that CI and the local toolchain agree on the build wiring — so a
-// later runtime-switch slice does not discover build drift for the first time at runtime. It proves
-// BUILD-PATH PARITY ONLY.
+// later runtime-switch slice does not discover build drift for the first time at runtime. As of
+// Slice 3 it additionally proves that the compiled run command `run:riskworker-compiled` is WIRED
+// (to the registered compiled entrypoint) but DORMANT — the compiled runtime path is not active, the
+// existing tsx scripts remain the unchanged active path, and no build has been run and no artifact
+// committed. It proves BUILD-PATH PARITY + STATIC RUN-WIRING ONLY.
 //
 // It is wired to the reserved (PR #393) parity-proof command name:
 //     proof:riskworker-ci-build-parity        (RISKWORKER_CI_BUILD_PARITY_PROOF_COMMAND)
 //
 // HARD BOUNDARY — this proof is a PURE STATIC PROOF. It does NOT:
 //   * invoke the build (never runs `tsc` / `build:riskworker-artifact`);
-//   * activate the compiled runtime path;
-//   * wire / run `run:riskworker-compiled` or the runtime preflight;
+//   * activate the compiled runtime path (wiring the run command name is NOT activation);
+//   * run `run:riskworker-compiled` or wire / run the runtime preflight;
 //   * run the worker / classifier / risk-evidence / record-only;
 //   * touch DB / network / SQL / secrets / env values / server / production;
 //   * generate or commit any build artifact;
@@ -60,10 +64,15 @@ const COMPILED_ENTRYPOINTS = [
   "dist/riskworker/scripts/run-risk-evidence-record-only-worker.js", // RECORD_ONLY_COMPILED_ENTRYPOINT
 ];
 
-// RESERVED-not-wired command names that MUST STAY UNWIRED in Slice 2 (compiled runtime path stays
-// dormant; runtime preflight stays unwired).
+// Slice 3 compiled run command: WIRED to the registered compiled entrypoint, but DORMANT (the
+// compiled runtime path is NOT active — see the dormancy proof below). The command value must be
+// `node <RISKWORKER_COMPILED_ENTRYPOINT>` so the run wiring stays in parity with the registered path.
+const COMPILED_RUN_SCRIPT_NAME = "run:riskworker-compiled";      // RISKWORKER_COMPILED_RUN_COMMAND
+const COMPILED_RUN_SCRIPT_CMD = "node dist/riskworker/scripts/run-risk-evidence-worker.js"; // node <entrypoint[0]>
+
+// Still-reserved command names that MUST STAY UNWIRED until their own slice (runtime preflight is a
+// later slice under its own review / GO).
 const RESERVED_UNWIRED_SCRIPTS = [
-  "run:riskworker-compiled",             // RISKWORKER_COMPILED_RUN_COMMAND
   "proof:riskworker-runtime-preflight",  // RISKWORKER_RUNTIME_PREFLIGHT_PROOF_COMMAND
 ];
 
@@ -116,8 +125,11 @@ const signals = {
   compiled_entrypoint_registered: false,
   build_path_internally_consistent: false,
   ci_local_build_parity_ok: false,
-  compiled_runtime_path_active: false, // must stay false in Slice 2
-  run_command_wired: false,            // must stay false in Slice 2
+  compiled_runtime_path_active: false,   // must stay false (dormant) — wiring is NOT activation
+  compiled_run_command_wired: false,     // Slice 3: run:riskworker-compiled is WIRED (expected true)
+  compiled_run_command_dormant: false,   // wired + tsx unchanged + no artifact => dormant
+  run_command_wired: false,              // mirror of compiled_run_command_wired (kept for continuity)
+  runtime_preflight_wired: false,        // must stay false until its own slice
   tsx_scripts_unchanged: false,
   registered_constants_referenced_count: 0,
   build_wiring_checks_passed_count: 0,
@@ -168,7 +180,9 @@ if (tracked(BUILD_TSCONFIG) === false) {
 
 // ---- Rule B: build command registered + wired to the scaffold config (build-command parity) ------
 // Rule C: the parity-proof command is self-wired as a static `node scripts/...` command.
-// Rule D: reserved run/preflight stay UNWIRED; existing tsx scripts stay UNCHANGED (runtime frozen).
+// Rule D: Slice 3 run wiring — `run:riskworker-compiled` is WIRED to the registered compiled
+//         entrypoint but DORMANT; runtime preflight stays UNWIRED; existing tsx scripts stay
+//         UNCHANGED (the tsx path remains the active runtime; wiring is not activation).
 let pkg = null;
 try {
   pkg = JSON.parse(read("package.json"));
@@ -188,11 +202,20 @@ if (pkg) {
     fail(`package.json "${PARITY_PROOF_SCRIPT_NAME}" must be exactly "${PARITY_PROOF_SCRIPT_CMD}" (this proof, static node command); found ${JSON.stringify(scripts[PARITY_PROOF_SCRIPT_NAME])}`);
   }
 
-  // Reserved runtime commands must NOT be wired in Slice 2.
+  // Slice 3: the compiled run command must be WIRED to the registered compiled entrypoint
+  // (`node <RISKWORKER_COMPILED_ENTRYPOINT>`) — present but dormant.
+  if (scripts[COMPILED_RUN_SCRIPT_NAME] !== COMPILED_RUN_SCRIPT_CMD) {
+    fail(`package.json "${COMPILED_RUN_SCRIPT_NAME}" must be wired to the registered compiled entrypoint as "${COMPILED_RUN_SCRIPT_CMD}"; found ${JSON.stringify(scripts[COMPILED_RUN_SCRIPT_NAME])}`);
+  } else {
+    signals.compiled_run_command_wired = true;
+    signals.run_command_wired = true;
+  }
+
+  // Still-reserved commands must NOT be wired yet (runtime preflight is a later slice).
   for (const name of RESERVED_UNWIRED_SCRIPTS) {
     if (typeof scripts[name] === "string") {
-      fail(`package.json wires reserved runtime command "${name}" — Slice 2 must leave it UNWIRED (no runtime switch)`);
-      if (name === "run:riskworker-compiled") signals.run_command_wired = true;
+      fail(`package.json wires still-reserved command "${name}" — it must stay UNWIRED until its own slice`);
+      if (name === "proof:riskworker-runtime-preflight") signals.runtime_preflight_wired = true;
     }
   }
 
@@ -262,6 +285,13 @@ signals.build_path_internally_consistent =
   committedArtifacts.length === 0;
 signals.ci_local_build_parity_ok = signals.build_path_internally_consistent && violations === 0;
 
+// Slice 3 dormancy: the compiled run command is wired, yet the compiled runtime path is NOT active —
+// proven by the tsx scripts remaining the unchanged active path and no artifact being committed.
+signals.compiled_run_command_dormant =
+  signals.compiled_run_command_wired &&
+  signals.tsx_scripts_unchanged &&
+  committedArtifacts.length === 0;
+
 signals.build_wiring_checks_failed_count = violations;
 // Count of the discrete boolean parity/consistency assertions that held.
 const BOOL_ASSERTIONS = [
@@ -273,31 +303,36 @@ const BOOL_ASSERTIONS = [
   signals.build_wiring_present,
   signals.build_path_internally_consistent,
   committedArtifacts.length === 0,
-  signals.run_command_wired === false,
+  signals.compiled_run_command_wired,          // Slice 3: expected WIRED
+  signals.compiled_run_command_dormant,        // wired but dormant
+  signals.runtime_preflight_wired === false,   // preflight stays unwired
   signals.compiled_runtime_path_active === false,
 ];
 signals.build_wiring_checks_passed_count = BOOL_ASSERTIONS.filter(Boolean).length;
 
 // ---- Characterization report (SAFE aggregates only) ----------------------------------------------
-console.log("risk-worker Option B — CI / build-parity proof (STATIC; no build executed):");
+console.log("risk-worker Option B — CI / build-parity + run-wiring proof (STATIC; no build/run executed):");
 console.log(`  build scaffold config (${BUILD_TSCONFIG}): ${tsconfigOk ? "present+shaped" : "DRIFT"}`);
 console.log(`  build command "${BUILD_SCRIPT_NAME}" wired to scaffold: ${signals.build_command_registered ? "yes" : "NO"}`);
 console.log(`  registered constants referenced: ${signals.registered_constants_referenced_count}/${REGISTERED_CONSTANTS.length}`);
 console.log(`  compiled-entrypoint parity (source.ts → artifact/source.js): ${entrypointParityOk ? "consistent" : "DRIFT"}`);
 console.log(`  build path internally consistent: ${signals.build_path_internally_consistent}`);
 console.log(`  ci/local build-path parity ok: ${signals.ci_local_build_parity_ok}`);
-console.log(`  compiled runtime path active: ${signals.compiled_runtime_path_active}  (must stay false in Slice 2)`);
-console.log(`  run command wired: ${signals.run_command_wired}  (must stay false in Slice 2)`);
-console.log(`  tsx risk-worker scripts unchanged: ${signals.tsx_scripts_unchanged}`);
+console.log(`  compiled run command wired: ${signals.compiled_run_command_wired}  (Slice 3: wired to registered compiled entrypoint)`);
+console.log(`  compiled run command dormant: ${signals.compiled_run_command_dormant}  (wired but not the active runtime)`);
+console.log(`  runtime preflight wired: ${signals.runtime_preflight_wired}  (must stay false — not this slice)`);
+console.log(`  compiled runtime path active: ${signals.compiled_runtime_path_active}  (must stay false — wiring is not activation)`);
+console.log(`  tsx risk-worker scripts unchanged: ${signals.tsx_scripts_unchanged}  (tsx remains the active/rollback path)`);
 console.log(`  committed artifacts under ${ARTIFACT_ROOT}: ${committedArtifacts.length}  (must be 0)`);
 console.log(`  build-wiring checks passed/failed: ${signals.build_wiring_checks_passed_count}/${signals.build_wiring_checks_failed_count}`);
 console.log(`  labels: build_surface=${signals.build_surface_label}; disambiguation=${signals.disambiguation_label}; runtime_cause_inference=${signals.runtime_cause_inference}`);
 console.log("");
-console.log("Scope: static text/config scan (git ls-files + node:fs) of tracked build wiring; the build");
-console.log("is NEVER invoked. No worker/classifier/risk-evidence/record-only execution; no DB/network/SQL;");
-console.log("no secrets/env; no artifact generated or committed; no customer output; no Gate D/E movement.");
-console.log("Proves BUILD-PATH PARITY ONLY — not runtime behavior, DB role binding, worker/customer-output,");
-console.log("or Gate behavior. Asserts NO root cause and unblocks NO Gate.");
+console.log("Scope: static text/config scan (git ls-files + node:fs) of tracked build + run wiring; the");
+console.log("build is NEVER invoked and run:riskworker-compiled is NEVER executed. No worker/classifier/");
+console.log("risk-evidence/record-only execution; no DB/network/SQL; no secrets/env; no artifact generated");
+console.log("or committed; no customer output; no Gate D/E movement. Proves BUILD-PATH PARITY + STATIC");
+console.log("RUN-WIRING ONLY — not runtime behavior, DB role binding, worker/customer-output, or Gate");
+console.log("behavior. Asserts NO root cause and unblocks NO Gate.");
 console.log("");
 
 if (violations > 0) {
@@ -306,6 +341,6 @@ if (violations > 0) {
 }
 console.log(
   "proof:riskworker-ci-build-parity OK — Option B build wiring present, referenced, and internally consistent " +
-    "(scaffold config, build command, registered constants, entrypoint parity); compiled runtime path dormant, " +
-    "reserved run/preflight unwired, tsx scripts unchanged, no artifact committed.",
+    "(scaffold config, build command, registered constants, entrypoint parity); compiled run command WIRED but " +
+    "DORMANT, runtime preflight unwired, compiled runtime path not active, tsx scripts unchanged, no artifact committed.",
 );

@@ -16,6 +16,7 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "build:riskworker-artifact": "tsc -p tsconfig.riskworker-artifact.json",
+    "run:riskworker-compiled": "node dist/riskworker/scripts/run-risk-evidence-worker.js",
     "start": "node dist/server.js",
     "test": "vitest run",
     "test:db:v1": "vitest run --config vitest.db.config.ts",
