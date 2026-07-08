@@ -12,6 +12,7 @@
     "check:customer-output-boundary": "node scripts/checks/check-customer-output-boundary.mjs",
     "check:db-pool-factory-scaffold": "node scripts/checks/check-db-pool-factory-scaffold.mjs",
     "check:no-runtime-imports": "node scripts/checks/check-no-runtime-imports.mjs",
+    "proof:riskworker-ci-build-parity": "node scripts/checks/check-riskworker-build-parity.mjs",
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "build:riskworker-artifact": "tsc -p tsconfig.riskworker-artifact.json",

@@ -44,6 +44,7 @@ const BUNDLE_SCRIPTS = [
   "check:customer-output-boundary",
   "check:db-pool-factory-scaffold",
   "check:no-runtime-imports",
+  "proof:riskworker-ci-build-parity",
 ];
 
 function git(args) {
