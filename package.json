@@ -14,6 +14,7 @@
     "check:no-runtime-imports": "node scripts/checks/check-no-runtime-imports.mjs",
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
+    "build:riskworker-artifact": "tsc -p tsconfig.riskworker-artifact.json",
     "start": "node dist/server.js",
     "test": "vitest run",
     "test:db:v1": "vitest run --config vitest.db.config.ts",
