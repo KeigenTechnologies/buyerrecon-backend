@@ -18,8 +18,9 @@
 - base_contains_pr421_head: true (7ff92904dd06800a92d1f9faabc5c377fd0402f7)
 - base_contains_pr422_head: true (c5be099a53f89cff528fa6173e45df217f66cea8)
 - base_contains_pr423_head: true (cda3e16eade3a588406b9b0877bb7208d0ed9808)
-- package_script_key_present: true (check:riskworker-build-parity)
-- package_script_value_exact_match: true (node scripts/checks/check-riskworker-build-parity.mjs)
+- package_script_key_present: true
+- package_script_value_exact_match: true
+- script_values_printed: false
 - parity_proof_evidence_valid: true
 - dependency_reassessment_evidence_valid: true
 - prior_gate_d_e_status: blocked_where_dependent
