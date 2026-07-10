@@ -4,6 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "check:riskworker-build-parity": "node scripts/checks/check-riskworker-build-parity.mjs",
     "check:constants": "node scripts/check-no-raw-constants.mjs",
     "check:static-boundaries": "node scripts/checks/check-static-dependency-boundaries.mjs",
     "check:pg-pool-construction": "node scripts/checks/check-pg-pool-construction.mjs",
