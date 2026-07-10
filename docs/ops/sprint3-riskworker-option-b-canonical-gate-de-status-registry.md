@@ -34,6 +34,7 @@ command-pack (see Provenance). Creating this registry does **not** move Gate D/E
 - gate_d_e_moved: true
 - gate_d_e_marked_passed: false
 - gate_d_e_evaluated: false
+- gate_d_e_evaluated_again: false
 - reclassification_enacted: false
 - customer_output_generated: false
 - downstream_execution: false
@@ -54,6 +55,23 @@ execution. Any further Gate D/E step still requires a separate exact scoped GO.
 - movement_requires_separate_exact_scoped_go: true
 - registry_creation_moved_gate_d_e: false
 - registry_movement_marked_gate_d_e_passed: false
+
+## Future-GO Boundary
+
+Reaching `eligible_for_next_scoped_gate_d_e_step` authorizes no further action.
+Each of the following requires its own **separate exact scoped GO** and must not
+be silently escalated from this status:
+
+- next_gate_d_e_step_requires_separate_exact_scoped_go: true
+- downstream_action_requires_separate_exact_scoped_go: true
+- runtime_action_requires_separate_exact_scoped_go: true
+- worker_action_requires_separate_exact_scoped_go: true
+- customer_output_action_requires_separate_exact_scoped_go: true
+
+Specifically, any next Gate D/E step, any downstream action, any runtime action,
+any worker action, and any customer-output action each require a separate exact
+scoped GO. This status does not mark Gate D/E passed and authorizes no runtime,
+worker, downstream, or customer-output execution.
 
 ## Evidence Chain (commit references only)
 
