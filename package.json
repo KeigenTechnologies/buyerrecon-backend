@@ -42,7 +42,8 @@
     "replay:export": "tsx scripts/replay-export.ts",
     "metrics": "tsx scripts/truth-metrics.ts",
     "purge": "tsx scripts/purge-captures.ts",
-    "risk-evidence:record-only": "tsx scripts/run-risk-evidence-record-only-worker.ts"
+    "risk-evidence:record-only": "tsx scripts/run-risk-evidence-record-only-worker.ts",
+    "check:riskworker-build-parity": "node scripts/checks/check-riskworker-build-parity.mjs"
   },
   "keywords": [],
   "author": "",
