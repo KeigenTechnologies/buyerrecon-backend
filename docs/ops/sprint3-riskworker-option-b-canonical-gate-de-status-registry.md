@@ -27,24 +27,33 @@ command-pack (see Provenance). Creating this registry does **not** move Gate D/E
 
 ## Current Status (status-of-record)
 
-- current_gate_d_e_status: blocked_where_dependent
-- gate_d_status: blocked_where_dependent
-- gate_e_status: blocked_where_dependent
-- gate_d_e_status: blocked_where_dependent
-- gate_d_e_moved: false
+- current_gate_d_e_status: eligible_for_next_scoped_gate_d_e_step
+- gate_d_status: eligible_for_next_scoped_gate_d_e_step
+- gate_e_status: eligible_for_next_scoped_gate_d_e_step
+- gate_d_e_status: eligible_for_next_scoped_gate_d_e_step
+- gate_d_e_moved: true
 - gate_d_e_marked_passed: false
 - gate_d_e_evaluated: false
 - reclassification_enacted: false
 - customer_output_generated: false
 - downstream_execution: false
 
+The status `eligible_for_next_scoped_gate_d_e_step` means only that the prior
+package-script / build-parity dependency blocker has been satisfied and a
+canonical status-of-record now exists. It does **not** mean Gate D/E passed, does
+**not** authorize customer output, and does **not** authorize downstream
+execution. Any further Gate D/E step still requires a separate exact scoped GO.
+
 ## Movement Ledger
 
-- last_movement_go_ref: none
-- last_movement_commit_ref: none
-- last_status_change_ref: none
+- last_movement_go_ref: scoped_canonical_registry_gate_d_e_movement_go
+- last_movement_from_status: blocked_where_dependent
+- last_movement_to_status: eligible_for_next_scoped_gate_d_e_step
+- last_movement_commit_ref: recorded_in_this_registry_movement_pr
+- last_status_change_ref: recorded_in_this_registry_movement_pr
 - movement_requires_separate_exact_scoped_go: true
 - registry_creation_moved_gate_d_e: false
+- registry_movement_marked_gate_d_e_passed: false
 
 ## Evidence Chain (commit references only)
 
@@ -80,7 +89,7 @@ command-pack (see Provenance). Creating this registry does **not** move Gate D/E
 - remediation_attempted: false
 - downstream_execution: false
 - gate_d_e_evaluated: false
-- gate_d_e_moved: false
+- gate_d_e_moved: true
 - gate_d_e_marked_passed: false
 - historical_point_in_time_docs_modified: false
 - changed_file_count: 1
@@ -105,11 +114,13 @@ command-pack (see Provenance). Creating this registry does **not** move Gate D/E
 
 ## Authorization Boundary
 
-Creation/designation of this registry **does not** move Gate D/E, **does not**
-mark Gate D/E passed, and **does not** reclassify Gate D/E status. The current
-status-of-record is and remains `blocked_where_dependent`.
+Under the scoped canonical-registry Gate D/E movement GO, the current
+status-of-record has moved from `blocked_where_dependent` to
+`eligible_for_next_scoped_gate_d_e_step`. This movement **does not** mark Gate
+D/E passed, **does not** reclassify Gate D/E as passed, **does not** authorize
+customer output, and **does not** authorize downstream execution.
 
-Any future Gate D/E movement requires a **separate exact scoped GO**. When such a
-GO is issued and executed, the movement is recorded by mutating this registry's
-Current Status and Movement Ledger sections only; the historical point-in-time
-documents remain unchanged.
+Any further Gate D/E movement or step requires a **separate exact scoped GO**.
+Each such movement is recorded by mutating this registry's Current Status and
+Movement Ledger sections only; the historical point-in-time documents remain
+unchanged.
