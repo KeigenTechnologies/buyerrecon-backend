@@ -27,51 +27,65 @@ command-pack (see Provenance). Creating this registry does **not** move Gate D/E
 
 ## Current Status (status-of-record)
 
-- current_gate_d_e_status: eligible_for_next_scoped_gate_d_e_step
-- gate_d_status: eligible_for_next_scoped_gate_d_e_step
-- gate_e_status: eligible_for_next_scoped_gate_d_e_step
-- gate_d_e_status: eligible_for_next_scoped_gate_d_e_step
+- current_gate_d_e_status: eligible_for_scoped_gate_d_e_status_movement_go
+- gate_d_status: eligible_for_scoped_gate_d_e_status_movement_go
+- gate_e_status: eligible_for_scoped_gate_d_e_status_movement_go
+- gate_d_e_status: eligible_for_scoped_gate_d_e_status_movement_go
 - gate_d_e_moved: true
 - gate_d_e_marked_passed: false
-- gate_d_e_evaluated: false
-- gate_d_e_evaluated_again: false
+- gate_d_e_evaluated: true
+- gate_d_e_evaluated_again: true
 - reclassification_enacted: false
+- pass_marking_enacted: false
+- pass_marking_supported_by_evaluation: false
 - customer_output_generated: false
 - downstream_execution: false
+- runtime_run: false
+- worker_run: false
+- parity_rerun: false
 
-The status `eligible_for_next_scoped_gate_d_e_step` means only that the prior
-package-script / build-parity dependency blocker has been satisfied and a
-canonical status-of-record now exists. It does **not** mean Gate D/E passed, does
-**not** authorize customer output, and does **not** authorize downstream
-execution. Any further Gate D/E step still requires a separate exact scoped GO.
+The status `eligible_for_scoped_gate_d_e_status_movement_go` means only that the
+completed read-only Gate D/E evaluation records Gate D/E as governance-eligible
+for a future scoped status-movement GO. It is a governance-state label only. It
+does **not** mean Gate D/E passed, does **not** mean substantive Gate D/E pass
+verification completed, and does **not** authorize runtime, worker, parity,
+downstream, or customer-output execution. Any next Gate D/E step or substantive
+pass verification still requires a separate exact scoped GO.
 
 ## Movement Ledger
 
-- last_movement_go_ref: scoped_canonical_registry_gate_d_e_movement_go
-- last_movement_from_status: blocked_where_dependent
-- last_movement_to_status: eligible_for_next_scoped_gate_d_e_step
+- last_movement_go_ref: scoped_evaluated_gate_d_e_status_movement_go
+- last_movement_from_status: eligible_for_next_scoped_gate_d_e_step
+- last_movement_to_status: eligible_for_scoped_gate_d_e_status_movement_go
+- last_movement_basis: read_only_next_gate_d_e_evaluation_completed
+- last_movement_basis_evidence_ref: ef74ead6e335e3fd37e2d93827a64338fb4f0919
 - last_movement_commit_ref: recorded_in_this_registry_movement_pr
 - last_status_change_ref: recorded_in_this_registry_movement_pr
 - movement_requires_separate_exact_scoped_go: true
 - registry_creation_moved_gate_d_e: false
 - registry_movement_marked_gate_d_e_passed: false
+- prior_movement_from_status: blocked_where_dependent
+- prior_movement_to_status: eligible_for_next_scoped_gate_d_e_step
 
 ## Future-GO Boundary
 
-Reaching `eligible_for_next_scoped_gate_d_e_step` authorizes no further action.
-Each of the following requires its own **separate exact scoped GO** and must not
-be silently escalated from this status:
+Reaching `eligible_for_scoped_gate_d_e_status_movement_go` authorizes no further
+action. Each of the following requires its own **separate exact scoped GO** and
+must not be silently escalated from this status:
 
 - next_gate_d_e_step_requires_separate_exact_scoped_go: true
+- substantive_gate_d_e_pass_verification_requires_separate_exact_scoped_go: true
 - downstream_action_requires_separate_exact_scoped_go: true
 - runtime_action_requires_separate_exact_scoped_go: true
 - worker_action_requires_separate_exact_scoped_go: true
+- parity_action_requires_separate_exact_scoped_go: true
 - customer_output_action_requires_separate_exact_scoped_go: true
 
-Specifically, any next Gate D/E step, any downstream action, any runtime action,
-any worker action, and any customer-output action each require a separate exact
+Specifically, any next Gate D/E step, any substantive Gate D/E pass
+verification, any downstream action, any runtime action, any worker action, any
+parity action, and any customer-output action each require a separate exact
 scoped GO. This status does not mark Gate D/E passed and authorizes no runtime,
-worker, downstream, or customer-output execution.
+worker, parity, downstream, or customer-output execution.
 
 ## Evidence Chain (commit references only)
 
@@ -106,9 +120,11 @@ worker, downstream, or customer-output execution.
 - customer_output_generated: false
 - remediation_attempted: false
 - downstream_execution: false
-- gate_d_e_evaluated: false
+- gate_d_e_evaluated: true
+- gate_d_e_evaluated_again: true
 - gate_d_e_moved: true
 - gate_d_e_marked_passed: false
+- pass_marking_enacted: false
 - historical_point_in_time_docs_modified: false
 - changed_file_count: 1
 
@@ -132,13 +148,16 @@ worker, downstream, or customer-output execution.
 
 ## Authorization Boundary
 
-Under the scoped canonical-registry Gate D/E movement GO, the current
-status-of-record has moved from `blocked_where_dependent` to
-`eligible_for_next_scoped_gate_d_e_step`. This movement **does not** mark Gate
-D/E passed, **does not** reclassify Gate D/E as passed, **does not** authorize
-customer output, and **does not** authorize downstream execution.
+Under the scoped evaluated Gate D/E status-movement GO, and on the basis of the
+completed read-only next Gate D/E evaluation (evidence
+`ef74ead6e335e3fd37e2d93827a64338fb4f0919`), the current status-of-record has
+moved from `eligible_for_next_scoped_gate_d_e_step` to
+`eligible_for_scoped_gate_d_e_status_movement_go`. This movement **does not**
+mark Gate D/E passed, **does not** reclassify Gate D/E as passed, **does not**
+complete substantive Gate D/E pass verification, and **does not** authorize
+runtime, worker, parity, downstream, or customer-output execution.
 
-Any further Gate D/E movement or step requires a **separate exact scoped GO**.
-Each such movement is recorded by mutating this registry's Current Status and
-Movement Ledger sections only; the historical point-in-time documents remain
-unchanged.
+Any further Gate D/E movement or step, and any substantive Gate D/E pass
+verification, requires a **separate exact scoped GO**. Each such movement is
+recorded by mutating this registry's Current Status and Movement Ledger sections
+only; the historical point-in-time documents remain unchanged.
