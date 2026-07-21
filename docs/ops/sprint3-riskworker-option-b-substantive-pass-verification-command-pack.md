@@ -96,8 +96,11 @@ attempt must confirm all of the following:
 4. The canonical registry is the single mutable Gate D/E status-of-record.
 5. Canonical status is exactly:
    `eligible_for_scoped_gate_d_e_status_movement_go`
-   (or the exact successor status named by the future GO, if governance moves
-   the status between now and then — in which case the GO must name it).
+   Only exact equality is accepted. No successor-status exception exists under
+   this command-pack. A successor, later, equivalent, derived, advanced, or
+   otherwise different status is not covered by this command-pack and requires
+   a new planning/reassessment authorization surface; encountering any
+   different status causes the future verification attempt to fail closed.
 6. Merged evaluation evidence and merged post-movement verification evidence
    exist in the base branch.
 7. Gate D/E are not already marked passed.
@@ -121,10 +124,14 @@ no mutation — if any of the following holds:
 - Base SHA does not match the GO-named SHA.
 - The canonical registry is missing.
 - The canonical registry is ambiguous or duplicated.
-- Canonical status is not exactly
-  `eligible_for_scoped_gate_d_e_status_movement_go`
-  (or the exact successor status named by the GO).
+- The canonical status is anything other than exactly
+  `eligible_for_scoped_gate_d_e_status_movement_go`, including any successor,
+  later, equivalent, derived, advanced, or otherwise different status.
 - Gate D/E are already marked passed.
+- Pass-marking has already been enacted. This is an independent fail-closed
+  condition: pass-marking enactment and displayed Gate D/E pass state are
+  separately checked governance facts, and neither check substitutes for the
+  other.
 - The GO does not name exactly the authorized proof components.
 - The GO uses broad or ambiguous execution language.
 - A command needed for a proof component is not explicitly named or covered by
@@ -132,6 +139,16 @@ no mutation — if any of the following holds:
 - Invocation count is not explicit.
 - Retry policy is not explicit.
 - Safe-output policy is not explicit.
+- The future GO does not explicitly state whether raw runtime, worker, and
+  parity output may be inspected, or that raw-output policy is missing, broad,
+  contradictory, component-incomplete, or ambiguous. The raw-output policy
+  must cover every authorized proof component. No permission to inspect raw
+  output may be inferred from permission to run a command or from permission
+  to privately capture stdout/stderr; private capture and raw inspection are
+  distinct facts and remain separately authorized.
+- The future GO does not explicitly state whether file modification is
+  permitted, or that file-modification policy is missing, broad,
+  contradictory, or ambiguous.
 - Required merged evidence is missing.
 - Verification would require unauthorized DB access or secrets access.
 - Verification would require unauthorized production access.
@@ -143,6 +160,20 @@ no mutation — if any of the following holds:
 - Any required proof component fails.
 - Pass-marking would be attempted in the same step without a separately
   authorized exact scoped pass-marking GO.
+
+## Default Read-Only Posture
+
+Unless a separate exact-scoped authorization explicitly permits a named
+modification surface:
+
+- Substantive pass verification is read-only.
+- `files_modified` must remain `false`.
+- Source, package, scripts, configuration, workflows, lockfiles,
+  dependencies, generated artifacts, historical evidence documents, and the
+  canonical registry must not be modified.
+
+This planning document does not authorize any modification during future
+verification.
 
 ## Required Authorization Separation
 
