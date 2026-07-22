@@ -26,7 +26,6 @@
  * `risk_index` / `verification_score` / `evidence_band` / etc.
  */
 
-import pg from 'pg';
 import {
   assertActiveScoringSourceCleanOrThrow,
   assertScoringContractsOrThrow,
@@ -369,6 +368,20 @@ export function buildRiskEvidenceCandidates(
 }
 
 /* --------------------------------------------------------------------------
+ * §4b — Minimal caller-supplied query contract (Family A structural seam).
+ * Exposes ONLY the single query surface this worker actually invokes. The
+ * concrete pg client stays at the runner boundary; the worker must never
+ * construct, configure, or fall back to a connection of its own.
+ * ------------------------------------------------------------------------ */
+
+export interface RiskEvidenceQueryable {
+  query<R extends { [column: string]: any } = { [column: string]: any }>(
+    text: string,
+    values: ReadonlyArray<unknown>,
+  ): Promise<{ rows: R[] }>;
+}
+
+/* --------------------------------------------------------------------------
  * §5 — Persist path. This is the ONLY function permitted to reference
  * UPSERT_SQL and to UPSERT `risk_observations_v0_1`. RECORD_ONLY mode never
  * calls this function; the normal `risk-evidence:run` reaches a write ONLY
@@ -376,7 +389,7 @@ export function buildRiskEvidenceCandidates(
  * ------------------------------------------------------------------------ */
 
 export async function persistRiskEvidenceCandidates(
-  pool: pg.Pool | pg.PoolClient | pg.Client,
+  pool: RiskEvidenceQueryable,
   candidates: RiskEvidenceCandidate[],
 ): Promise<number> {
   let upserted = 0;
@@ -408,7 +421,7 @@ export async function persistRiskEvidenceCandidates(
 }
 
 export async function runRiskEvidenceWorker(
-  pool: pg.Pool | pg.PoolClient | pg.Client,
+  pool: RiskEvidenceQueryable,
   opts: RiskEvidenceWorkerOptions,
 ): Promise<RiskEvidenceWorkerResult> {
   // §1–§2 — PR#4 startup guards.
