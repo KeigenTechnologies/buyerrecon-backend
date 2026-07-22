@@ -243,10 +243,15 @@ protected identifier may be invented, selected, reproduced, or inferred under
 this planning document, and this exclusion does not authorize inspection of
 any secret name, protected identifier, or secret value.
 
-If classification, proof, evidence, or explanation would require emitting an
-exact or inferable secret name or protected identifier, the operation must
-fail closed: stop without emitting it and report only an abstract,
-non-identifying safe blocker label.
+If any classification, proof command, evidence output, explanation, diagnosis,
+diagnostic, diagnostic output, diagnostic surface, or metadata surface would
+require disclosing an exact protected identifier or any partial, encoded,
+hashed, ordered, contextual, derived, or otherwise inferable representation
+from which such an identifier could be reconstructed, the operation must fail
+closed before emission. This applies even when no secret value is accessed or
+emitted. The operation must stop without emitting any identifier or
+reconstructable representation and report only an abstract, non-identifying
+safe blocker label.
 
 ## Proof-Surface Uniqueness and Semantic Selection Discipline
 
@@ -407,8 +412,13 @@ Future dependency-decoupling and worker-proof work must fail closed if:
 - repository file modification during proof cannot be prevented;
 - the safe classifier is missing;
 - raw-output inspection is required;
-- classification, proof, evidence, or explanation would require emitting an
-  exact or inferable secret name or protected identifier;
+- any classification, proof command, evidence output, explanation, diagnosis,
+  diagnostic, diagnostic output, diagnostic surface, or metadata surface
+  would require disclosing an exact protected identifier or any partial,
+  encoded, hashed, ordered, contextual, derived, or otherwise inferable
+  representation from which such an identifier could be reconstructed; the
+  operation must stop before emitting any identifier or reconstructable
+  representation, even when no secret value is accessed or emitted;
 - build dependency is implicit;
 - parity dependency is implicit;
 - generated-artifact behavior is implicit;
