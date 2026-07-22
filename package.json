@@ -43,7 +43,8 @@
     "replay:export": "tsx scripts/replay-export.ts",
     "metrics": "tsx scripts/truth-metrics.ts",
     "purge": "tsx scripts/purge-captures.ts",
-    "risk-evidence:record-only": "tsx scripts/run-risk-evidence-record-only-worker.ts"
+    "risk-evidence:record-only": "tsx scripts/run-risk-evidence-record-only-worker.ts",
+    "proof:riskworker:family-a-full-simulated": "tsx scripts/run-risk-evidence-worker-in-memory-proof.ts"
   },
   "keywords": [],
   "author": "",
