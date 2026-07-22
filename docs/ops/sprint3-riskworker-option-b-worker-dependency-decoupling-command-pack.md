@@ -217,6 +217,37 @@ Private stdout/stderr capture, if technically necessary, does not itself
 authorize human or model inspection of the captured content. Capture and
 inspection remain separately authorized facts.
 
+### Protected secret-name and identifier exclusion
+
+No future safe classifier, proof command, evidence output, explanation, or
+diagnostic surface may emit, reproduce, enumerate, quote, derive, or otherwise
+disclose any exact secret name or protected identifier encountered during
+inspection. This exclusion covers, at minimum:
+
+- secret names;
+- credential names;
+- environment-variable names;
+- token names;
+- key names;
+- DSN names;
+- protected configuration identifiers; and
+- any partial, encoded, hashed, ordered, contextual, or otherwise inferable
+  representation from which such a name or identifier could be reconstructed.
+
+The exclusion applies even when no secret value is accessed or emitted, when
+only names or identifiers would otherwise be shown, or when the proposed
+output is described as metadata, evidence, classification, explanation, or
+safe diagnostic output. Only abstract, non-identifying safe labels or
+explicitly authorized aggregate facts may be emitted. No actual secret name or
+protected identifier may be invented, selected, reproduced, or inferred under
+this planning document, and this exclusion does not authorize inspection of
+any secret name, protected identifier, or secret value.
+
+If classification, proof, evidence, or explanation would require emitting an
+exact or inferable secret name or protected identifier, the operation must
+fail closed: stop without emitting it and report only an abstract,
+non-identifying safe blocker label.
+
 ## Proof-Surface Uniqueness and Semantic Selection Discipline
 
 The end state must provide exactly one proof command surface
@@ -376,6 +407,8 @@ Future dependency-decoupling and worker-proof work must fail closed if:
 - repository file modification during proof cannot be prevented;
 - the safe classifier is missing;
 - raw-output inspection is required;
+- classification, proof, evidence, or explanation would require emitting an
+  exact or inferable secret name or protected identifier;
 - build dependency is implicit;
 - parity dependency is implicit;
 - generated-artifact behavior is implicit;
