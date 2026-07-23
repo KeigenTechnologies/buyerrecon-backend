@@ -39,10 +39,16 @@ const CUSTOMER_OUTPUT_FILES = [
   "src/reports/external/builders.ts",
   "src/reports/external/contracts.ts",
   "src/reports/external/fixtures.ts",
+  "src/reports/external/golden-session-package.ts",
   "src/reports/external/index.ts",
   "src/reports/external/renderer.ts",
   "src/reports/external/safe-claims.ts",
+  "src/reports/external/session-evidence-atoms.ts",
 ];
+// Golden Session v0.1: the ONE internal-only generator driver allowed to import the
+// generation surface. It is excluded from the non-generator scan below and instead
+// held to the generator's own no-worker/no-risk-evidence/no-record-only import rule.
+const GENERATOR_DRIVER_FILES = ["scripts/run-golden-session.ts"];
 // Internal (NOT customer-facing) preview surface — characterized only.
 const INTERNAL_PREVIEW_FILES = [
   "src/lane-ab-preview/index.ts",
@@ -67,8 +73,14 @@ const NON_GENERATOR_SCOPES = [
   ":(glob)scripts/run-*-worker.ts",
   ":(glob)scripts/*report*.ts",
   ":(glob)scripts/*preview*.ts",
+  // Golden Session v0.1 driver: allowed to import the generator, so excluded here;
+  // it is covered by GENERATOR_SCOPE (rule 3) instead. Every other prohibition stands.
+  ":(exclude)scripts/run-golden-session.ts",
 ];
-const GENERATOR_SCOPE = [":(glob)src/reports/external/**"];
+const GENERATOR_SCOPE = [
+  ":(glob)src/reports/external/**",
+  ":(glob)scripts/run-golden-session.ts",
+];
 
 const DEFERRED = [
   "Lane A/B write coupling — enforced at the Postgres grant layer (migrations/016); there is no " +
@@ -128,6 +140,9 @@ console.log("Customer-output GENERATION surface (allowed) — src/reports/extern
 for (const f of CUSTOMER_OUTPUT_FILES) console.log(`  ${f}`);
 const importers = git(["grep", "-lE", SPECIFIER_PREFIX + "[^\"']*(reports/external)", "--", ...NON_GENERATOR_SCOPES]);
 console.log(`  external importers among non-generator surfaces: ${importers.length} (expected 0 — surface is unwired)`);
+console.log("");
+console.log("Golden Session v0.1 internal-only generator driver (allowed generator importer):");
+for (const f of GENERATOR_DRIVER_FILES) console.log(`  ${f}`);
 console.log("");
 console.log("Internal (NOT customer-facing) preview surface — src/lane-ab-preview/:");
 for (const f of INTERNAL_PREVIEW_FILES) console.log(`  ${f}`);
