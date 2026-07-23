@@ -41,6 +41,134 @@ references must point to the `docs/architecture/` path.
 
 ---
 
+## 0.1 Program Control Lock — Golden Session v0.1
+
+Until it is explicitly reviewed and replaced, the sole active
+Program Milestone is:
+
+`BUYERRECON_GOLDEN_SESSION_V0_1`
+
+### Authorized primary sequence
+
+The only authorized primary sequence is:
+
+```text
+AMS authoritative RuntimeDecisionOutput implementation
+  → AMS review
+  → AMS merge
+  → backend Golden Session packaging
+  → backend review
+  → backend merge
+  → website/ThinSDK staging prerequisites
+  → exactly one controlled staging Golden Session
+  → inspection of actual JSON and human-readable report
+```
+
+All work outside this sequence is paused unless it directly blocks
+Golden Session, addresses an active security incident, or addresses
+a legal or production failure. In particular, the following are
+paused:
+
+- new architecture families;
+- residual proof chains;
+- Gate D/E movement;
+- new canonical statuses or registries;
+- command-pack expansion;
+- docs-only prerequisite PRs;
+- proof-of-proof work;
+- broad refactors;
+- production rollout;
+- customer delivery automation;
+- new scoring systems;
+- new report models; and
+- multi-session batch work.
+
+### Golden Session v0.1 completion
+
+Completion requires one real, controlled staging browser session
+that produces all of the following:
+
+- Fit;
+- Intent;
+- Window/Timing;
+- Risk;
+- PoI;
+- Trust/confidence;
+- Policy Pass 1;
+- Policy Pass 2 final decision;
+- reason codes;
+- traceable evidence;
+- recommended operator action;
+- one JSON artifact; and
+- one human-readable report.
+
+The result must be session-traceable, deterministic for pinned
+input, understandable to a non-engineering operator, explicit about
+present / absent / uncertain buyer motion, explicit about
+limitations, and internal-only with no customer delivery for v0.1.
+
+### PR and work-in-progress controls
+
+- Use one implementation PR per repository per Golden Session
+  sub-capability.
+- Remediation should normally remain on the same PR.
+- More than three PRs for one sub-capability triggers an automatic
+  milestone stop and review.
+- Continuous parallel work is limited to the currently active
+  sequence.
+
+### Automatic stop conditions
+
+Stop the milestone for review upon any of the following:
+
+- five working days without a new executable customer-value result;
+- two consecutive outputs whose primary result is only planning,
+  eligibility, governance status, or review metadata; or
+- a proposed task cannot identify the exact Golden Session gap it
+  closes.
+
+### Required fields for every future GO
+
+Every future GO must declare:
+
+```text
+current_program_milestone
+customer_visible_result_unlocked
+exact_vertical_slice_gap_closed
+why_this_is_the_shortest_path
+maximum_pr_budget
+stop_condition
+```
+
+### Priority and precedence
+
+If a local command pack, registry, Gate, review sequence, or future
+action class conflicts with the shortest path to the active Program
+Milestone, this Program Control Lock governs prioritization.
+
+Authorization or eligibility to perform an action does not make
+that action the next program priority. Every action must separately
+pass the active milestone should-test.
+
+This amendment does not change the previously locked technical
+runtime order:
+
+```text
+Risk Core + Series Core (concurrent)
+  → PoiInputsV3
+  → PoI Core
+  → BuyerRecon Product Layer
+  → Policy Pass 1
+  → Trust Core
+  → Policy Pass 2
+```
+
+After Golden Session v0.1 completion, this lock must be explicitly
+reviewed and replaced by the next customer-value milestone. It must
+not silently expire.
+
+---
+
 ## 1. One-sentence architecture
 
 **BuyerRecon is an evidence-first buyer-motion verification system:
