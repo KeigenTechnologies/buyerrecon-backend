@@ -236,9 +236,14 @@ export function aggregateReport(args: AggregateInputs): WorkerReport {
  * runPoiSequenceWorker — public entry point
  * ------------------------------------------------------------------------ */
 
+// Optional exact-session scope, additive over the canonical WorkerRunOptions
+// (defined in ./types.ts). session_id is absent/null in legacy mode; when set
+// it becomes a query-time predicate on the poi_observations SELECT.
+export type WorkerRunOptionsExact = WorkerRunOptions & { readonly session_id?: string | null };
+
 export interface RunWorkerArgs {
   readonly client:        pg.Pool | pg.PoolClient | pg.Client;
-  readonly options:       WorkerRunOptions;
+  readonly options:       WorkerRunOptionsExact;
   readonly database_host: string;
   readonly database_name: string;
 }
@@ -253,8 +258,10 @@ export async function runPoiSequenceWorker(args: RunWorkerArgs): Promise<WorkerR
 
   const workspaceId = args.options.workspace_id ?? null;
   const siteId      = args.options.site_id      ?? null;
+  const sessionId   = args.options.session_id   ?? null;
 
-  // §2 — SELECT POI rows.
+  // §2 — SELECT POI rows. Optional exact-session scope is applied query-time
+  // ($6) alongside workspace/site/window, before any grouping/mapping.
   const fetchRes = await args.client.query<PoiObservationRowRaw>(
     SELECT_POI_OBSERVATIONS_FOR_SEQUENCE_WORKER_SQL,
     [
@@ -263,6 +270,7 @@ export async function runPoiSequenceWorker(args: RunWorkerArgs): Promise<WorkerR
       workspaceId,
       siteId,
       args.options.limit,
+      sessionId,
     ],
   );
   const poiRows: readonly PoiObservationRowRaw[] = fetchRes.rows;
@@ -346,7 +354,7 @@ const DEFAULT_SAMPLE_LIMIT = 10;
 
 export interface WorkerEnvOpts {
   readonly databaseUrl: string;
-  readonly options:     WorkerRunOptions;
+  readonly options:     WorkerRunOptionsExact;
 }
 
 export function parsePoiSequenceWorkerEnvOptions(
@@ -362,6 +370,15 @@ export function parsePoiSequenceWorkerEnvOptions(
     ? env.WORKSPACE_ID : null;
   const site_id = typeof env.SITE_ID === 'string' && env.SITE_ID.length > 0
     ? env.SITE_ID : null;
+
+  // Optional exact-session scope. Absent SESSION_ID → legacy behaviour. An
+  // explicitly-supplied empty/whitespace SESSION_ID fails closed.
+  let session_id: string | null = null;
+  if (env.SESSION_ID !== undefined) {
+    const s = env.SESSION_ID.trim();
+    if (s.length === 0) throw new Error('SESSION_ID, when supplied, must be a non-empty string');
+    session_id = s;
+  }
 
   // Window
   let window_end: Date;
@@ -428,6 +445,7 @@ export function parsePoiSequenceWorkerEnvOptions(
       poi_input_version_expected,
       poi_observation_version_expected,
       poi_observations_table_version,
+      session_id,
     },
   };
 }

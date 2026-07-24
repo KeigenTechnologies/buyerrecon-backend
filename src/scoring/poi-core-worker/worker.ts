@@ -373,9 +373,14 @@ export function aggregateReport(args: AggregateInputs): WorkerReport {
  * runPoiCoreWorker — public entry point
  * ------------------------------------------------------------------------ */
 
+// Optional exact-session scope, additive over the canonical WorkerRunOptions
+// (defined in ./types.ts). session_id is absent/null in legacy mode; when set
+// it becomes a query-time predicate on the session_features SELECT.
+export type WorkerRunOptionsExact = WorkerRunOptions & { readonly session_id?: string | null };
+
 export interface RunWorkerArgs {
   readonly client:        pg.Pool | pg.PoolClient | pg.Client;
-  readonly options:       WorkerRunOptions;
+  readonly options:       WorkerRunOptionsExact;
   readonly database_host: string;
   readonly database_name: string;
 }
@@ -402,8 +407,10 @@ export async function runPoiCoreWorker(args: RunWorkerArgs): Promise<WorkerRepor
   const extractionVersion = args.options.extraction_version ?? null;
   const workspaceId       = args.options.workspace_id       ?? null;
   const siteId            = args.options.site_id            ?? null;
+  const sessionId         = args.options.session_id         ?? null;
 
-  // §3 — SELECT SF rows.
+  // §3 — SELECT SF rows. Optional exact-session scope is applied query-time
+  // ($7) alongside workspace/site/window/version, before any mapping.
   const sfSelect = await args.client.query<SessionFeaturesRowRaw>(SELECT_SESSION_FEATURES_SQL, [
     extractionVersion,
     workspaceId,
@@ -411,6 +418,7 @@ export async function runPoiCoreWorker(args: RunWorkerArgs): Promise<WorkerRepor
     args.options.window_start,
     args.options.window_end,
     args.options.limit,
+    sessionId,
   ]);
 
   // §4 — per-row processing.
@@ -486,7 +494,7 @@ export async function processRowForTest(
 
 export interface WorkerEnvOpts {
   readonly databaseUrl: string;
-  readonly options:     WorkerRunOptions;
+  readonly options:     WorkerRunOptionsExact;
 }
 
 const DEFAULT_WINDOW_HOURS = 720;
@@ -509,6 +517,15 @@ export function parsePoiCoreWorkerEnvOptions(
     ? env.SITE_ID : null;
   const extraction_version = typeof env.EXTRACTION_VERSION === 'string' && env.EXTRACTION_VERSION.length > 0
     ? env.EXTRACTION_VERSION : null;
+
+  // Optional exact-session scope. Absent SESSION_ID → legacy behaviour. An
+  // explicitly-supplied empty/whitespace SESSION_ID fails closed.
+  let session_id: string | null = null;
+  if (env.SESSION_ID !== undefined) {
+    const s = env.SESSION_ID.trim();
+    if (s.length === 0) throw new Error('SESSION_ID, when supplied, must be a non-empty string');
+    session_id = s;
+  }
 
   // Window
   let window_end: Date;
@@ -568,6 +585,7 @@ export function parsePoiCoreWorkerEnvOptions(
       window_end,
       limit,
       sample_limit,
+      session_id,
     },
   };
 }

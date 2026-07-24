@@ -1028,3 +1028,135 @@ function makeFakeEnvelope(overrides: FakeEnvelopeOverrides = {}): PoiCoreInput {
 // type-narrowing scenarios in similar test files; we keep the import
 // for future tests).
 void POI_SURFACE_CLASS;
+
+/* ==========================================================================
+ * O. Remediation — optional exact-session scope
+ * ========================================================================== */
+
+describe('O. exact-session scope (SESSION_ID)', () => {
+  it('SELECT_SESSION_FEATURES_SQL carries a parameterised session predicate ($7)', () => {
+    expect(SELECT_SESSION_FEATURES_SQL).toMatch(/\(\$7::text IS NULL OR session_id\s*=\s*\$7\)/);
+    // still reads only session_features
+    expect(SELECT_SESSION_FEATURES_SQL).toMatch(/FROM session_features\b/);
+  });
+
+  it('parsePoiCoreWorkerEnvOptions parses SESSION_ID', () => {
+    const out = parsePoiCoreWorkerEnvOptions(
+      { DATABASE_URL: 'postgres://u:p@h:5432/db', SESSION_ID: 'ses_x0vrbqik' },
+      new Date(ISO_NOW),
+    );
+    expect((out.options as { session_id?: string | null }).session_id).toBe('ses_x0vrbqik');
+  });
+
+  it('parsePoiCoreWorkerEnvOptions defaults session_id to null (legacy)', () => {
+    const out = parsePoiCoreWorkerEnvOptions(
+      { DATABASE_URL: 'postgres://u:p@h:5432/db' },
+      new Date(ISO_NOW),
+    );
+    expect((out.options as { session_id?: string | null }).session_id ?? null).toBeNull();
+  });
+
+  it('an explicitly-supplied empty SESSION_ID fails closed', () => {
+    expect(() => parsePoiCoreWorkerEnvOptions(
+      { DATABASE_URL: 'postgres://u:p@h:5432/db', SESSION_ID: '   ' },
+      new Date(ISO_NOW),
+    )).toThrow(/SESSION_ID, when supplied, must be a non-empty string/);
+  });
+
+  it('runPoiCoreWorker passes session_id as the 7th session_features SELECT param (query-time scope)', async () => {
+    const sfParams: unknown[][] = [];
+    const client = makeStubClient(async (sql, params) => {
+      if (sql.includes('FROM session_features')) {
+        sfParams.push([...params]);
+        return { rows: [], rowCount: 0 };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    await runPoiCoreWorker({
+      client: client as unknown as Parameters<typeof runPoiCoreWorker>[0]['client'],
+      options: {
+        poi_input_version:       POI_CORE_INPUT_VERSION,
+        poi_observation_version: POI_OBSERVATION_VERSION_DEFAULT,
+        scoring_version:         's2.v1.0',
+        workspace_id:            'buyerrecon_staging_ws',
+        site_id:                 'buyerrecon_com',
+        window_start:            new Date('2026-07-24T15:00:00Z'),
+        window_end:              new Date('2026-07-24T16:00:00Z'),
+        limit:                   100,
+        sample_limit:            5,
+        session_id:              'ses_x0vrbqik',
+      },
+      database_host: 'localhost:5432',
+      database_name: 'buyerrecon_test',
+    });
+    expect(sfParams).toHaveLength(1);
+    expect(sfParams[0][6]).toBe('ses_x0vrbqik'); // $7
+  });
+
+  it('legacy runPoiCoreWorker passes session_id null (unrelated sessions selected by workspace/site/window only)', async () => {
+    const sfParams: unknown[][] = [];
+    const client = makeStubClient(async (sql, params) => {
+      if (sql.includes('FROM session_features')) { sfParams.push([...params]); return { rows: [], rowCount: 0 }; }
+      return { rows: [], rowCount: 0 };
+    });
+    await runPoiCoreWorker({
+      client: client as unknown as Parameters<typeof runPoiCoreWorker>[0]['client'],
+      options: {
+        poi_input_version:       POI_CORE_INPUT_VERSION,
+        poi_observation_version: POI_OBSERVATION_VERSION_DEFAULT,
+        scoring_version:         's2.v1.0',
+        window_start:            new Date('2026-05-12T00:00:00Z'),
+        window_end:              new Date('2026-05-13T11:00:00Z'),
+        limit:                   100,
+        sample_limit:            5,
+      },
+      database_host: 'localhost:5432',
+      database_name: 'buyerrecon_test',
+    });
+    expect(sfParams[0][6] ?? null).toBeNull();
+  });
+
+  it('a repaired /en session-feature row no longer yields NO_PAGE_PATH_CANDIDATE and maps to one page_path POI', () => {
+    const out = mapSessionFeaturesRowToArgs(
+      sfRow({ landing_page_path: '/en', last_page_path: '/en' }),
+      null,
+      COMMON,
+    );
+    expect(out.outcome).toBe('ok');
+    if (out.outcome !== 'ok') return;
+    expect(out.input.poi_type).toBe(POI_TYPE.PAGE_PATH);
+    expect(out.input.raw_surface.raw_page_path).toBe('/en');
+    expect(out.poi_key_source_field).toBe('landing_page_path');
+  });
+
+  it('end-to-end: /en SF row scanned under exact scope upserts exactly one observation, zero rejects', async () => {
+    const sf = sfRow({ landing_page_path: '/en', last_page_path: '/en' });
+    const client = makeStubClient(async (sql) => {
+      if (sql.includes('FROM session_features')) return { rows: [sf], rowCount: 1 };
+      if (sql.includes('FROM stage0_decisions')) return { rows: [], rowCount: 0 };
+      if (sql.includes('INSERT INTO poi_observations_v0_1')) return { rows: [{ poi_observation_id: 1, inserted: true }], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    });
+    const report = await runPoiCoreWorker({
+      client: client as unknown as Parameters<typeof runPoiCoreWorker>[0]['client'],
+      options: {
+        poi_input_version:       POI_CORE_INPUT_VERSION,
+        poi_observation_version: POI_OBSERVATION_VERSION_DEFAULT,
+        scoring_version:         's2.v1.0',
+        workspace_id:            'buyerrecon_staging_ws',
+        site_id:                 'buyerrecon_com',
+        window_start:            new Date('2026-07-24T15:00:00Z'),
+        window_end:              new Date('2026-07-24T16:00:00Z'),
+        limit:                   100,
+        sample_limit:            5,
+        session_id:              'ses_x0vrbqik',
+      },
+      database_host: 'localhost:5432',
+      database_name: 'buyerrecon_test',
+    });
+    expect(report.rows_inserted).toBe(1);
+    expect(report.rejects).toBe(0);
+    expect(report.reject_reasons.NO_PAGE_PATH_CANDIDATE).toBe(0);
+    expect(report.poi_type_distribution.page_path).toBe(1);
+  });
+});

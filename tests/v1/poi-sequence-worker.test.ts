@@ -36,6 +36,7 @@ import {
   buildUpsertParams,
   groupRowsBySession,
   makeStubClient,
+  parsePoiSequenceWorkerEnvOptions,
   POI_OBSERVATIONS_TABLE_VERSION_DEFAULT,
   REJECT_REASONS,
   runPoiSequenceWorker,
@@ -737,5 +738,81 @@ describe('N. aggregator + masking', () => {
     expect(SELECT_POI_OBSERVATIONS_FOR_SEQUENCE_WORKER_SQL).not.toMatch(/INSERT|UPDATE|DELETE/i);
     expect(UPSERT_POI_SEQUENCE_OBSERVATION_SQL).toMatch(/INSERT INTO poi_sequence_observations_v0_1/);
     expect(UPSERT_POI_SEQUENCE_OBSERVATION_SQL).toMatch(/ON CONFLICT/i);
+  });
+});
+
+/* ==========================================================================
+ * N. Remediation — optional exact-session scope
+ * ========================================================================== */
+
+describe('N. exact-session scope (SESSION_ID)', () => {
+  it('SELECT SQL carries a parameterised session predicate ($6), still reads only poi_observations_v0_1', () => {
+    expect(SELECT_POI_OBSERVATIONS_FOR_SEQUENCE_WORKER_SQL).toMatch(/\(\$6::text IS NULL OR session_id\s*=\s*\$6\)/);
+    expect(SELECT_POI_OBSERVATIONS_FOR_SEQUENCE_WORKER_SQL).toMatch(/FROM poi_observations_v0_1/);
+  });
+
+  it('parsePoiSequenceWorkerEnvOptions parses SESSION_ID and defaults to null', () => {
+    const withS = parsePoiSequenceWorkerEnvOptions(
+      { DATABASE_URL: 'postgres://u:p@h:5432/db', SESSION_ID: 'ses_x0vrbqik' },
+      new Date(ISO_DERIVED),
+    );
+    expect((withS.options as { session_id?: string | null }).session_id).toBe('ses_x0vrbqik');
+    const legacy = parsePoiSequenceWorkerEnvOptions(
+      { DATABASE_URL: 'postgres://u:p@h:5432/db' },
+      new Date(ISO_DERIVED),
+    );
+    expect((legacy.options as { session_id?: string | null }).session_id ?? null).toBeNull();
+  });
+
+  it('an explicitly-supplied empty SESSION_ID fails closed', () => {
+    expect(() => parsePoiSequenceWorkerEnvOptions(
+      { DATABASE_URL: 'postgres://u:p@h:5432/db', SESSION_ID: '  ' },
+      new Date(ISO_DERIVED),
+    )).toThrow(/SESSION_ID, when supplied, must be a non-empty string/);
+  });
+
+  it('runPoiSequenceWorker passes session_id as the 6th SELECT param (query-time scope)', async () => {
+    const captured: unknown[][] = [];
+    const stub = makeStubClient(async (sql, params) => {
+      if (sql.includes('FROM poi_observations_v0_1')) { captured.push([...params]); return { rows: [], rowCount: 0 }; }
+      return { rows: [], rowCount: 0 };
+    });
+    await runPoiSequenceWorker({
+      client: stub as unknown as never,
+      options: { ...baselineWorkerOptions(), session_id: 'ses_x0vrbqik' },
+      database_host: 'h',
+      database_name: 'd',
+    });
+    expect(captured).toHaveLength(1);
+    expect(captured[0][5]).toBe('ses_x0vrbqik'); // $6
+  });
+
+  it('legacy runPoiSequenceWorker passes session_id null', async () => {
+    const captured: unknown[][] = [];
+    const stub = makeStubClient(async (sql, params) => {
+      if (sql.includes('FROM poi_observations_v0_1')) { captured.push([...params]); return { rows: [], rowCount: 0 }; }
+      return { rows: [], rowCount: 0 };
+    });
+    await runPoiSequenceWorker({
+      client: stub as unknown as never,
+      options: baselineWorkerOptions(),
+      database_host: 'h',
+      database_name: 'd',
+    });
+    expect(captured[0][5] ?? null).toBeNull();
+  });
+
+  it('one exact-session POI observation produces exactly one sequence observation', async () => {
+    const rows = [mkRow({ poi_observation_id: 1, session_id: 'ses_x0vrbqik', poi_key: '/en' })];
+    const stub = makeStubClient(makeStubFor(rows, { rerun: false }));
+    const r = await runPoiSequenceWorker({
+      client: stub as unknown as never,
+      options: { ...baselineWorkerOptions(), session_id: 'ses_x0vrbqik' },
+      database_host: 'h',
+      database_name: 'd',
+    });
+    expect(r.sessions_seen).toBe(1);
+    expect(r.rows_inserted).toBe(1);
+    expect(r.rejects).toBe(0);
   });
 });

@@ -39,6 +39,7 @@
  *   $4 window_start        (TIMESTAMPTZ)
  *   $5 window_end          (TIMESTAMPTZ)
  *   $6 limit               (INT)
+ *   $7 session_id          (TEXT or NULL) — optional exact-session scope
  *
  * The column list mirrors PR#11b's `SELECT_SESSION_FEATURES_SQL`
  * verbatim — same fields, same order — so the worker can re-use the
@@ -61,6 +62,7 @@ FROM session_features
 WHERE ($1::text IS NULL OR extraction_version = $1)
   AND ($2::text IS NULL OR workspace_id       = $2)
   AND ($3::text IS NULL OR site_id            = $3)
+  AND ($7::text IS NULL OR session_id         = $7)
   AND extracted_at >= $4
   AND extracted_at <  $5
 ORDER BY extracted_at ASC, session_features_id ASC

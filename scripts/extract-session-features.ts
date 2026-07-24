@@ -56,6 +56,12 @@ export interface ExtractorOptions {
   window_start: Date;
   window_end: Date;
   extraction_version: string;
+  // Optional exact-session mode (backward-compatible). All three are null in
+  // legacy mode; in exact mode they are validated fail-closed together and
+  // become query-time predicates + a pre-upsert event-set guard.
+  session_id?: string | null;
+  event_ids?: number[] | null;
+  expected_event_count?: number | null;
 }
 
 function fail(msg: string): never {
@@ -111,7 +117,73 @@ export function parseOptionsFromEnv(
       ? env.EXTRACTION_VERSION
       : DEFAULT_EXTRACTION_VERSION;
 
-  return { workspace_id, site_id, window_start, window_end, extraction_version };
+  // --- Optional exact-session mode -----------------------------------------
+  // Legacy behaviour is unchanged when SESSION_ID / EVENT_IDS /
+  // EXPECTED_EVENT_COUNT are all absent. When ANY is supplied, ALL three are
+  // required and validated fail-closed (thrown, before any DB access/mutation).
+  const rawSessionId = env.SESSION_ID;
+  const rawEventIds = env.EVENT_IDS;
+  const rawExpected = env.EXPECTED_EVENT_COUNT;
+  const anyExact =
+    rawSessionId !== undefined || rawEventIds !== undefined || rawExpected !== undefined;
+
+  let session_id: string | null = null;
+  let event_ids: number[] | null = null;
+  let expected_event_count: number | null = null;
+
+  if (anyExact) {
+    if (rawSessionId === undefined || rawEventIds === undefined || rawExpected === undefined) {
+      throw new Error(
+        'exact mode requires all of SESSION_ID, EVENT_IDS and EXPECTED_EVENT_COUNT together',
+      );
+    }
+    if (workspace_id === null || site_id === null) {
+      throw new Error('exact mode requires non-empty WORKSPACE_ID and SITE_ID');
+    }
+
+    const sid = rawSessionId.trim();
+    if (sid.length === 0) throw new Error('SESSION_ID must be a non-empty string in exact mode');
+    session_id = sid;
+
+    const parts = rawEventIds.split(',').map((s) => s.trim());
+    if (parts.length === 0 || parts.some((p) => p.length === 0)) {
+      throw new Error(
+        `EVENT_IDS must be a non-empty comma-separated list of integer IDs (got ${JSON.stringify(rawEventIds)})`,
+      );
+    }
+    const ids: number[] = [];
+    for (const p of parts) {
+      if (!/^[0-9]+$/.test(p)) throw new Error(`EVENT_IDS contains a malformed id: ${JSON.stringify(p)}`);
+      const n = Number.parseInt(p, 10);
+      if (!Number.isInteger(n) || n <= 0) {
+        throw new Error(`EVENT_IDS must be positive integers (got ${JSON.stringify(p)})`);
+      }
+      ids.push(n);
+    }
+    if (new Set(ids).size !== ids.length) throw new Error('EVENT_IDS must not contain duplicates');
+    event_ids = ids;
+
+    const expectedTrimmed = rawExpected.trim();
+    if (!/^[0-9]+$/.test(expectedTrimmed)) {
+      throw new Error(`EXPECTED_EVENT_COUNT must be a positive integer (got ${JSON.stringify(rawExpected)})`);
+    }
+    const ec = Number.parseInt(expectedTrimmed, 10);
+    if (!Number.isInteger(ec) || ec <= 0) {
+      throw new Error(`EXPECTED_EVENT_COUNT must be a positive integer (got ${JSON.stringify(rawExpected)})`);
+    }
+    expected_event_count = ec;
+
+    if (event_ids.length !== expected_event_count) {
+      throw new Error(
+        `EVENT_IDS length (${event_ids.length}) must equal EXPECTED_EVENT_COUNT (${expected_event_count})`,
+      );
+    }
+  }
+
+  return {
+    workspace_id, site_id, window_start, window_end, extraction_version,
+    session_id, event_ids, expected_event_count,
+  };
 }
 
 /* --------------------------------------------------------------------------
@@ -134,6 +206,8 @@ WITH candidate_sessions AS (
      AND received_at <= $2
      AND ($3::text IS NULL OR workspace_id = $3)
      AND ($4::text IS NULL OR site_id      = $4)
+     AND ($6::text IS NULL OR session_id   = $6)
+     AND ($7::bigint[] IS NULL OR event_id = ANY($7))
      AND event_contract_version = 'event-contract-v0.1'
      AND event_origin = 'browser'
      AND workspace_id IS NOT NULL
@@ -163,6 +237,8 @@ session_events AS (
    WHERE ae.event_contract_version = 'event-contract-v0.1'
      AND ae.event_origin = 'browser'
      AND ae.session_id  <> '__server__'
+     AND ($6::text IS NULL OR ae.session_id = $6)
+     AND ($7::bigint[] IS NULL OR ae.event_id = ANY($7))
 ),
 ranked AS (
   SELECT *,
@@ -177,16 +253,46 @@ ranked AS (
     FROM session_events
 ),
 endpoints AS (
+  -- Session-level timing endpoints use ALL events (any semantic type).
   SELECT workspace_id, site_id, session_id,
-         MAX(CASE WHEN rn_first = 1 THEN received_at      END) AS first_seen_at,
-         MAX(CASE WHEN rn_last  = 1 THEN received_at      END) AS last_seen_at,
-         MAX(CASE WHEN rn_first = 1 THEN event_id         END) AS first_event_id,
-         MAX(CASE WHEN rn_last  = 1 THEN event_id         END) AS last_event_id,
-         MAX(CASE WHEN rn_first = 1 THEN raw->>'page_url'  END) AS landing_page_url,
-         MAX(CASE WHEN rn_first = 1 THEN raw->>'page_path' END) AS landing_page_path,
-         MAX(CASE WHEN rn_last  = 1 THEN raw->>'page_url'  END) AS last_page_url,
-         MAX(CASE WHEN rn_last  = 1 THEN raw->>'page_path' END) AS last_page_path
+         MAX(CASE WHEN rn_first = 1 THEN received_at END) AS first_seen_at,
+         MAX(CASE WHEN rn_last  = 1 THEN received_at END) AS last_seen_at,
+         MAX(CASE WHEN rn_first = 1 THEN event_id    END) AS first_event_id,
+         MAX(CASE WHEN rn_last  = 1 THEN event_id    END) AS last_event_id
     FROM ranked
+   GROUP BY workspace_id, site_id, session_id
+),
+page_view_events AS (
+  -- Landing / last PAGE paths are established by semantic page_view events
+  -- only (NOT session_start / session_summary / final-close summary). The
+  -- canonical route is raw->>'path' (sprint2 wire), with legacy raw->>'page_path'
+  -- as fallback; empty strings are treated as absent. Semantic type resolves
+  -- via event_name (empty / 'unknown' -> absent) then legacy_event_type.
+  SELECT workspace_id, site_id, session_id, received_at, event_id,
+         COALESCE(NULLIF(raw->>'path', ''), NULLIF(raw->>'page_path', '')) AS route_path,
+         raw->>'page_url' AS page_url
+    FROM session_events
+   WHERE COALESCE(NULLIF(NULLIF(raw->>'event_name', ''), 'unknown'), raw->>'legacy_event_type') = 'page_view'
+),
+page_ranked AS (
+  SELECT *,
+         ROW_NUMBER() OVER (
+           PARTITION BY workspace_id, site_id, session_id
+           ORDER BY received_at ASC,  event_id ASC
+         ) AS pv_first,
+         ROW_NUMBER() OVER (
+           PARTITION BY workspace_id, site_id, session_id
+           ORDER BY received_at DESC, event_id DESC
+         ) AS pv_last
+    FROM page_view_events
+),
+page_endpoints AS (
+  SELECT workspace_id, site_id, session_id,
+         MAX(CASE WHEN pv_first = 1 THEN route_path END) AS landing_page_path,
+         MAX(CASE WHEN pv_first = 1 THEN page_url   END) AS landing_page_url,
+         MAX(CASE WHEN pv_last  = 1 THEN route_path END) AS last_page_path,
+         MAX(CASE WHEN pv_last  = 1 THEN page_url   END) AS last_page_url
+    FROM page_ranked
    GROUP BY workspace_id, site_id, session_id
 ),
 event_name_per AS (
@@ -273,8 +379,8 @@ SELECT
   sa.source_event_count,
   sa.page_view_count, sa.cta_click_count, sa.form_start_count, sa.form_submit_count,
   sa.unique_path_count,
-  ep.landing_page_url, ep.landing_page_path,
-  ep.last_page_url,    ep.last_page_path,
+  pep.landing_page_url, pep.landing_page_path,
+  pep.last_page_url,    pep.last_page_path,
   (sa.cta_click_count   > 0) AS has_cta_click,
   (sa.form_start_count  > 0) AS has_form_start,
   (sa.form_submit_count > 0) AS has_form_submit,
@@ -288,6 +394,10 @@ JOIN endpoints ep
   ON ep.workspace_id = sa.workspace_id
  AND ep.site_id      = sa.site_id
  AND ep.session_id   = sa.session_id
+LEFT JOIN page_endpoints pep
+  ON pep.workspace_id = sa.workspace_id
+ AND pep.site_id      = sa.site_id
+ AND pep.session_id   = sa.session_id
 LEFT JOIN event_name_counts enc
   ON enc.workspace_id = sa.workspace_id
  AND enc.site_id      = sa.site_id
@@ -340,16 +450,85 @@ export interface ExtractionResult {
   options: ExtractorOptions;
 }
 
+/* --------------------------------------------------------------------------
+ * Exact-mode fail-closed event-set guard
+ *
+ * In exact mode the exact accepted-event set is verified read-only BEFORE the
+ * upsert mutation. Selection is by event_id only so cross-workspace / -site /
+ * -session membership is proven (not assumed) in code.
+ * ------------------------------------------------------------------------ */
+
+export const EXACT_VERIFY_SQL = `
+SELECT event_id, client_event_id, workspace_id, site_id, session_id, consent_state
+  FROM accepted_events
+ WHERE event_id = ANY($1::bigint[])
+`;
+
+export interface ExactVerifyRow {
+  event_id: number | string;
+  client_event_id: string | null;
+  workspace_id: string | null;
+  site_id: string | null;
+  session_id: string | null;
+  consent_state: string | null;
+}
+
+export function assertExactEventSet(
+  rows: readonly ExactVerifyRow[],
+  opts: ExtractorOptions,
+): void {
+  const session_id = opts.session_id ?? null;
+  const event_ids = opts.event_ids ?? null;
+  const expected = opts.expected_event_count ?? null;
+  if (session_id === null || event_ids === null || expected === null) {
+    throw new Error('exact-mode guard: assertExactEventSet called without exact-mode options');
+  }
+  if (rows.length !== expected) {
+    throw new Error(`exact-mode guard: selected event count ${rows.length} != EXPECTED_EVENT_COUNT ${expected}`);
+  }
+  const seenEventIds = new Set<number>();
+  const seenClientIds = new Set<string>();
+  for (const r of rows) {
+    const eid = typeof r.event_id === 'string' ? Number.parseInt(r.event_id, 10) : r.event_id;
+    if (!Number.isInteger(eid)) throw new Error('exact-mode guard: non-integer event_id in selection');
+    if (seenEventIds.has(eid)) throw new Error(`exact-mode guard: duplicate event_id ${eid}`);
+    seenEventIds.add(eid);
+    if (r.workspace_id !== opts.workspace_id) throw new Error('exact-mode guard: event workspace_id mismatch');
+    if (r.site_id !== opts.site_id) throw new Error('exact-mode guard: event site_id mismatch');
+    if (r.session_id !== session_id) throw new Error('exact-mode guard: event session_id mismatch (more than one session or wrong session)');
+    if (r.consent_state !== 'granted') throw new Error('exact-mode guard: event consent_state is not granted');
+    if (typeof r.client_event_id !== 'string' || r.client_event_id.length === 0) {
+      throw new Error('exact-mode guard: missing client_event_id');
+    }
+    if (seenClientIds.has(r.client_event_id)) throw new Error('exact-mode guard: duplicate client_event_id');
+    seenClientIds.add(r.client_event_id);
+  }
+  const want = new Set(event_ids);
+  if (want.size !== seenEventIds.size) throw new Error('exact-mode guard: selected event-id set size mismatch');
+  for (const id of want) {
+    if (!seenEventIds.has(id)) throw new Error(`exact-mode guard: expected event_id ${id} not selected`);
+  }
+}
+
 export async function runExtraction(
   pool: pg.Pool | pg.PoolClient | pg.Client,
   opts: ExtractorOptions,
 ): Promise<ExtractionResult> {
+  // Exact mode: verify the exact accepted-event set fail-closed BEFORE the
+  // upsert. Any mismatch throws, so no mutation occurs.
+  if ((opts.session_id ?? null) !== null) {
+    const verify = await pool.query(EXACT_VERIFY_SQL, [opts.event_ids]);
+    assertExactEventSet((verify.rows ?? []) as ExactVerifyRow[], opts);
+  }
+
   const params: unknown[] = [
     opts.window_start,
     opts.window_end,
     opts.workspace_id,
     opts.site_id,
     opts.extraction_version,
+    opts.session_id ?? null,
+    opts.event_ids ?? null,
   ];
   const res = await pool.query(EXTRACTION_SQL, params);
   return {
