@@ -18,6 +18,7 @@
  *   $3 = workspace_id (text, NULL → no filter)
  *   $4 = site_id      (text, NULL → no filter)
  *   $5 = row limit    (int)
+ *   $6 = session_id   (text, NULL → no filter) — optional exact-session scope
  *
  * Ordering: (workspace_id, site_id, session_id, first_seen_at NULLS
  * LAST, poi_observation_id). This puts every session's POI rows
@@ -49,6 +50,7 @@ export const SELECT_POI_OBSERVATIONS_FOR_SEQUENCE_WORKER_SQL = `
     AND derived_at <  $2
     AND ($3::text IS NULL OR workspace_id = $3)
     AND ($4::text IS NULL OR site_id      = $4)
+    AND ($6::text IS NULL OR session_id   = $6)
   ORDER BY workspace_id ASC,
            site_id      ASC,
            session_id   ASC,
