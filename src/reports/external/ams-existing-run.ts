@@ -146,6 +146,83 @@ export interface AmsRunVerificationFlags {
 }
 
 /**
+ * The canonical AMS Golden JSON carries NO embedded run id: its accepted
+ * top-level key set is closed with no run-id member, and `scope` has no run-id
+ * field either. This is a fixed property of the canonical artifact schema, so
+ * the value is the literal boolean `false` — never computed, never configurable
+ * and never derived from runtime input.
+ *
+ * Consequently the existing-run linkage is, and must only be described as:
+ *
+ *   supplied `--ams-run-id`
+ *     → unique persisted replay run / evidence card
+ *     ↔ Golden JSON overlapping subject and source-event identity
+ *
+ * The supplied run id is an operator declaration reconciled against
+ * persistence. It is NOT embedded in, or asserted by, the artifact.
+ */
+export const GOLDEN_JSON_EMBEDDED_RUN_ID = false as const;
+
+/**
+ * Canonical existing-run execution metadata: one typed object that is the sole
+ * source of the existing-run reporting block.
+ *
+ * The schema-fact fields are literal types, so a build that tried to report a
+ * persisted decision as verified, or to claim the artifact embeds the run id,
+ * fails type checking rather than printing a false statement. Values are
+ * stringified only at the output boundary, so the metadata itself carries real
+ * booleans rather than the strings `"false"` / `"true"`.
+ */
+export interface ExistingRunReportMetadata {
+  /** The operator-supplied run id, reconciled against persistence. */
+  readonly ams_run_id: string;
+  readonly persisted_provenance_verified: boolean;
+  readonly golden_json_decision_verified: boolean;
+  readonly persisted_final_decision_verified: false;
+  readonly persisted_final_decision_unavailable_by_schema: true;
+  /** Literal `false`: the artifact has no embedded run id to verify against. */
+  readonly golden_json_embedded_run_id: false;
+}
+
+/**
+ * Build the existing-run reporting metadata. Pure. The three schema-fact fields
+ * are fixed literals; only the two verification outcomes come from
+ * reconciliation, and an absent reconciliation reports them as `false`.
+ */
+export function buildExistingRunReportMetadata(
+  amsRunId: string,
+  verification: AmsRunVerificationFlags | undefined,
+): ExistingRunReportMetadata {
+  return {
+    ams_run_id: amsRunId,
+    persisted_provenance_verified: verification?.persisted_provenance_verified === true,
+    golden_json_decision_verified: verification?.golden_json_decision_verified === true,
+    persisted_final_decision_verified: false,
+    persisted_final_decision_unavailable_by_schema: true,
+    golden_json_embedded_run_id: GOLDEN_JSON_EMBEDDED_RUN_ID,
+  };
+}
+
+/**
+ * Render the metadata as the `  key=value` lines the entrypoint prints. Booleans
+ * are stringified here, at the output boundary, and nowhere earlier.
+ */
+export function renderExistingRunReportMetadata(
+  metadata: ExistingRunReportMetadata,
+): ReadonlyArray<string> {
+  return [
+    `  ams_run_id=${metadata.ams_run_id}`,
+    `  persisted_provenance_verified=${String(metadata.persisted_provenance_verified)}`,
+    `  golden_json_decision_verified=${String(metadata.golden_json_decision_verified)}`,
+    `  persisted_final_decision_verified=${String(metadata.persisted_final_decision_verified)}`,
+    `  persisted_final_decision_unavailable_by_schema=${String(
+      metadata.persisted_final_decision_unavailable_by_schema,
+    )}`,
+    `  golden_json_embedded_run_id=${String(metadata.golden_json_embedded_run_id)}`,
+  ];
+}
+
+/**
  * Resolved AMS input. The `existing_run` variant deliberately has no binary or
  * AMS database-url field, which is what makes AMS execution unreachable there.
  */

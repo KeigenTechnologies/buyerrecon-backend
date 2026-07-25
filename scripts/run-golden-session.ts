@@ -65,8 +65,10 @@ import {
 } from '../src/reports/external/session-evidence-atoms.js';
 import {
   AMS_EXISTING_RUN_FLAGS,
+  buildExistingRunReportMetadata,
   readPersistedAmsRunRows,
   reconcilePersistedAmsRun,
+  renderExistingRunReportMetadata,
   resolveAmsInputMode,
   type AmsInputMode,
   type AmsRunVerificationFlags,
@@ -314,20 +316,19 @@ async function main(): Promise<void> {
   process.stdout.write(`  ams_input_mode=${args.amsInput.mode}\n`);
   process.stdout.write(`  ams_invoked=${String(args.amsInput.mode === 'fresh_ams')}\n`);
   if (args.amsInput.mode === 'existing_run') {
-    process.stdout.write(`  ams_run_id=${args.amsInput.ams_run_id}\n`);
-    // Four distinct facts, never collapsed into one "reconciled" claim. The
-    // final decision is verified against the golden JSON, NOT against the
+    // One typed metadata object is the sole source of this block, so every fact
+    // stays distinct and none can be collapsed into a single "reconciled"
+    // claim. The final decision is verified against the Golden JSON, NOT the
     // database: the canonical replay schema persists no decision field, so
     // `persisted_final_decision_verified` is structurally false and no
-    // `persisted_final_decision=` value is ever emitted.
-    process.stdout.write(
-      `  persisted_provenance_verified=${String(reconciliationFlags?.persisted_provenance_verified === true)}\n`,
-    );
-    process.stdout.write(
-      `  golden_json_decision_verified=${String(reconciliationFlags?.golden_json_decision_verified === true)}\n`,
-    );
-    process.stdout.write(`  persisted_final_decision_verified=false\n`);
-    process.stdout.write(`  persisted_final_decision_unavailable_by_schema=true\n`);
+    // `persisted_final_decision=` value is ever emitted. Likewise the artifact
+    // embeds no run id, so `golden_json_embedded_run_id` is structurally false
+    // and the linkage is only ever: supplied run id → unique persisted
+    // run/card ↔ Golden JSON overlapping subject and source-event identity.
+    const metadata = buildExistingRunReportMetadata(args.amsInput.ams_run_id, reconciliationFlags);
+    for (const line of renderExistingRunReportMetadata(metadata)) {
+      process.stdout.write(`${line}\n`);
+    }
   }
   process.stdout.write(`  ams_status=${pkg.ams_authoritative.status}\n`);
   process.stdout.write(`  authoritative_final_decision=${pkg.ams_authoritative.authoritative_final_decision}\n`);

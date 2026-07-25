@@ -4,11 +4,15 @@ import {
   AMS_EXISTING_RUN_FLAGS,
   AMS_FINAL_DECISIONS,
   AMS_FRESH_RUN_FLAGS,
+  GOLDEN_JSON_EMBEDDED_RUN_ID,
   PERSISTED_RUN_AUTHORITY,
+  buildExistingRunReportMetadata,
   persistedFinalDecision,
   readPersistedAmsRunRows,
   reconcilePersistedAmsRun,
+  renderExistingRunReportMetadata,
   resolveAmsInputMode,
+  type AmsRunVerificationFlags,
   type PersistedAmsRunExpectation,
   type PersistedAmsRunRows,
 } from '../../../src/reports/external/ams-existing-run.js';
@@ -496,6 +500,107 @@ describe('reconcilePersistedAmsRun', () => {
     expect(r.ok).toBe(true);
     if (r.ok === false) return;
     expect(r.verification).toEqual(VERIFIED_FLAGS);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Existing-run reporting metadata
+
+describe('existing-run report metadata', () => {
+  const verified: AmsRunVerificationFlags = {
+    persisted_provenance_verified: true,
+    golden_json_decision_verified: true,
+    persisted_final_decision_verified: false,
+    persisted_final_decision_unavailable_by_schema: true,
+  };
+  const meta = buildExistingRunReportMetadata(RUN_ID, verified);
+
+  it('emits golden_json_embedded_run_id as the boolean false', () => {
+    expect(meta.golden_json_embedded_run_id).toBe(false);
+    expect(typeof meta.golden_json_embedded_run_id).toBe('boolean');
+  });
+
+  it('does not omit the key', () => {
+    expect(Object.hasOwn(meta, 'golden_json_embedded_run_id')).toBe(true);
+    expect('golden_json_embedded_run_id' in meta).toBe(true);
+    expect(Object.keys(meta)).toContain('golden_json_embedded_run_id');
+    // Present in the serialized form too, not just as an undefined own key.
+    expect(JSON.stringify(meta)).toContain('"golden_json_embedded_run_id":false');
+  });
+
+  it('is not a string', () => {
+    expect(typeof meta.golden_json_embedded_run_id).not.toBe('string');
+    expect(meta.golden_json_embedded_run_id as unknown).not.toBe('false');
+    expect(meta.golden_json_embedded_run_id as unknown).not.toBe('true');
+    expect(JSON.stringify(meta)).not.toContain('"golden_json_embedded_run_id":"false"');
+  });
+
+  it('cannot be true for any input', () => {
+    // The exported schema fact itself.
+    expect(GOLDEN_JSON_EMBEDDED_RUN_ID).toBe(false);
+    // Exhaustive over every reconciliation input the builder accepts, including
+    // absent reconciliation: the value is never derived from runtime input.
+    const inputs: ReadonlyArray<AmsRunVerificationFlags | undefined> = [
+      undefined,
+      { ...verified, persisted_provenance_verified: false },
+      { ...verified, golden_json_decision_verified: false },
+      { ...verified, persisted_provenance_verified: false, golden_json_decision_verified: false },
+      verified,
+    ];
+    for (const input of inputs) {
+      for (const runId of [RUN_ID, '', 'not-a-uuid']) {
+        const built = buildExistingRunReportMetadata(runId, input);
+        expect(built.golden_json_embedded_run_id).toBe(false);
+        expect(built.persisted_final_decision_verified).toBe(false);
+        expect(built.persisted_final_decision_unavailable_by_schema).toBe(true);
+      }
+    }
+  });
+
+  it('does not represent the supplied --ams-run-id as a Golden JSON-embedded field', () => {
+    // The supplied run id appears exactly once, under a name that attributes it
+    // to the operator/persistence side, never to the artifact.
+    expect(meta.ams_run_id).toBe(RUN_ID);
+    const goldenJsonKeys = Object.keys(meta).filter((k) => k.startsWith('golden_json')).sort();
+    expect(goldenJsonKeys).toEqual(['golden_json_decision_verified', 'golden_json_embedded_run_id']);
+    // No golden_json* field carries the run id as its value.
+    for (const key of goldenJsonKeys) {
+      expect(meta[key as keyof typeof meta]).not.toBe(RUN_ID);
+      expect(typeof meta[key as keyof typeof meta]).toBe('boolean');
+    }
+    // And no field claims the artifact asserted or verified a run id.
+    expect(Object.keys(meta)).not.toContain('golden_json_run_id');
+    expect(Object.keys(meta)).not.toContain('golden_json_run_id_verified');
+  });
+
+  it('preserves the four existing truthful fields unchanged', () => {
+    expect(meta.persisted_provenance_verified).toBe(true);
+    expect(meta.golden_json_decision_verified).toBe(true);
+    expect(meta.persisted_final_decision_verified).toBe(false);
+    expect(meta.persisted_final_decision_unavailable_by_schema).toBe(true);
+    // No persisted decision value is present anywhere in the metadata.
+    expect(JSON.stringify(meta)).not.toContain('HOLD');
+    expect(Object.keys(meta)).not.toContain('persisted_final_decision');
+  });
+
+  it('renders exactly the truthful key=value lines the entrypoint prints', () => {
+    expect(renderExistingRunReportMetadata(meta)).toEqual([
+      `  ams_run_id=${RUN_ID}`,
+      '  persisted_provenance_verified=true',
+      '  golden_json_decision_verified=true',
+      '  persisted_final_decision_verified=false',
+      '  persisted_final_decision_unavailable_by_schema=true',
+      '  golden_json_embedded_run_id=false',
+    ]);
+  });
+
+  it('renders a failed provenance verification honestly rather than defaulting to true', () => {
+    const lines = renderExistingRunReportMetadata(buildExistingRunReportMetadata(RUN_ID, undefined));
+    expect(lines).toContain('  persisted_provenance_verified=false');
+    expect(lines).toContain('  golden_json_decision_verified=false');
+    // The schema facts are unaffected by a missing reconciliation.
+    expect(lines).toContain('  golden_json_embedded_run_id=false');
+    expect(lines).toContain('  persisted_final_decision_unavailable_by_schema=true');
   });
 });
 

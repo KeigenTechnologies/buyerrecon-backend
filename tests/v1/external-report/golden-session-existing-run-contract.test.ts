@@ -66,30 +66,52 @@ describe('golden-session entrypoint — existing-run mode cannot invoke AMS', ()
     expect(entrypointCode).toMatch(/ams_invoked=/);
   });
 
-  it('reports the four verification facts separately', () => {
+  it('reports every verification fact separately in the existing-run block', () => {
+    // The reporting block is rendered from one typed metadata object in the
+    // module, so the emitted key literals live there. Each must remain present.
     for (const key of [
+      'ams_run_id=',
       'persisted_provenance_verified=',
       'golden_json_decision_verified=',
-      'persisted_final_decision_verified=false',
-      'persisted_final_decision_unavailable_by_schema=true',
+      'persisted_final_decision_verified=',
+      'persisted_final_decision_unavailable_by_schema=',
+      'golden_json_embedded_run_id=',
     ]) {
-      expect(entrypointCode, `metadata key: ${key}`).toContain(key);
+      expect(moduleCode, `metadata key: ${key}`).toContain(key);
     }
+    // ...and the entrypoint renders them, inside the existing_run branch only.
+    const branch = entrypointCode.indexOf("args.amsInput.mode === 'existing_run'", entrypointCode.indexOf('run-golden-session OK'));
+    const renderCall = entrypointCode.indexOf('renderExistingRunReportMetadata(');
+    expect(branch).toBeGreaterThan(0);
+    expect(renderCall).toBeGreaterThan(branch);
+    expect(entrypointCode).toMatch(/buildExistingRunReportMetadata\(/);
+  });
+
+  it('locks golden_json_embedded_run_id to the literal false', () => {
+    // Declared as a literal-typed schema fact, not a mutable boolean, so a
+    // build that tried to report `true` fails type checking.
+    expect(moduleCode).toMatch(/export const GOLDEN_JSON_EMBEDDED_RUN_ID = false as const;/);
+    expect(moduleCode).toMatch(/readonly golden_json_embedded_run_id:\s*false;/);
+    // Never true, and never a claim that the artifact asserted or verified one.
+    expect(moduleCode).not.toMatch(/golden_json_embedded_run_id=true/);
+    expect(moduleCode).not.toMatch(/golden_json_embedded_run_id:\s*true/);
+    expect(moduleCode).not.toMatch(/golden_json_run_id_verified/);
+    expect(entrypointCode).not.toMatch(/golden_json_embedded_run_id=true/);
+    // The field is not typed as a plain boolean, which would unlock `true`.
+    expect(moduleCode).not.toMatch(/golden_json_embedded_run_id:\s*boolean/);
   });
 
   it('never emits a persisted final-decision value', () => {
-    // `persisted_final_decision=` may appear only as the `_verified=false` and
-    // `_unavailable_by_schema=true` facts. A bare value — interpolated or
-    // literal, e.g. `persisted_final_decision=HOLD` — must never be emitted,
-    // because the canonical schema persists no decision field.
-    const occurrences = entrypointCode.match(/persisted_final_decision[A-Za-z_]*=[^\s\\`]*/g) ?? [];
-    expect(occurrences.length).toBeGreaterThan(0);
-    for (const occurrence of occurrences) {
-      expect([
-        'persisted_final_decision_verified=false',
-        'persisted_final_decision_unavailable_by_schema=true',
-      ]).toContain(occurrence);
-    }
+    // Only the `_verified` and `_unavailable_by_schema` suffixed keys may
+    // appear. A bare `persisted_final_decision=` — e.g. `=HOLD` — must never be
+    // emitted, because the canonical schema persists no decision field.
+    const combined = `${entrypointCode}\n${moduleCode}`;
+    expect(combined).not.toMatch(/persisted_final_decision=/);
+    const emittedKeys = [...new Set(combined.match(/persisted_final_decision[A-Za-z_]*(?==)/g) ?? [])].sort();
+    expect(emittedKeys).toEqual([
+      'persisted_final_decision_unavailable_by_schema',
+      'persisted_final_decision_verified',
+    ]);
   });
 
   it('never maps a product action to a final decision', () => {
