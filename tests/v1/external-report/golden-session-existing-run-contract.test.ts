@@ -66,6 +66,50 @@ describe('golden-session entrypoint — existing-run mode cannot invoke AMS', ()
     expect(entrypointCode).toMatch(/ams_invoked=/);
   });
 
+  it('reports the four verification facts separately', () => {
+    for (const key of [
+      'persisted_provenance_verified=',
+      'golden_json_decision_verified=',
+      'persisted_final_decision_verified=false',
+      'persisted_final_decision_unavailable_by_schema=true',
+    ]) {
+      expect(entrypointCode, `metadata key: ${key}`).toContain(key);
+    }
+  });
+
+  it('never emits a persisted final-decision value', () => {
+    // `persisted_final_decision=` may appear only as the `_verified=false` and
+    // `_unavailable_by_schema=true` facts. A bare value — interpolated or
+    // literal, e.g. `persisted_final_decision=HOLD` — must never be emitted,
+    // because the canonical schema persists no decision field.
+    const occurrences = entrypointCode.match(/persisted_final_decision[A-Za-z_]*=[^\s\\`]*/g) ?? [];
+    expect(occurrences.length).toBeGreaterThan(0);
+    for (const occurrence of occurrences) {
+      expect([
+        'persisted_final_decision_verified=false',
+        'persisted_final_decision_unavailable_by_schema=true',
+      ]).toContain(occurrence);
+    }
+  });
+
+  it('never maps a product action to a final decision', () => {
+    // No literal or computed bridge from the persisted product proposal to the
+    // policy decision domain anywhere in the module.
+    expect(moduleCode).not.toMatch(/suppress/);
+    expect(moduleCode).not.toMatch(/RequestedAction[\s\S]{0,80}?(HOLD|ALLOW|DENY|REVIEW)/);
+    expect(moduleCode).not.toMatch(/(HOLD|ALLOW|DENY|REVIEW)[\s\S]{0,80}?RequestedAction/);
+
+    // The single sanctioned persisted-decision accessor is hard-wired to null.
+    expect(moduleCode).toMatch(
+      /export function persistedFinalDecision\([^)]*\):\s*null\s*\{\s*return null;\s*\}/,
+    );
+
+    // The decision reason code names the golden JSON as the authority, and no
+    // persisted-decision reason code exists.
+    expect(moduleCode).toMatch(/golden_json_final_decision_mismatch/);
+    expect(moduleCode).not.toMatch(/'persisted_final_decision_mismatch'/);
+  });
+
   it('performs no database write in the existing-run module', () => {
     expect(/\b(INSERT|UPDATE\s|DELETE|UPSERT|TRUNCATE|COPY)\b/i.test(moduleCode)).toBe(false);
     expect(moduleCode).toMatch(/FROM replay_runs/);

@@ -4,6 +4,8 @@ import {
   AMS_EXISTING_RUN_FLAGS,
   AMS_FINAL_DECISIONS,
   AMS_FRESH_RUN_FLAGS,
+  PERSISTED_RUN_AUTHORITY,
+  persistedFinalDecision,
   readPersistedAmsRunRows,
   reconcilePersistedAmsRun,
   resolveAmsInputMode,
@@ -62,9 +64,20 @@ function expectation(over: Partial<PersistedAmsRunExpectation> = {}): PersistedA
     artifact_final_decision: 'HOLD',
     expected_final_decision: 'HOLD',
     artifact_requested_action: 'suppress',
+    // The canonical golden JSON carries no run id at all (see the schema-fact
+    // assertions below), so the artifact-side run id is absent by default.
+    artifact_run_id: undefined,
     ...over,
   };
 }
+
+/** The verification shape every successful reconciliation must report. */
+const VERIFIED_FLAGS = {
+  persisted_provenance_verified: true,
+  golden_json_decision_verified: true,
+  persisted_final_decision_verified: false,
+  persisted_final_decision_unavailable_by_schema: true,
+} as const;
 
 // ---------------------------------------------------------------------------
 // Mode resolution
@@ -169,7 +182,7 @@ describe('resolveAmsInputMode — fresh-AMS mode is preserved unchanged', () => 
 describe('reconcilePersistedAmsRun', () => {
   it('accepts an exactly matching run, subject and ordered source-event set', () => {
     const r = reconcilePersistedAmsRun(rows(), expectation());
-    expect(r).toEqual({ ok: true, source_event_count: 9 });
+    expect(r).toEqual({ ok: true, source_event_count: 9, verification: VERIFIED_FLAGS });
   });
 
   it('fails closed when the persisted run is missing', () => {
@@ -249,21 +262,28 @@ describe('reconcilePersistedAmsRun', () => {
     expect(r.reasons).toContain('persisted_source_event_ids_mismatch');
   });
 
-  it('fails closed when the artifact decision contradicts the declared expectation', () => {
+  it('Golden JSON final-decision mismatch fails closed', () => {
+    // The golden JSON is the ONLY carrier of the policy final decision, so this
+    // is an artifact-versus-declaration check, not a database check.
     const r = reconcilePersistedAmsRun(
       rows(),
       expectation({ artifact_final_decision: 'ALLOW', expected_final_decision: 'HOLD' }),
     );
     expect(r.ok).toBe(false);
     if (r.ok) return;
-    expect(r.reasons).toContain('artifact_final_decision_mismatch');
+    expect(r.reasons).toContain('golden_json_final_decision_mismatch');
+    // Not misreported as a persisted-decision disagreement.
+    expect(r.reasons.some((x) => /persisted_final_decision/.test(x))).toBe(false);
   });
 
   it('fails closed when the persisted product proposal contradicts the artifact', () => {
+    // A staleness check on RequestedAction, which IS persisted. Its own reason
+    // code, never conflated with the final-decision reason code.
     const r = reconcilePersistedAmsRun(rows(), expectation({ artifact_requested_action: 'escalate' }));
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.reasons).toContain('persisted_requested_action_mismatch');
+    expect(r.reasons).not.toContain('golden_json_final_decision_mismatch');
   });
 
   it('tolerates numeric source ids arriving as strings from the driver', () => {
@@ -274,7 +294,208 @@ describe('reconcilePersistedAmsRun', () => {
     expect(reconcilePersistedAmsRun(rows({ cards: [card] }), expectation())).toEqual({
       ok: true,
       source_event_count: 9,
+      verification: VERIFIED_FLAGS,
     });
+  });
+
+  it('Golden JSON run ID mismatch fails closed', () => {
+    // The canonical artifact carries no run id, so today this path is dormant.
+    // If an artifact ever asserts one that disagrees with the declared and
+    // persisted run id, reconciliation must fail rather than pick a winner.
+    const r = reconcilePersistedAmsRun(
+      rows(),
+      expectation({ artifact_run_id: '00000000-0000-4000-8000-000000000000' }),
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reasons).toContain('golden_json_run_id_mismatch');
+  });
+
+  it('Golden JSON and replay-row overlapping identity mismatch fails closed', () => {
+    // Every field that BOTH the golden JSON and the replay rows carry must
+    // agree. Each overlapping field is perturbed independently.
+    const cases: ReadonlyArray<{
+      field: string;
+      rows: PersistedAmsRunRows;
+      expect: PersistedAmsRunExpectation;
+      reason: string;
+    }> = [
+      {
+        field: 'run_id',
+        rows: rows({ runs: [{ run_id: '11111111-1111-4111-8111-111111111111', site_id: SITE }] }),
+        expect: expectation(),
+        reason: 'persisted_run_id_mismatch',
+      },
+      {
+        field: 'site_id',
+        rows: rows({ runs: [{ run_id: RUN_ID, site_id: 'other_site' }] }),
+        expect: expectation(),
+        reason: 'persisted_run_site_mismatch',
+      },
+      {
+        field: 'subject_id',
+        rows: rows(),
+        expect: expectation({ subject_id: 'brw_someone_else' }),
+        reason: 'persisted_card_subject_mismatch',
+      },
+      {
+        field: 'source_event_ids',
+        rows: rows(),
+        expect: expectation({ source_event_ids: [51, 52, 53, 54, 55, 56, 57, 58, 60] }),
+        reason: 'persisted_source_event_ids_mismatch',
+      },
+      {
+        field: 'source_event_count',
+        rows: rows(),
+        expect: expectation({ source_event_ids: EVENT_IDS.slice(0, 8) }),
+        reason: 'persisted_source_event_count_mismatch',
+      },
+      {
+        field: 'card_to_run_linkage',
+        rows: rows({
+          cards: [
+            {
+              run_id: '22222222-2222-4222-8222-222222222222',
+              subject_id: SUBJECT,
+              status: 'DEGRADED',
+              source_event_ids: [...EVENT_IDS],
+              evidence_card: { RequestedAction: 'suppress' },
+            },
+          ],
+        }),
+        expect: expectation(),
+        reason: 'persisted_card_run_id_mismatch',
+      },
+    ];
+
+    for (const c of cases) {
+      const r = reconcilePersistedAmsRun(c.rows, c.expect);
+      expect(r.ok, `overlapping field must fail closed: ${c.field}`).toBe(false);
+      if (r.ok) continue;
+      expect(r.reasons, `reason for ${c.field}`).toContain(c.reason);
+    }
+  });
+
+  it('RequestedAction is never treated as final decision', () => {
+    // 1. Persistence is asked for a decision and answers "none", regardless of
+    //    the product proposal sitting in the very rows it was handed.
+    expect(persistedFinalDecision(rows())).toBeNull();
+
+    // 2. A persisted product proposal that happens to equal a canonical
+    //    decision token still does not become a decision.
+    const decisionShapedCard = {
+      run_id: RUN_ID,
+      subject_id: SUBJECT,
+      status: 'DEGRADED',
+      source_event_ids: [...EVENT_IDS],
+      evidence_card: { RequestedAction: 'HOLD' },
+    };
+    expect(persistedFinalDecision(rows({ cards: [decisionShapedCard] }))).toBeNull();
+
+    // 3. The declared decision must still be justified by the ARTIFACT. With a
+    //    persisted RequestedAction of 'HOLD' and an artifact saying ALLOW, the
+    //    declaration of HOLD must NOT be validated by the persisted action.
+    const r = reconcilePersistedAmsRun(
+      rows({ cards: [decisionShapedCard] }),
+      expectation({
+        artifact_final_decision: 'ALLOW',
+        expected_final_decision: 'HOLD',
+        artifact_requested_action: 'HOLD',
+      }),
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reasons).toContain('golden_json_final_decision_mismatch');
+
+    // 4. RequestedAction is registered as a non-decision field, and no
+    //    decision column is claimed to exist.
+    expect(PERSISTED_RUN_AUTHORITY.non_decision_fields).toContain(
+      'replay_evidence_cards.evidence_card.RequestedAction',
+    );
+    expect(PERSISTED_RUN_AUTHORITY.persisted_final_decision_column).toBeNull();
+    expect(PERSISTED_RUN_AUTHORITY.provenance_fields).not.toContain(
+      'replay_evidence_cards.evidence_card.RequestedAction',
+    );
+  });
+
+  it("RequestedAction='suppress' cannot cause, imply or validate final_decision='HOLD'", () => {
+    // The real Golden Session shape: persisted RequestedAction is 'suppress'
+    // and the artifact decision is 'HOLD'. These must remain independent.
+    const persistedSuppress = rows();
+    expect(
+      (persistedSuppress.cards[0] as { evidence_card: { RequestedAction: string } }).evidence_card
+        .RequestedAction,
+    ).toBe('suppress');
+
+    // CANNOT CAUSE: 'suppress' is not, and does not map to, a decision.
+    expect(persistedFinalDecision(persistedSuppress)).toBeNull();
+    expect((AMS_FINAL_DECISIONS as readonly string[]).includes('suppress')).toBe(false);
+
+    // CANNOT VALIDATE: with the artifact reporting ALLOW, a declared HOLD fails
+    // closed even though 'suppress' is persisted and is friction-shaped.
+    const contradicted = reconcilePersistedAmsRun(
+      persistedSuppress,
+      expectation({ artifact_final_decision: 'ALLOW', expected_final_decision: 'HOLD' }),
+    );
+    expect(contradicted.ok).toBe(false);
+    if (contradicted.ok === false) {
+      expect(contradicted.reasons).toContain('golden_json_final_decision_mismatch');
+    }
+
+    // CANNOT IMPLY: when everything genuinely agrees, the success report still
+    // refuses to claim the decision was verified against persistence.
+    const agreed = reconcilePersistedAmsRun(persistedSuppress, expectation());
+    expect(agreed.ok).toBe(true);
+    if (agreed.ok === false) return;
+    expect(agreed.verification.persisted_final_decision_verified).toBe(false);
+    expect(agreed.verification.persisted_final_decision_unavailable_by_schema).toBe(true);
+    expect(agreed.verification.golden_json_decision_verified).toBe(true);
+    // No 'HOLD' is echoed as a persisted value anywhere in the result.
+    expect(JSON.stringify(agreed)).not.toContain('HOLD');
+  });
+
+  it('absence of a persisted final-decision column does not weaken source-event reconciliation', () => {
+    // Provenance is computed from row identity and source events only, so it
+    // must still fail closed no matter what the decision fields say.
+    const ids = [51, 52, 53, 54, 55, 56, 57, 58, 60];
+
+    // (a) Decision fields in perfect agreement: provenance still fails.
+    const agreeingDecision = reconcilePersistedAmsRun(rows(), expectation({ source_event_ids: ids }));
+    expect(agreeingDecision.ok).toBe(false);
+    if (agreeingDecision.ok === false) {
+      expect(agreeingDecision.reasons).toContain('persisted_source_event_ids_mismatch');
+      expect(agreeingDecision.reasons).not.toContain('golden_json_final_decision_mismatch');
+    }
+
+    // (b) Decision fields absent entirely from the persisted card: provenance
+    //     checks are unaffected — one failing, one passing.
+    const noDecisionCard = {
+      run_id: RUN_ID,
+      subject_id: SUBJECT,
+      status: 'DEGRADED',
+      source_event_ids: [...EVENT_IDS],
+      evidence_card: {},
+    };
+    const bad = reconcilePersistedAmsRun(
+      rows({ cards: [noDecisionCard] }),
+      expectation({ source_event_ids: ids }),
+    );
+    expect(bad.ok).toBe(false);
+    if (bad.ok === false) expect(bad.reasons).toContain('persisted_source_event_ids_mismatch');
+
+    const good = reconcilePersistedAmsRun(rows({ cards: [noDecisionCard] }), expectation());
+    expect(good.ok).toBe(true);
+    if (good.ok === false) return;
+    expect(good.source_event_count).toBe(9);
+    expect(good.verification.persisted_provenance_verified).toBe(true);
+    expect(good.verification.persisted_final_decision_verified).toBe(false);
+  });
+
+  it('reports provenance and golden-JSON decision verification as separate facts', () => {
+    const r = reconcilePersistedAmsRun(rows(), expectation());
+    expect(r.ok).toBe(true);
+    if (r.ok === false) return;
+    expect(r.verification).toEqual(VERIFIED_FLAGS);
   });
 });
 

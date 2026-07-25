@@ -69,6 +69,7 @@ import {
   reconcilePersistedAmsRun,
   resolveAmsInputMode,
   type AmsInputMode,
+  type AmsRunVerificationFlags,
 } from '../src/reports/external/ams-existing-run.js';
 
 const SAFE_ID = /^[A-Za-z0-9._:-]{1,128}$/;
@@ -246,6 +247,7 @@ async function main(): Promise<void> {
 
   let rows;
   let reconciliationFailure: string | undefined;
+  let reconciliationFlags: AmsRunVerificationFlags | undefined;
   try {
     if (args.amsInput.mode === 'existing_run') {
       // Reconcile the supplied artifact against the persisted authoritative
@@ -259,8 +261,17 @@ async function main(): Promise<void> {
         artifact_final_decision: validation.result.authoritative_final_decision,
         expected_final_decision: args.amsInput.expected_final_decision,
         artifact_requested_action: validation.result.product_decision?.RequestedAction,
+        // The canonical artifact carries no run id: its accepted top-level key
+        // set is closed with no run-id member, and `scope` has no run-id field.
+        // Read defensively anyway, so that if the canonical schema ever does
+        // carry one, it is reconciled instead of silently ignored.
+        artifact_run_id:
+          typeof (validation.result as { run_id?: unknown }).run_id === 'string'
+            ? (validation.result as { run_id: string }).run_id
+            : undefined,
       });
       if (reconciliation.ok === false) reconciliationFailure = reconciliation.reasons.join(',');
+      else reconciliationFlags = reconciliation.verification;
     }
     rows = await readSessionPersistedRows(pool, identity);
   } catch {
@@ -304,7 +315,19 @@ async function main(): Promise<void> {
   process.stdout.write(`  ams_invoked=${String(args.amsInput.mode === 'fresh_ams')}\n`);
   if (args.amsInput.mode === 'existing_run') {
     process.stdout.write(`  ams_run_id=${args.amsInput.ams_run_id}\n`);
-    process.stdout.write(`  ams_run_reconciled=true\n`);
+    // Four distinct facts, never collapsed into one "reconciled" claim. The
+    // final decision is verified against the golden JSON, NOT against the
+    // database: the canonical replay schema persists no decision field, so
+    // `persisted_final_decision_verified` is structurally false and no
+    // `persisted_final_decision=` value is ever emitted.
+    process.stdout.write(
+      `  persisted_provenance_verified=${String(reconciliationFlags?.persisted_provenance_verified === true)}\n`,
+    );
+    process.stdout.write(
+      `  golden_json_decision_verified=${String(reconciliationFlags?.golden_json_decision_verified === true)}\n`,
+    );
+    process.stdout.write(`  persisted_final_decision_verified=false\n`);
+    process.stdout.write(`  persisted_final_decision_unavailable_by_schema=true\n`);
   }
   process.stdout.write(`  ams_status=${pkg.ams_authoritative.status}\n`);
   process.stdout.write(`  authoritative_final_decision=${pkg.ams_authoritative.authoritative_final_decision}\n`);
