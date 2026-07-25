@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   AMS_EXISTING_RUN_FLAGS,
+  AMS_EXISTING_RUN_OPTIONAL_FLAGS,
+  AMS_EXISTING_RUN_REQUIRED_FLAGS,
   AMS_FINAL_DECISIONS,
   AMS_FRESH_RUN_FLAGS,
   GOLDEN_JSON_EMBEDDED_RUN_ID,
@@ -12,6 +14,7 @@ import {
   reconcilePersistedAmsRun,
   renderExistingRunReportMetadata,
   resolveAmsInputMode,
+  resolveGoldenJsonFinalDecision,
   type AmsRunVerificationFlags,
   type PersistedAmsRunExpectation,
   type PersistedAmsRunRows,
@@ -81,6 +84,9 @@ const VERIFIED_FLAGS = {
   golden_json_decision_verified: true,
   persisted_final_decision_verified: false,
   persisted_final_decision_unavailable_by_schema: true,
+  decision_authority: 'golden_json',
+  operator_decision_expectation_supplied: true,
+  operator_decision_expectation_matched: true,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -109,13 +115,46 @@ describe('resolveAmsInputMode — existing-run selection and the no-AMS boundary
     ]);
   });
 
-  it.each(AMS_EXISTING_RUN_FLAGS)('requires all existing-run flags together (missing %s)', (missing) => {
+  it('accepts the approved two-flag contract with no --ams-final-decision', () => {
+    // The authorized existing-run invocation: golden json + run id, nothing else.
+    const r = resolveAmsInputMode(
+      flags({ '--ams-golden-json': GOLDEN, '--ams-run-id': RUN_ID }),
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok === false) return;
+    expect(r.input.mode).toBe('existing_run');
+    if (r.input.mode !== 'existing_run') return;
+    expect(r.input.ams_golden_json_path).toBe(GOLDEN);
+    expect(r.input.ams_run_id).toBe(RUN_ID);
+    // No expectation declared — and no decision invented to stand in for one.
+    expect(r.input.expected_final_decision).toBeUndefined();
+  });
+
+  it.each(AMS_EXISTING_RUN_REQUIRED_FLAGS)(
+    'requires the two contract flags together (missing %s)',
+    (missing) => {
+      const supplied = existingFlags();
+      supplied.delete(missing);
+      const r = resolveAmsInputMode(supplied);
+      expect(r.ok).toBe(false);
+      if (r.ok) return;
+      expect(r.reason).toBe('ams_existing_run_flags_required_together');
+    },
+  );
+
+  it('does not require the optional decision expectation', () => {
+    expect(AMS_EXISTING_RUN_REQUIRED_FLAGS).not.toContain('--ams-final-decision');
+    expect(AMS_EXISTING_RUN_OPTIONAL_FLAGS).toContain('--ams-final-decision');
+    // Still recognised as an existing-run flag, so it is parsed, not rejected.
+    expect(AMS_EXISTING_RUN_FLAGS).toContain('--ams-final-decision');
     const supplied = existingFlags();
-    supplied.delete(missing);
-    const r = resolveAmsInputMode(supplied);
-    expect(r.ok).toBe(false);
-    if (r.ok) return;
-    expect(r.reason).toBe('ams_existing_run_flags_required_together');
+    supplied.delete('--ams-final-decision');
+    expect(resolveAmsInputMode(supplied).ok).toBe(true);
+  });
+
+  it('selects existing-run mode from the optional flag alone, then fails closed on the missing pair', () => {
+    const r = resolveAmsInputMode(flags({ '--ams-final-decision': 'HOLD' }));
+    expect(r).toEqual({ ok: false, reason: 'ams_existing_run_flags_required_together' });
   });
 
   it('rejects a relative golden-json path', () => {
@@ -504,6 +543,141 @@ describe('reconcilePersistedAmsRun', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Golden JSON is the sole decision authority
+
+describe('Golden JSON final-decision authority', () => {
+  it('reads the actual decision from the validated Golden JSON', () => {
+    for (const decision of AMS_FINAL_DECISIONS) {
+      expect(resolveGoldenJsonFinalDecision(decision)).toEqual({ ok: true, final_decision: decision });
+    }
+  });
+
+  it('fails closed when the Golden JSON final decision is missing', () => {
+    for (const absent of [undefined, null, '', 0, false, {}, []]) {
+      expect(resolveGoldenJsonFinalDecision(absent)).toEqual({
+        ok: false,
+        reason: 'golden_json_final_decision_missing',
+      });
+    }
+    // ...and reconciliation refuses the run rather than packaging it.
+    const r = reconcilePersistedAmsRun(rows(), expectation({ artifact_final_decision: '' }));
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reasons).toContain('golden_json_final_decision_missing');
+  });
+
+  it('fails closed when the Golden JSON final decision is invalid', () => {
+    expect(resolveGoldenJsonFinalDecision('MAYBE')).toEqual({
+      ok: false,
+      reason: 'golden_json_final_decision_invalid',
+    });
+    // A product action is not a decision, so it is invalid here too.
+    expect(resolveGoldenJsonFinalDecision('suppress')).toEqual({
+      ok: false,
+      reason: 'golden_json_final_decision_invalid',
+    });
+    const r = reconcilePersistedAmsRun(rows(), expectation({ artifact_final_decision: 'MAYBE' }));
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reasons).toContain('golden_json_final_decision_invalid');
+  });
+
+  it('accepts a matching optional operator expectation', () => {
+    const r = reconcilePersistedAmsRun(
+      rows(),
+      expectation({ artifact_final_decision: 'HOLD', expected_final_decision: 'HOLD' }),
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok === false) return;
+    expect(r.verification.operator_decision_expectation_supplied).toBe(true);
+    expect(r.verification.operator_decision_expectation_matched).toBe(true);
+    expect(r.verification.decision_authority).toBe('golden_json');
+  });
+
+  it('succeeds with no operator expectation at all, reporting it as not_applicable', () => {
+    const r = reconcilePersistedAmsRun(
+      rows(),
+      expectation({ artifact_final_decision: 'HOLD', expected_final_decision: undefined }),
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok === false) return;
+    expect(r.verification.golden_json_decision_verified).toBe(true);
+    expect(r.verification.operator_decision_expectation_supplied).toBe(false);
+    expect(r.verification.operator_decision_expectation_matched).toBe('not_applicable');
+    expect(r.verification.decision_authority).toBe('golden_json');
+  });
+
+  it('fails closed on a mismatching optional operator expectation, before any package is built', () => {
+    const r = reconcilePersistedAmsRun(
+      rows(),
+      expectation({ artifact_final_decision: 'HOLD', expected_final_decision: 'ALLOW' }),
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reasons).toContain('golden_json_final_decision_mismatch');
+  });
+
+  it('operator expectation cannot override the Golden JSON', () => {
+    // Artifact says HOLD, operator insists ALLOW: the run is refused. There is
+    // no outcome in which the operator value is adopted as the decision.
+    const r = reconcilePersistedAmsRun(
+      rows(),
+      expectation({ artifact_final_decision: 'HOLD', expected_final_decision: 'ALLOW' }),
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reasons).toContain('golden_json_final_decision_mismatch');
+    // The resolver is not even reachable with an operator value: its only input
+    // is the artifact, so it cannot return the operator's ALLOW.
+    expect(resolveGoldenJsonFinalDecision('HOLD')).toEqual({ ok: true, final_decision: 'HOLD' });
+    expect(resolveGoldenJsonFinalDecision.length).toBe(1);
+  });
+
+  it('operator expectation cannot create a decision when the Golden JSON lacks one', () => {
+    for (const artifact of ['', 'MAYBE']) {
+      const r = reconcilePersistedAmsRun(
+        rows(),
+        expectation({ artifact_final_decision: artifact, expected_final_decision: 'HOLD' }),
+      );
+      expect(r.ok, `artifact decision ${JSON.stringify(artifact)} must not be repaired`).toBe(false);
+      if (r.ok) continue;
+      // The failure names the artifact, never the operator expectation, and the
+      // supplied HOLD does not turn the run into a success.
+      expect(r.reasons.some((x) => x.startsWith('golden_json_final_decision_'))).toBe(true);
+      expect(r.reasons).not.toContain('golden_json_final_decision_mismatch');
+    }
+  });
+
+  it("RequestedAction='suppress' cannot satisfy or influence final-decision validation", () => {
+    // Persisted and artifact product action is 'suppress' throughout.
+    const base = expectation({ artifact_requested_action: 'suppress' });
+
+    // It cannot stand in for a missing decision.
+    const missing = reconcilePersistedAmsRun(rows(), { ...base, artifact_final_decision: '' });
+    expect(missing.ok).toBe(false);
+    if (missing.ok === false) {
+      expect(missing.reasons).toContain('golden_json_final_decision_missing');
+    }
+
+    // It cannot make a contradicted expectation pass.
+    const contradicted = reconcilePersistedAmsRun(rows(), {
+      ...base,
+      artifact_final_decision: 'ALLOW',
+      expected_final_decision: 'HOLD',
+    });
+    expect(contradicted.ok).toBe(false);
+
+    // And with a valid decision it changes nothing about decision reporting.
+    const fine = reconcilePersistedAmsRun(rows(), base);
+    expect(fine.ok).toBe(true);
+    if (fine.ok === false) return;
+    expect(fine.verification.decision_authority).toBe('golden_json');
+    expect(fine.verification.golden_json_decision_verified).toBe(true);
+    expect(persistedFinalDecision(rows())).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Existing-run reporting metadata
 
 describe('existing-run report metadata', () => {
@@ -512,6 +686,9 @@ describe('existing-run report metadata', () => {
     golden_json_decision_verified: true,
     persisted_final_decision_verified: false,
     persisted_final_decision_unavailable_by_schema: true,
+    decision_authority: 'golden_json',
+    operator_decision_expectation_supplied: true,
+    operator_decision_expectation_matched: true,
   };
   const meta = buildExistingRunReportMetadata(RUN_ID, verified);
 
@@ -591,7 +768,47 @@ describe('existing-run report metadata', () => {
       '  persisted_final_decision_verified=false',
       '  persisted_final_decision_unavailable_by_schema=true',
       '  golden_json_embedded_run_id=false',
+      '  decision_authority=golden_json',
+      '  operator_decision_expectation_supplied=true',
+      '  operator_decision_expectation_matched=true',
     ]);
+  });
+
+  it('reports decision_authority=golden_json and never the operator', () => {
+    expect(meta.decision_authority).toBe('golden_json');
+    // Whatever the operator did or did not supply, the authority is unchanged.
+    for (const v of [
+      undefined,
+      { ...verified, operator_decision_expectation_supplied: false, operator_decision_expectation_matched: 'not_applicable' as const },
+      { ...verified, operator_decision_expectation_matched: false },
+    ]) {
+      expect(buildExistingRunReportMetadata(RUN_ID, v).decision_authority).toBe('golden_json');
+    }
+    const serialized = JSON.stringify(meta);
+    expect(serialized).not.toContain('operator_final_decision_verified');
+    expect(serialized).not.toContain('requested_action_validated_hold');
+    expect(serialized).not.toContain('"persisted_final_decision"');
+    expect(serialized).not.toContain('HOLD');
+  });
+
+  it('distinguishes a supplied expectation from an absent one', () => {
+    const withExpectation = buildExistingRunReportMetadata(RUN_ID, verified);
+    expect(withExpectation.operator_decision_expectation_supplied).toBe(true);
+    expect(withExpectation.operator_decision_expectation_matched).toBe(true);
+
+    const without = buildExistingRunReportMetadata(RUN_ID, {
+      ...verified,
+      operator_decision_expectation_supplied: false,
+      operator_decision_expectation_matched: 'not_applicable',
+    });
+    expect(without.operator_decision_expectation_supplied).toBe(false);
+    expect(without.operator_decision_expectation_matched).toBe('not_applicable');
+    // The Golden JSON decision is still verified without any operator input.
+    expect(without.golden_json_decision_verified).toBe(true);
+    expect(without.decision_authority).toBe('golden_json');
+    expect(renderExistingRunReportMetadata(without)).toContain(
+      '  operator_decision_expectation_matched=not_applicable',
+    );
   });
 
   it('renders a failed provenance verification honestly rather than defaulting to true', () => {

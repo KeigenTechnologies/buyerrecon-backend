@@ -61,6 +61,18 @@ describe('golden-session entrypoint — existing-run mode cannot invoke AMS', ()
     expect(entrypointCode).toMatch(/ams_run_reconciliation_failed/);
   });
 
+  it('raises a reconciliation failure BEFORE any package is constructed', () => {
+    // A decision mismatch must abort before the report exists, not after.
+    const reconcileCall = entrypointCode.indexOf('reconcilePersistedAmsRun(');
+    const raise = entrypointCode.indexOf("failStage('ams_run_reconciliation_failed'");
+    const buildPackage = entrypointCode.indexOf('buildGoldenSessionPackage(');
+    const writeArtifacts = entrypointCode.indexOf('writeFileSync(');
+    expect(reconcileCall).toBeGreaterThan(0);
+    expect(raise).toBeGreaterThan(reconcileCall);
+    expect(buildPackage).toBeGreaterThan(raise);
+    expect(writeArtifacts).toBeGreaterThan(buildPackage);
+  });
+
   it('emits structured mode metadata', () => {
     expect(entrypointCode).toMatch(/ams_input_mode=/);
     expect(entrypointCode).toMatch(/ams_invoked=/);
@@ -76,6 +88,9 @@ describe('golden-session entrypoint — existing-run mode cannot invoke AMS', ()
       'persisted_final_decision_verified=',
       'persisted_final_decision_unavailable_by_schema=',
       'golden_json_embedded_run_id=',
+      'decision_authority=',
+      'operator_decision_expectation_supplied=',
+      'operator_decision_expectation_matched=',
     ]) {
       expect(moduleCode, `metadata key: ${key}`).toContain(key);
     }
@@ -99,6 +114,68 @@ describe('golden-session entrypoint — existing-run mode cannot invoke AMS', ()
     expect(entrypointCode).not.toMatch(/golden_json_embedded_run_id=true/);
     // The field is not typed as a plain boolean, which would unlock `true`.
     expect(moduleCode).not.toMatch(/golden_json_embedded_run_id:\s*boolean/);
+  });
+
+  it('populates the reported decision from the validated Golden JSON, not from CLI args', () => {
+    // The package is built from the validated artifact...
+    expect(entrypointCode).toMatch(/buildGoldenSessionPackage\(\{[^}]*ams:\s*validation\.result/);
+    // ...and the reported decision is read back off the built package.
+    expect(entrypointCode).toMatch(/authoritative_final_decision=\$\{pkg\.ams_authoritative\.authoritative_final_decision\}/);
+    // The operator expectation never becomes the reported or packaged decision.
+    expect(entrypointCode).not.toMatch(/authoritative_final_decision=\$\{args/);
+    expect(entrypointCode).not.toMatch(/authoritative_final_decision:\s*args\./);
+    expect(entrypointCode).not.toMatch(/ams:\s*args\./);
+    // Its ONLY appearance is the comparison-only expectation assignment: two
+    // textual occurrences (the field name and the arg it reads), one statement.
+    expect(entrypointCode.match(/expected_final_decision/g) ?? []).toHaveLength(2);
+    expect(
+      entrypointCode.match(/expected_final_decision:\s*args\.amsInput\.expected_final_decision/g) ?? [],
+    ).toHaveLength(1);
+  });
+
+  it('resolves the actual decision only from the artifact, never from the expectation', () => {
+    // The resolver takes exactly one argument — the artifact decision — so it is
+    // structurally unable to fall back to an operator-supplied value.
+    expect(moduleCode).toMatch(
+      /export function resolveGoldenJsonFinalDecision\(\s*artifactFinalDecision: unknown,?\s*\)/,
+    );
+    const body = moduleCode.slice(
+      moduleCode.indexOf('export function resolveGoldenJsonFinalDecision('),
+    );
+    const fnBody = body.slice(0, body.indexOf('\n}\n') + 3);
+    expect(fnBody).not.toMatch(/expected_final_decision|expectation|operator/i);
+    // Authority is a literal, not a computed or configurable value.
+    expect(moduleCode).toMatch(/export const GOLDEN_JSON_DECISION_AUTHORITY = 'golden_json' as const;/);
+    expect(moduleCode).not.toMatch(/decision_authority:\s*'operator'/);
+    expect(moduleCode).not.toMatch(/decision_authority:\s*string/);
+  });
+
+  it('keeps --ams-final-decision out of the required existing-run flag set', () => {
+    expect(moduleCode).toMatch(
+      /AMS_EXISTING_RUN_REQUIRED_FLAGS = Object\.freeze\(\[\s*'--ams-golden-json',\s*'--ams-run-id',\s*\] as const\)/,
+    );
+    expect(moduleCode).toMatch(
+      /AMS_EXISTING_RUN_OPTIONAL_FLAGS = Object\.freeze\(\['--ams-final-decision'\] as const\)/,
+    );
+    // The all-or-nothing check must cover the REQUIRED set only.
+    expect(moduleCode).toMatch(
+      /AMS_EXISTING_RUN_REQUIRED_FLAGS\.filter\(\(f\) => values\.has\(f\) === false\)/,
+    );
+    expect(moduleCode).not.toMatch(
+      /presentExisting\.length !== AMS_EXISTING_RUN_FLAGS\.length/,
+    );
+  });
+
+  it('does not emit any prohibited decision claim', () => {
+    const combined = `${entrypointCode}\n${moduleCode}`;
+    for (const forbidden of [
+      'operator_final_decision_verified',
+      'requested_action_validated_hold',
+      'golden_json_embedded_run_id=true',
+      'decision_authority=operator',
+    ]) {
+      expect(combined, `must not emit: ${forbidden}`).not.toContain(forbidden);
+    }
   });
 
   it('never emits a persisted final-decision value', () => {

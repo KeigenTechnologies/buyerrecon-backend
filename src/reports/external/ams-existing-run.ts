@@ -34,8 +34,11 @@
  *
  *   - PERSISTED (replay rows) is authoritative for PROVENANCE only: run
  *     identity, site, subject, and the exact ordered `source_event_ids`.
- *   - THE GOLDEN JSON is the sole artifact-side carrier of the policy final
- *     decision (`authoritative_final_decision`).
+ *   - THE GOLDEN JSON is the sole authority for the policy final decision
+ *     (`authoritative_final_decision`). `--ams-final-decision` is an OPTIONAL
+ *     operator expectation, compared against it and nothing more: it cannot
+ *     create, replace, override or repair the artifact's decision, and it is
+ *     never reported as persisted or Policy-Pass-2 evidence.
  *   - NOTHING persists the policy final decision. There is no
  *     `final_decision` / `FinalDecision` / verdict column on `replay_runs` or
  *     `replay_evidence_cards`, and no such key inside the persisted
@@ -59,11 +62,29 @@
 
 import type { GoldenSessionDbClient } from './session-evidence-atoms.js';
 
-/** Flags that select and parameterise the existing-run input mode. */
-export const AMS_EXISTING_RUN_FLAGS = Object.freeze([
+/**
+ * The approved existing-run contract: these two flags, and only these two, are
+ * required to select and parameterise existing-run mode.
+ */
+export const AMS_EXISTING_RUN_REQUIRED_FLAGS = Object.freeze([
   '--ams-golden-json',
   '--ams-run-id',
-  '--ams-final-decision',
+] as const);
+
+/**
+ * Optional, comparison-only. `--ams-final-decision` records an operator
+ * EXPECTATION about the decision that the validated Golden JSON already
+ * carries. It is never required, never a second authority, and cannot create,
+ * replace, override or repair the artifact's decision — see
+ * `resolveGoldenJsonFinalDecision`, which is the only source of the actual
+ * decision used by reconciliation.
+ */
+export const AMS_EXISTING_RUN_OPTIONAL_FLAGS = Object.freeze(['--ams-final-decision'] as const);
+
+/** Every flag that belongs to existing-run mode, required and optional alike. */
+export const AMS_EXISTING_RUN_FLAGS = Object.freeze([
+  ...AMS_EXISTING_RUN_REQUIRED_FLAGS,
+  ...AMS_EXISTING_RUN_OPTIONAL_FLAGS,
 ] as const);
 
 /** Flags that belong exclusively to the fresh-AMS input mode. */
@@ -129,20 +150,62 @@ export function persistedFinalDecision(_rows: PersistedAmsRunRows): null {
   return null;
 }
 
+export type GoldenJsonFinalDecisionResolution =
+  | { readonly ok: true; readonly final_decision: string }
+  | { readonly ok: false; readonly reason: string };
+
+/**
+ * Resolve THE actual AMS final decision. The validated Golden JSON's
+ * `authoritative_final_decision` is the sole source, and the operator
+ * expectation is deliberately NOT a parameter here — so this function cannot
+ * fall back to it, cannot be overridden by it, and cannot repair a missing or
+ * out-of-domain artifact decision with it. A bad artifact decision fails closed.
+ *
+ * The canonical validator already requires the field to be a present string; the
+ * domain check below additionally rejects an empty or non-canonical token, which
+ * the validator's type check alone would accept.
+ */
+export function resolveGoldenJsonFinalDecision(
+  artifactFinalDecision: unknown,
+): GoldenJsonFinalDecisionResolution {
+  if (typeof artifactFinalDecision !== 'string' || artifactFinalDecision === '') {
+    return { ok: false, reason: 'golden_json_final_decision_missing' };
+  }
+  if ((AMS_FINAL_DECISIONS as readonly string[]).includes(artifactFinalDecision) === false) {
+    return { ok: false, reason: 'golden_json_final_decision_invalid' };
+  }
+  return { ok: true, final_decision: artifactFinalDecision };
+}
+
 /**
  * Which verifications actually happened, kept as distinct facts so a report can
  * never collapse "provenance verified against the database" into "final
  * decision verified against the database".
  */
+/**
+ * The only authority for the actual AMS final decision. A literal, so no code
+ * path can report a different authority — an operator flag least of all.
+ */
+export const GOLDEN_JSON_DECISION_AUTHORITY = 'golden_json' as const;
+
 export interface AmsRunVerificationFlags {
   /** Run identity, site, subject and exact ordered source events matched rows. */
   readonly persisted_provenance_verified: boolean;
-  /** The artifact's `authoritative_final_decision` matched the declaration. */
+  /**
+   * The decision was resolved from the validated Golden JSON and is canonical,
+   * and any supplied operator expectation agreed with it.
+   */
   readonly golden_json_decision_verified: boolean;
   /** Always false: nothing persists a decision to verify against. */
   readonly persisted_final_decision_verified: false;
   /** Always true: the gap is a schema property, not a skipped check. */
   readonly persisted_final_decision_unavailable_by_schema: true;
+  /** Literal `'golden_json'`: never the operator, never persistence. */
+  readonly decision_authority: typeof GOLDEN_JSON_DECISION_AUTHORITY;
+  /** Whether the optional `--ams-final-decision` expectation was supplied. */
+  readonly operator_decision_expectation_supplied: boolean;
+  /** Comparison outcome, or `'not_applicable'` when no expectation was given. */
+  readonly operator_decision_expectation_matched: boolean | 'not_applicable';
 }
 
 /**
@@ -182,6 +245,10 @@ export interface ExistingRunReportMetadata {
   readonly persisted_final_decision_unavailable_by_schema: true;
   /** Literal `false`: the artifact has no embedded run id to verify against. */
   readonly golden_json_embedded_run_id: false;
+  /** Literal `'golden_json'`: the sole source of the actual final decision. */
+  readonly decision_authority: typeof GOLDEN_JSON_DECISION_AUTHORITY;
+  readonly operator_decision_expectation_supplied: boolean;
+  readonly operator_decision_expectation_matched: boolean | 'not_applicable';
 }
 
 /**
@@ -200,6 +267,11 @@ export function buildExistingRunReportMetadata(
     persisted_final_decision_verified: false,
     persisted_final_decision_unavailable_by_schema: true,
     golden_json_embedded_run_id: GOLDEN_JSON_EMBEDDED_RUN_ID,
+    decision_authority: GOLDEN_JSON_DECISION_AUTHORITY,
+    operator_decision_expectation_supplied:
+      verification?.operator_decision_expectation_supplied === true,
+    operator_decision_expectation_matched:
+      verification?.operator_decision_expectation_matched ?? 'not_applicable',
   };
 }
 
@@ -219,6 +291,13 @@ export function renderExistingRunReportMetadata(
       metadata.persisted_final_decision_unavailable_by_schema,
     )}`,
     `  golden_json_embedded_run_id=${String(metadata.golden_json_embedded_run_id)}`,
+    `  decision_authority=${metadata.decision_authority}`,
+    `  operator_decision_expectation_supplied=${String(
+      metadata.operator_decision_expectation_supplied,
+    )}`,
+    `  operator_decision_expectation_matched=${String(
+      metadata.operator_decision_expectation_matched,
+    )}`,
   ];
 }
 
@@ -232,7 +311,12 @@ export type AmsInputMode =
       readonly mode: 'existing_run';
       readonly ams_golden_json_path: string;
       readonly ams_run_id: string;
-      readonly expected_final_decision: string;
+      /**
+       * Optional operator EXPECTATION only. `undefined` means "no expectation
+       * declared"; the actual decision always comes from the validated Golden
+       * JSON. This is never the decision itself.
+       */
+      readonly expected_final_decision: string | undefined;
     };
 
 export type AmsInputModeResolution =
@@ -256,7 +340,8 @@ export function resolveAmsInputMode(values: ReadonlyMap<string, string>): AmsInp
   const presentFresh = AMS_FRESH_RUN_FLAGS.filter((f) => values.has(f));
 
   if (presentExisting.length > 0) {
-    if (presentExisting.length !== AMS_EXISTING_RUN_FLAGS.length) {
+    const missingRequired = AMS_EXISTING_RUN_REQUIRED_FLAGS.filter((f) => values.has(f) === false);
+    if (missingRequired.length > 0) {
       return { ok: false, reason: 'ams_existing_run_flags_required_together' };
     }
     if (presentFresh.length > 0) {
@@ -270,8 +355,10 @@ export function resolveAmsInputMode(values: ReadonlyMap<string, string>): AmsInp
     const runId = values.get('--ams-run-id') as string;
     if (UUID_RE.test(runId) === false) return { ok: false, reason: 'ams_run_id_invalid' };
 
-    const decision = values.get('--ams-final-decision') as string;
-    if ((AMS_FINAL_DECISIONS as readonly string[]).includes(decision) === false) {
+    // Optional. When supplied it is still domain-checked, so a typo becomes a
+    // fail-closed input error rather than a silent no-op comparison.
+    const decision = values.get('--ams-final-decision');
+    if (decision !== undefined && (AMS_FINAL_DECISIONS as readonly string[]).includes(decision) === false) {
       return { ok: false, reason: 'ams_final_decision_invalid' };
     }
 
@@ -337,8 +424,13 @@ export interface PersistedAmsRunExpectation {
   readonly source_event_ids: ReadonlyArray<number>;
   /** From the supplied artifact's authoritative_final_decision. */
   readonly artifact_final_decision: string;
-  /** Operator-declared expectation for the final decision. */
-  readonly expected_final_decision: string;
+  /**
+   * OPTIONAL operator-declared expectation, for comparison only. `undefined`
+   * means no expectation was declared. Never the decision itself: the actual
+   * decision is resolved from `artifact_final_decision` via
+   * `resolveGoldenJsonFinalDecision`.
+   */
+  readonly expected_final_decision: string | undefined;
   /** From the supplied artifact's product_decision.RequestedAction, if present. */
   readonly artifact_requested_action: string | undefined;
   /**
@@ -434,13 +526,23 @@ export function reconcilePersistedAmsRun(
     }
   }
 
-  // ---- Decision. The golden JSON is the only decision carrier, so this is an
-  // artifact-versus-declaration check. `persistedFinalDecision(rows)` is null by
-  // schema and is therefore never consulted as an alternative source.
+  // ---- Decision. The validated Golden JSON is the SOLE authority: the actual
+  // decision is resolved from the artifact alone. `persistedFinalDecision(rows)`
+  // is null by schema, and the optional operator expectation is only ever
+  // compared against the resolved value — never substituted for it. If the
+  // artifact decision cannot be resolved, the operator expectation is not
+  // consulted at all, so it can never create or repair a decision.
   const decisionReasons: string[] = [];
 
-  if (expected.artifact_final_decision !== expected.expected_final_decision) {
-    decisionReasons.push('golden_json_final_decision_mismatch');
+  const resolvedDecision = resolveGoldenJsonFinalDecision(expected.artifact_final_decision);
+  const expectationSupplied = expected.expected_final_decision !== undefined;
+  let expectationMatched: boolean | 'not_applicable' = 'not_applicable';
+
+  if (resolvedDecision.ok === false) {
+    decisionReasons.push(resolvedDecision.reason);
+  } else if (expectationSupplied) {
+    expectationMatched = expected.expected_final_decision === resolvedDecision.final_decision;
+    if (expectationMatched === false) decisionReasons.push('golden_json_final_decision_mismatch');
   }
 
   // Staleness check on the PRODUCT proposal. Disjoint from the decision check
@@ -465,6 +567,9 @@ export function reconcilePersistedAmsRun(
       golden_json_decision_verified: decisionReasons.length === 0,
       persisted_final_decision_verified: false,
       persisted_final_decision_unavailable_by_schema: true,
+      decision_authority: GOLDEN_JSON_DECISION_AUTHORITY,
+      operator_decision_expectation_supplied: expectationSupplied,
+      operator_decision_expectation_matched: expectationMatched,
     },
   };
 }
