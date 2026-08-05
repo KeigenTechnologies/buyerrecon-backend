@@ -36,6 +36,7 @@ import { spawnSync } from "node:child_process";
 
 // ---- Customer-output GENERATION surface (allowlist) ------------------------------------------
 const CUSTOMER_OUTPUT_FILES = [
+  "src/reports/external/ams-existing-run.ts",
   "src/reports/external/builders.ts",
   "src/reports/external/contracts.ts",
   "src/reports/external/fixtures.ts",

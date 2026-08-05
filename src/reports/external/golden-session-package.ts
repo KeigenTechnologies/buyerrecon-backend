@@ -9,8 +9,12 @@
  *
  * Authority split (never violated here):
  *   - AMS owns Risk / Series / PoI / Fit / Intent / Window-Timing / TRQ /
- *     Action proposal / Policy Pass 1 / Trust / Policy Pass 2 final decision.
+ *     Action proposal / Policy Pass 1 / Trust / the authoritative final decision.
  *     Nothing in this module recalculates, re-scores, or overrides any of it.
+ *     Which policy stage OWNED finalisation is deliberately not claimed: the
+ *     canonical artifact has no Pass-2 finality field, the replay tables persist
+ *     no final-authority field, and AMS permits direct finalisation under
+ *     SKIP_TRUST. See FINAL_DECISION_AUTHORITY.
  *   - The backend owns event truth, persisted session evidence, EvidenceAtom
  *     construction, SessionEvidenceCard, ReportSnapshot, and packaging.
  *
@@ -31,10 +35,12 @@ import {
 import type { EvidenceAtom, ReportSnapshot, SessionEvidenceCard } from './contracts.js';
 import { renderReportMarkdown } from './renderer.js';
 import { sanitizeCustomerText } from './safe-claims.js';
+import type { ExistingRunReportMetadata } from './ams-existing-run.js';
 import {
   mapSessionRowsToEvidenceAtoms,
   summarizeStagePresence,
   type BackendSessionIdentity,
+  type FullSessionRawEvidence,
   type SessionPersistedRows,
   type StagePresenceEntry,
 } from './session-evidence-atoms.js';
@@ -124,6 +130,24 @@ export interface AmsGoldenSessionResult {
   source_event_ids: number[];
 }
 
+/**
+ * Closed canonical scope key set. Identity is asserted ONLY through these keys;
+ * anything else (notably `browser_id`) is rejected rather than silently unread.
+ */
+const AMS_SCOPE_KEYS = new Set([
+  'site_id',
+  'subject_id',
+  'subject_identity_model',
+  'session_level_isolation',
+  'session_id',
+  // Not emitted by canonical AMS today, but tolerated AND validated if a future
+  // artifact represents it. `browser_id` is deliberately absent: identity is
+  // asserted through subject_id only, so a represented browser_id is rejected.
+  'workspace_id',
+  'window_start',
+  'window_end',
+]);
+
 const AMS_TOP_LEVEL_KEYS = new Set([
   'schema_version',
   'status',
@@ -143,12 +167,30 @@ const AMS_TOP_LEVEL_KEYS = new Set([
   'source_event_ids',
 ]);
 
+/**
+ * The stage that owned final decision-making is NOT established by anything the
+ * backend can read: the canonical Golden JSON has `authoritative_final_decision`
+ * but no Policy-Pass-2 finality field, the replay tables persist no
+ * final-decision or final-authority column, and canonical AMS permits direct
+ * finalisation under SKIP_TRUST. Customer output therefore attributes the
+ * decision to the authoritative AMS result, never to a named policy stage.
+ */
+export const FINAL_DECISION_AUTHORITY = 'authoritative_ams_result' as const;
+
 /** Expected AMS decision identity (identity truth #2), pinned by the operator. */
 export interface AmsIdentityExpectation {
   site_id: string;
   subject_id: string;
   window_start: string;
   window_end: string;
+  /**
+   * Backend session identity, cross-checked against the artifact scope when the
+   * artifact represents it. The canonical scope carries `session_id` as
+   * OPTIONAL and carries no workspace at all, so absence is tolerated — but a
+   * represented contradictory value must fail closed rather than be ignored.
+   */
+  session_id?: string;
+  workspace_id?: string;
 }
 
 export type AmsValidationFailureStage = 'ams_output_invalid' | 'ams_identity_mismatch';
@@ -210,6 +252,17 @@ export function validateAmsGoldenSessionJson(
 
   const scope = parsed.scope;
   if (isPlainObject(scope) === false) return invalid(['scope_missing']);
+
+  // The canonical scope key set is CLOSED. The canonical artifact carries no
+  // browser_id, so a represented `scope.browser_id` — matching or not — is an
+  // unrecognised identity assertion, and an unrecognised identity key must never
+  // be ignored merely because another identity field happens to match. Closing
+  // the set makes every such key fail closed instead of passing unread.
+  const scopeKeyReasons: string[] = [];
+  for (const key of Object.keys(scope)) {
+    if (AMS_SCOPE_KEYS.has(key) === false) scopeKeyReasons.push(`unexpected_scope_key:${key}`);
+  }
+  if (scopeKeyReasons.length > 0) return invalid(scopeKeyReasons);
   if (typeof scope.site_id !== 'string' || typeof scope.subject_id !== 'string' ||
       typeof scope.window_start !== 'string' || typeof scope.window_end !== 'string') {
     return invalid(['scope_fields_invalid']);
@@ -226,6 +279,19 @@ export function validateAmsGoldenSessionJson(
   if (scope.subject_id !== expected.subject_id) identityReasons.push('subject_mismatch');
   if (scope.window_start !== expected.window_start) identityReasons.push('window_start_mismatch');
   if (scope.window_end !== expected.window_end) identityReasons.push('window_end_mismatch');
+
+  // Represented-but-contradictory must fail closed; absent-and-optional must not.
+  // Silently ignoring a wrong scope.session_id would let an artifact from another
+  // session be packaged against this session's backend evidence.
+  if (expected.session_id !== undefined && scope.session_id !== undefined &&
+      scope.session_id !== expected.session_id) {
+    identityReasons.push('session_mismatch');
+  }
+  const scopeWorkspace = (scope as { workspace_id?: unknown }).workspace_id;
+  if (expected.workspace_id !== undefined && scopeWorkspace !== undefined &&
+      scopeWorkspace !== expected.workspace_id) {
+    identityReasons.push('workspace_mismatch');
+  }
   if (identityReasons.length > 0) return mismatch(identityReasons);
 
   if (typeof parsed.authoritative_final_decision !== 'string') {
@@ -293,6 +359,19 @@ export const GOLDEN_IDENTITY_LIMITATION =
   'to one exact backend session. The two identities are recorded separately and were correlated ' +
   'manually by the operator for Golden Session v0.1.';
 
+/**
+ * The AMS LatestSummary-derived surface. EXPLICITLY REDUCED: AMS consumed a
+ * reduced summary, so these values may describe far less than the session
+ * actually contained. Never the complete route, never the complete form history.
+ */
+export interface AmsReducedLatestSummary {
+  /** True only when the canonical artifact actually represented this surface. */
+  readonly represented: boolean;
+  readonly path_sequence?: ReadonlyArray<string>;
+  readonly form_started?: boolean;
+  readonly form_abandon_after_start?: boolean;
+}
+
 /** The combined machine-readable Golden Session package artifact. */
 export interface GoldenSessionPackage {
   golden_session_artifact_version: string;
@@ -317,6 +396,15 @@ export interface GoldenSessionPackage {
   buyer_motion: BuyerMotionPresentation;
   recommended_operator_action: string;
   ams_authoritative: AmsGoldenSessionResult;
+  /** Existing-run provenance boundary; null for fresh-AMS packages. */
+  existing_run_verification: ExistingRunReportMetadata | null;
+  /**
+   * Full-session raw accepted-event evidence — the authoritative route and form
+   * facts. Structurally distinct from `ams_reduced_latest_summary`.
+   */
+  full_session_raw_evidence: FullSessionRawEvidence | null;
+  /** The reduced AMS LatestSummary surface, never merged with the raw one. */
+  ams_reduced_latest_summary: AmsReducedLatestSummary;
   stage_presence: StagePresenceEntry[];
   limitations: string[];
   evidence_atoms: EvidenceAtom[];
@@ -335,7 +423,20 @@ export interface GoldenSessionPackage {
 export interface GoldenSessionPackageInput {
   backend_identity: BackendSessionIdentity;
   ams: AmsGoldenSessionResult;
+  /** One authoritative existing-run metadata object, shared by all renderers. */
+  existing_run_verification?: ExistingRunReportMetadata;
   rows: SessionPersistedRows;
+  /**
+   * FULL-SESSION raw accepted-event evidence. Authoritative for route and form
+   * facts. Omitted only when the raw stream was not read.
+   */
+  full_session_raw_evidence?: FullSessionRawEvidence;
+  /**
+   * The AMS LatestSummary-derived surface, kept separate and explicitly REDUCED.
+   * It routinely describes less than the session contained and must never be
+   * presented as the complete route or the complete form history.
+   */
+  ams_reduced_latest_summary?: AmsReducedLatestSummary;
 }
 
 /**
@@ -345,6 +446,11 @@ export interface GoldenSessionPackageInput {
  */
 export function buildGoldenSessionPackage(input: GoldenSessionPackageInput): GoldenSessionPackage {
   const { backend_identity: identity, ams, rows } = input;
+  // Two structurally separate evidence surfaces. The raw one is authoritative
+  // for what the session actually contained; the AMS-reduced one describes only
+  // what AMS's LatestSummary carried. Neither is ever merged into the other.
+  const fullSessionRaw = input.full_session_raw_evidence;
+  const amsReduced = input.ams_reduced_latest_summary;
 
   const atoms = mapSessionRowsToEvidenceAtoms(identity, rows);
   const stagePresence = summarizeStagePresence(rows);
@@ -415,6 +521,9 @@ export function buildGoldenSessionPackage(input: GoldenSessionPackageInput): Gol
     buyer_motion: deriveBuyerMotionPresentation(ams),
     recommended_operator_action: deriveRecommendedOperatorAction(ams),
     ams_authoritative: ams,
+    existing_run_verification: input.existing_run_verification ?? null,
+    full_session_raw_evidence: fullSessionRaw ?? null,
+    ams_reduced_latest_summary: amsReduced ?? { represented: false },
     stage_presence: stagePresence,
     limitations,
     evidence_atoms: atoms,
@@ -473,8 +582,95 @@ export function renderGoldenSessionMarkdown(pkg: GoldenSessionPackage): string {
   out.push(`- Action proposal (product layer): ${ams.product_decision?.RequestedAction ?? 'not_reported'}; reason codes: ${codes(ams.product_decision?.ReasonCodes)}`);
   out.push(`- Policy Pass 1: trust invocation ${ams.policy_pass_1?.TrustInvocationMode ?? 'not_reported'}; action tier ${ams.policy_pass_1?.ActionTier ?? 'not_reported'}; gating reason codes: ${codes(ams.policy_pass_1?.GatingReasonCodes)}`);
   out.push(`- Trust / confidence: band ${ams.trust?.TrustBand ?? 'not_invoked'}; decision ${ams.trust?.Decision ?? 'not_invoked'}; confidence ${ams.trust?.ConfidenceScore01 !== undefined ? String(ams.trust.ConfidenceScore01) : 'not_reported'}; reason codes: ${codes(ams.trust?.ReasonCodes)}`);
-  out.push(`- Policy Pass 2 final decision (authoritative): ${ams.authoritative_final_decision}; gating reason codes: ${codes(ams.runtime_decision?.GatingReasonCodes)}`);
+  // Neutral, evidenced wording. The artifact carries `authoritative_final_decision`
+  // and no Policy-Pass-2 finality field, and the replay tables persist no
+  // final-decision or final-authority field, so WHICH stage owned finalisation is
+  // not established by anything available here — canonical AMS also permits direct
+  // finalisation under SKIP_TRUST. Naming Pass 2 would be an inference, so the
+  // claim is limited to what the artifact actually asserts.
+  out.push(`- Authoritative AMS final decision: ${ams.authoritative_final_decision}; gating reason codes: ${codes(ams.runtime_decision?.GatingReasonCodes)}`);
   out.push(`- Recommended operator action: ${pkg.recommended_operator_action}`);
+  out.push('');
+  const existingRun = pkg.existing_run_verification;
+  if (existingRun !== null) {
+    out.push('## Existing-run linkage boundary');
+    out.push('');
+    out.push(
+      `- Consistency linkage verified: ${String(
+        existingRun.cross_source_consistency_linkage_verified,
+      )}`,
+    );
+    out.push(`- Cryptographic linkage: ${String(existingRun.cryptographic_linkage)}`);
+    out.push(`- Embedded run linkage: ${String(existingRun.embedded_run_linkage)}`);
+    out.push(`- Cross-source linkage: ${existingRun.cross_source_linkage}`);
+    out.push(
+      `- Golden JSON embedded run ID: ${String(existingRun.golden_json_embedded_run_id)}`,
+    );
+    out.push(
+      '- Consistency linkage does not mean cryptographic linkage or a Golden-artifact-native replay-run binding.',
+    );
+    out.push('');
+  }
+
+  // Two surfaces, never conflated. The raw one is what the session contained;
+  // the reduced one is only what the AMS LatestSummary carried. Presenting the
+  // reduced values as the whole session would erase real buyer behaviour.
+  out.push('## Full-session raw accepted-event evidence (authoritative for route and form)');
+  out.push('');
+  const raw = pkg.full_session_raw_evidence;
+  if (raw === null) {
+    out.push('- Raw accepted-event evidence: not read for this package.');
+  } else {
+    out.push(`- Accepted events in session: ${raw.event_count}`);
+    out.push(
+      `- Route progression (complete, in order): ${
+        raw.route_progression.length === 0 ? 'none recorded' : raw.route_progression.join(' → ')
+      }`,
+    );
+    out.push(
+      `- Form evidence: started ${String(raw.form_evidence.form_started)}; submitted ${String(
+        raw.form_evidence.form_submit,
+      )}; abandoned after start ${String(raw.form_evidence.form_abandon_after_start)}${
+        raw.form_evidence.form_start_event_id !== null
+          ? ` (form_start event_id ${raw.form_evidence.form_start_event_id})`
+          : ''
+      }`,
+    );
+    out.push(`- Supporting source event ids: ${codes(raw.source_event_ids.map(String))}`);
+    // Drift stated plainly rather than concealed.
+    const bySource = raw.semantic_source_counts;
+    out.push(
+      `- Event-type provenance: event_name ${bySource.event_name}, legacy_event_type ${bySource.legacy_event_type}, unresolved ${bySource.unresolved}`,
+    );
+    if (bySource.legacy_event_type > 0) {
+      out.push(
+        '- Note: some events carried no populated `event_name`; their semantic type was read from `legacy_event_type`. Stored rows were not modified.',
+      );
+    }
+  }
+  out.push('');
+  out.push('## AMS reduced LatestSummary surface (NOT the full session)');
+  out.push('');
+  const reduced = pkg.ams_reduced_latest_summary;
+  if (reduced.represented === false) {
+    out.push('- The canonical AMS artifact did not represent a LatestSummary surface.');
+  } else {
+    out.push(
+      `- Reduced path sequence: ${
+        reduced.path_sequence === undefined || reduced.path_sequence.length === 0
+          ? 'none reported'
+          : reduced.path_sequence.join(' → ')
+      }`,
+    );
+    out.push(
+      `- Reduced form fields: started ${String(reduced.form_started ?? false)}; abandoned after start ${String(
+        reduced.form_abandon_after_start ?? false,
+      )}`,
+    );
+  }
+  out.push(
+    '- This surface is REDUCED: it reflects only what the AMS LatestSummary carried, not every accepted event. Where it disagrees with the full-session raw evidence above, the raw evidence describes the session and this surface describes the AMS input.',
+  );
   out.push('');
   out.push('## Limitations');
   out.push('');

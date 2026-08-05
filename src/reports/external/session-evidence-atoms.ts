@@ -180,6 +180,224 @@ function asText(value: unknown): string {
  * query is scoped to the one session identity and the pinned bounds, and every
  * multi-row read has a stable ORDER BY so downstream mapping is deterministic.
  */
+/**
+ * Read the canonical ordered accepted-event id sequence for EXACTLY one
+ * workspace + site + session inside the pinned bounds. SELECT-only.
+ *
+ * This is the independent third provenance source: it is derived from event
+ * truth itself, not from the AMS artifact or the replay card, so a malformation
+ * those two happen to share cannot survive comparison against it.
+ *
+ * Canonical ordering is `received_at ASC, event_id ASC` — the same order AMS
+ * consumed — so the comparison is order-sensitive and not merely set-based.
+ */
+export async function readAcceptedEventIdSequence(
+  db: GoldenSessionDbClient,
+  identity: BackendSessionIdentity,
+): Promise<ReadonlyArray<unknown>> {
+  const result = await db.query(
+    `SELECT event_id
+       FROM accepted_events
+      WHERE workspace_id = $1 AND site_id = $2 AND session_id = $3
+        AND received_at >= $4::timestamptz AND received_at <= $5::timestamptz
+      ORDER BY received_at ASC, event_id ASC`,
+    [identity.workspace_id, identity.site_id, identity.session_id, identity.window_start, identity.window_end],
+  );
+  return result.rows.map((row) => row.event_id);
+}
+
+/**
+ * One accepted-event row, projected to exactly the fields the package needs.
+ * Nothing else is read: no payloads, no PII-bearing raw blobs.
+ */
+export interface RawAcceptedEventRow {
+  readonly event_id: unknown;
+  readonly received_at: unknown;
+  /** Transport-level column value; `page` / `track` are transport sentinels. */
+  readonly event_type: unknown;
+  /** Canonical semantic name, when the row carries one. */
+  readonly event_name: unknown;
+  /** Drift carrier: older rows put the semantic type here instead. */
+  readonly legacy_event_type: unknown;
+  /** Canonical sprint2 wire route field — the PRIMARY route source. */
+  readonly path: unknown;
+  /** Legacy route field, retained as fallback compatibility. */
+  readonly page_path: unknown;
+}
+
+/**
+ * The literal `event_name` value that means "not populated". Matched EXACTLY:
+ * the canonical extractor uses `NULLIF(raw->>'event_name', 'unknown')`, which is
+ * case-sensitive, so `'UNKNOWN'` is NOT this sentinel and is taken at face
+ * value. Documented rather than silently normalised, to avoid inventing a rule
+ * the canonical SQL does not have.
+ */
+const EVENT_NAME_UNKNOWN_SENTINEL = 'unknown';
+
+/** Bounded read: a Golden Session is one session, not an unbounded scan. */
+export const RAW_ACCEPTED_EVENT_READ_LIMIT = 1000;
+
+/**
+ * Read the raw accepted-event evidence for EXACTLY one workspace + site +
+ * session inside the pinned bounds. SELECT-only, bounded, deterministically
+ * ordered, and projected to the minimum field set.
+ *
+ * This is the FULL-SESSION source of truth for route and form facts. It is
+ * deliberately independent of any AMS-reduced summary, which may legitimately
+ * describe far less than the session actually contains.
+ */
+export async function readRawAcceptedEventEvidence(
+  db: GoldenSessionDbClient,
+  identity: BackendSessionIdentity,
+): Promise<ReadonlyArray<RawAcceptedEventRow>> {
+  const result = await db.query(
+    `SELECT event_id,
+            received_at,
+            event_type,
+            raw->>'event_name' AS event_name,
+            raw->>'legacy_event_type' AS legacy_event_type,
+            raw->>'path' AS path,
+            raw->>'page_path' AS page_path
+       FROM accepted_events
+      WHERE workspace_id = $1 AND site_id = $2 AND session_id = $3
+        AND received_at >= $4::timestamptz AND received_at <= $5::timestamptz
+      ORDER BY received_at ASC, event_id ASC
+      LIMIT ${RAW_ACCEPTED_EVENT_READ_LIMIT}`,
+    [identity.workspace_id, identity.site_id, identity.session_id, identity.window_start, identity.window_end],
+  );
+  return result.rows as unknown as ReadonlyArray<RawAcceptedEventRow>;
+}
+
+/** Where a row's semantic event type was actually resolved from. */
+export type SemanticEventSource = 'event_name' | 'legacy_event_type' | 'unresolved';
+
+export interface ResolvedSemanticEvent {
+  readonly event_id: number | null;
+  readonly semantic_event_type: string | null;
+  readonly semantic_source: SemanticEventSource;
+  readonly page_path: string | null;
+}
+
+/**
+ * Resolve one row's semantic event type, recording WHERE it came from.
+ *
+ * Known drift: `event_name` may be absent while `legacy_event_type` carries the
+ * real semantic type, and the `event_type` column may hold only a transport
+ * sentinel. The row is never mutated or "repaired"; the provenance is reported
+ * instead, so a reader can tell a genuine `event_name` from a legacy fallback.
+ */
+export function resolveSemanticEvent(row: RawAcceptedEventRow): ResolvedSemanticEvent {
+  const nonEmpty = (v: unknown): string | null => (typeof v === 'string' && v !== '' ? v : null);
+
+  // Canonical: COALESCE(NULLIF(NULLIF(event_name,''),'unknown'), legacy_event_type)
+  // The transport `event_type` column is NOT a semantic source in the canonical
+  // contract, so `track` can never stand in for — or override — the semantic
+  // type carried by legacy_event_type.
+  const named = nonEmpty(row.event_name);
+  const eventName = named === EVENT_NAME_UNKNOWN_SENTINEL ? null : named;
+  const legacy = nonEmpty(row.legacy_event_type);
+
+  let semantic: string | null = null;
+  let source: SemanticEventSource = 'unresolved';
+  if (eventName !== null) {
+    semantic = eventName;
+    source = 'event_name';
+  } else if (legacy !== null) {
+    semantic = legacy;
+    source = 'legacy_event_type';
+  }
+
+  const id = typeof row.event_id === 'number'
+    ? row.event_id
+    : typeof row.event_id === 'string' && row.event_id.trim() !== ''
+      ? Number(row.event_id)
+      : Number.NaN;
+
+  return {
+    event_id: Number.isSafeInteger(id) ? id : null,
+    semantic_event_type: semantic,
+    semantic_source: source,
+    // Canonical: COALESCE(NULLIF(path,''), NULLIF(page_path,''))
+    page_path: nonEmpty(row.path) ?? nonEmpty(row.page_path),
+  };
+}
+
+/** Route and form facts derived from the FULL raw accepted-event stream. */
+export interface FullSessionRawEvidence {
+  /** Every page_view path in canonical order, repeats preserved. */
+  readonly route_progression: ReadonlyArray<string>;
+  readonly form_evidence: {
+    readonly form_start_event_id: number | null;
+    readonly form_started: boolean;
+    readonly form_submit: boolean;
+    readonly form_abandon_after_start: boolean;
+  };
+  /** The accepted-event ids these facts were derived from, in order. */
+  readonly source_event_ids: ReadonlyArray<number>;
+  /** How many rows resolved from each semantic source — drift, stated plainly. */
+  readonly semantic_source_counts: Readonly<Record<SemanticEventSource, number>>;
+  readonly event_count: number;
+}
+
+/**
+ * Route steps come from semantic `page_view` events ONLY — never session_start,
+ * page_state or summary events — matching the canonical extractor. This is also
+ * what stops several non-route events that share one path from inflating the
+ * route with duplicate steps.
+ */
+const ROUTE_EVENT_TYPE = 'page_view';
+
+/**
+ * Derive full-session route and form facts from raw accepted events.
+ *
+ * Pure. Never consults, and can never be overwritten by, any AMS-reduced
+ * summary: the reduced surface routinely describes less than the session
+ * contains, and silently preferring it would erase real buyer behaviour.
+ */
+export function buildFullSessionRawEvidence(
+  rows: ReadonlyArray<RawAcceptedEventRow>,
+): FullSessionRawEvidence {
+  const route: string[] = [];
+  const sourceIds: number[] = [];
+  const counts: Record<SemanticEventSource, number> = {
+    event_name: 0, legacy_event_type: 0, unresolved: 0,
+  };
+
+  let formStartEventId: number | null = null;
+  let formStarted = false;
+  let formSubmit = false;
+
+  for (const row of rows) {
+    const resolved = resolveSemanticEvent(row);
+    counts[resolved.semantic_source] += 1;
+    if (resolved.event_id !== null) sourceIds.push(resolved.event_id);
+
+    const type = resolved.semantic_event_type;
+    if (type === ROUTE_EVENT_TYPE && resolved.page_path !== null) {
+      route.push(resolved.page_path);
+    }
+    if (type === 'form_start') {
+      if (formStarted === false) formStartEventId = resolved.event_id;
+      formStarted = true;
+    }
+    if (type === 'form_submit' || type === 'generate_lead') formSubmit = true;
+  }
+
+  return {
+    route_progression: route,
+    form_evidence: {
+      form_start_event_id: formStartEventId,
+      form_started: formStarted,
+      form_submit: formSubmit,
+      // Abandonment is a raw-stream fact: a start with no later submit.
+      form_abandon_after_start: formStarted === true && formSubmit === false,
+    },
+    source_event_ids: sourceIds,
+    semantic_source_counts: counts,
+    event_count: rows.length,
+  };
+}
+
 export async function readSessionPersistedRows(
   db: GoldenSessionDbClient,
   identity: BackendSessionIdentity,
@@ -187,6 +405,9 @@ export async function readSessionPersistedRows(
   const sessionScope = [identity.site_id, identity.session_id, identity.window_start, identity.window_end];
   const workspaceScope = [identity.workspace_id, ...sessionScope];
 
+  // Workspace-scoped like every sibling read. Without workspace_id in the
+  // predicate, two workspaces sharing a site_id + session_id pair would pool
+  // their events into one session's evidence.
   const accepted = await db.query(
     `SELECT COUNT(*)::int AS source_event_count,
             MIN(event_id) AS first_event_id,
@@ -194,9 +415,9 @@ export async function readSessionPersistedRows(
             MIN(received_at) AS first_received_at,
             MAX(received_at) AS last_received_at
        FROM accepted_events
-      WHERE site_id = $1 AND session_id = $2
-        AND received_at >= $3::timestamptz AND received_at <= $4::timestamptz`,
-    sessionScope,
+      WHERE workspace_id = $1 AND site_id = $2 AND session_id = $3
+        AND received_at >= $4::timestamptz AND received_at <= $5::timestamptz`,
+    workspaceScope,
   );
 
   const features = await db.query(
