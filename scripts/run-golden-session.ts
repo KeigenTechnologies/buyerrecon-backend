@@ -68,6 +68,7 @@ import {
   readRawAcceptedEventEvidence,
   readSessionPersistedRows,
   type BackendSessionIdentity,
+  type GoldenSessionDbClient,
 } from '../src/reports/external/session-evidence-atoms.js';
 import {
   AMS_EXISTING_RUN_FLAGS,
@@ -100,10 +101,18 @@ type FailureStage =
   | 'report_build_failed'
   | 'artifact_write_failed';
 
+export class GoldenSessionRunFailure extends Error {
+  constructor(
+    readonly stage: FailureStage,
+    readonly detail?: string,
+  ) {
+    super(`run-golden-session FAILED stage=${stage}${detail !== undefined ? ` (${detail})` : ''}`);
+    this.name = 'GoldenSessionRunFailure';
+  }
+}
+
 function failStage(stage: FailureStage, detail?: string): never {
-  // Safe, stage-specific summary only. Raw diagnostics are intentionally withheld.
-  process.stderr.write(`run-golden-session FAILED stage=${stage}${detail !== undefined ? ` (${detail})` : ''}\n`);
-  process.exit(1);
+  throw new GoldenSessionRunFailure(stage, detail);
 }
 
 interface CliArgs {
@@ -176,7 +185,7 @@ function runAmsOnce(
     '-output', amsOutputDir,
     '-subject', args.subject,
   ];
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     execFile(
       fresh.ams_bin,
       amsArgs,
@@ -186,9 +195,18 @@ function runAmsOnce(
           const code = typeof (error as NodeJS.ErrnoException).code === 'string'
             ? (error as NodeJS.ErrnoException).code
             : undefined;
-          if (code === 'ENOENT' || code === 'EACCES') failStage('ams_executable_unavailable');
+          if (code === 'ENOENT' || code === 'EACCES') {
+            reject(new GoldenSessionRunFailure('ams_executable_unavailable'));
+            return;
+          }
           // Timeout, non-zero exit, or signal. Raw stderr is withheld by design.
-          failStage('ams_execution_failed', `exit_${String((error as { code?: unknown }).code ?? 'unknown')}`);
+          reject(
+            new GoldenSessionRunFailure(
+              'ams_execution_failed',
+              `exit_${String((error as { code?: unknown }).code ?? 'unknown')}`,
+            ),
+          );
+          return;
         }
         resolve();
       },
@@ -196,8 +214,37 @@ function runAmsOnce(
   });
 }
 
-async function main(): Promise<void> {
-  const args = parseArgs(process.argv.slice(2));
+export interface GoldenSessionRunDependencies {
+  readonly pool: GoldenSessionDbClient & { end(): Promise<void> };
+  readonly fileSystem: {
+    existsSync(path: string): boolean;
+    mkdirSync(path: string, options: { recursive: true }): string | undefined;
+    readFileSync(path: string, encoding: 'utf8'): string;
+    writeFileSync(path: string, data: string, encoding: 'utf8'): void;
+  };
+  readonly runAmsOnce: typeof runAmsOnce;
+  readonly stdout: { write(value: string): unknown };
+}
+
+const PRODUCTION_DEPENDENCIES: GoldenSessionRunDependencies = {
+  pool,
+  fileSystem: { existsSync, mkdirSync, readFileSync, writeFileSync },
+  runAmsOnce,
+  stdout: process.stdout,
+};
+
+export interface GoldenSessionRunResult {
+  readonly json_path: string;
+  readonly markdown_path: string;
+  readonly package: ReturnType<typeof buildGoldenSessionPackage>;
+}
+
+export async function runGoldenSession(
+  argv: string[],
+  dependencies: GoldenSessionRunDependencies = PRODUCTION_DEPENDENCIES,
+): Promise<GoldenSessionRunResult> {
+  const args = parseArgs(argv);
+  const { fileSystem, pool: db, stdout } = dependencies;
 
   const windowStart = `${args.start}T00:00:00Z`;
   const windowEnd = `${args.end}T23:59:59Z`;
@@ -207,20 +254,20 @@ async function main(): Promise<void> {
   let goldenRaw: string;
   if (args.amsInput.mode === 'fresh_ams') {
     const fresh = args.amsInput;
-    if (existsSync(fresh.ams_bin) === false) failStage('ams_executable_unavailable');
+    if (fileSystem.existsSync(fresh.ams_bin) === false) failStage('ams_executable_unavailable');
 
     const amsOutputDir = join(args.output, 'ams');
     try {
-      mkdirSync(amsOutputDir, { recursive: true });
+      fileSystem.mkdirSync(amsOutputDir, { recursive: true });
     } catch {
       failStage('artifact_write_failed', 'output_directory');
     }
 
-    await runAmsOnce(args, fresh, amsOutputDir);
+    await dependencies.runAmsOnce(args, fresh, amsOutputDir);
 
     const goldenPath = join(amsOutputDir, `${args.site}_${args.start}_${args.end}_golden.json`);
     try {
-      goldenRaw = readFileSync(goldenPath, 'utf8');
+      goldenRaw = fileSystem.readFileSync(goldenPath, 'utf8');
     } catch {
       failStage('ams_output_invalid', 'golden_json_not_produced');
     }
@@ -228,11 +275,11 @@ async function main(): Promise<void> {
     // existing_run: AMS is never invoked here. The already-produced canonical
     // golden JSON is read from an absolute operator-supplied path.
     const existing = args.amsInput;
-    if (existsSync(existing.ams_golden_json_path) === false) {
+    if (fileSystem.existsSync(existing.ams_golden_json_path) === false) {
       failStage('ams_output_invalid', 'golden_json_not_found');
     }
     try {
-      goldenRaw = readFileSync(existing.ams_golden_json_path, 'utf8');
+      goldenRaw = fileSystem.readFileSync(existing.ams_golden_json_path, 'utf8');
     } catch {
       failStage('ams_output_invalid', 'golden_json_unreadable');
     }
@@ -267,14 +314,14 @@ async function main(): Promise<void> {
     if (args.amsInput.mode === 'existing_run') {
       // Reconcile the supplied artifact against the persisted authoritative
       // run BEFORE any package is constructed. SELECT-only.
-      const persisted = await readPersistedAmsRunRows(pool, args.amsInput.ams_run_id);
+      const persisted = await readPersistedAmsRunRows(db, args.amsInput.ams_run_id);
       // Independent third provenance source: event truth for the exact
       // workspace + site + session, in canonical order. Read before
       // reconciliation so a shared artifact/card malformation cannot pass.
-      const acceptedEventIds = await readAcceptedEventIdSequence(pool, identity);
+      const acceptedEventIds = await readAcceptedEventIdSequence(db, identity);
       // Every replay run/card sharing this site and subject, so the supplied run
       // can be shown to be the unique consistent candidate.
-      const runCandidates = await readRunCandidatesForSubject(pool, args.site, args.subject);
+      const runCandidates = await readRunCandidatesForSubject(db, args.site, args.subject);
       const reconciliation = reconcilePersistedAmsRun(persisted, {
         accepted_event_ids: acceptedEventIds,
         run_candidates: runCandidates,
@@ -300,20 +347,25 @@ async function main(): Promise<void> {
       if (reconciliation.ok === false) reconciliationFailure = reconciliation.reasons.join(',');
       else reconciliationFlags = reconciliation.verification;
     }
-    rows = await readSessionPersistedRows(pool, identity);
+    rows = await readSessionPersistedRows(db, identity);
     // Full-session raw evidence: authoritative route and form facts, read
     // read-only and kept structurally separate from any AMS-reduced summary.
-    rawAcceptedEvents = await readRawAcceptedEventEvidence(pool, identity);
+    rawAcceptedEvents = await readRawAcceptedEventEvidence(db, identity);
   } catch {
     failStage('evidence_read_failed');
   } finally {
-    await pool.end().catch(() => undefined);
+    await db.end().catch(() => undefined);
   }
   // Raised after the pool is closed so the failure stage is never masked by the
   // surrounding catch.
   if (reconciliationFailure !== undefined) {
     failStage('ams_run_reconciliation_failed', reconciliationFailure);
   }
+
+  const existingRunMetadata =
+    args.amsInput.mode === 'existing_run'
+      ? buildExistingRunReportMetadata(args.amsInput.ams_run_id, reconciliationFlags)
+      : undefined;
 
   let pkg;
   try {
@@ -322,6 +374,7 @@ async function main(): Promise<void> {
       ams: validation.result,
       rows,
       full_session_raw_evidence: buildFullSessionRawEvidence(rawAcceptedEvents),
+      existing_run_verification: existingRunMetadata,
     });
   } catch {
     failStage('report_build_failed');
@@ -338,16 +391,21 @@ async function main(): Promise<void> {
   const jsonPath = join(args.output, `${baseName}.json`);
   const markdownPath = join(args.output, `${baseName}.md`);
   try {
-    writeFileSync(jsonPath, serializeGoldenSessionPackage(pkg), 'utf8');
-    writeFileSync(markdownPath, markdown, 'utf8');
+    fileSystem.mkdirSync(args.output, { recursive: true });
+  } catch {
+    failStage('artifact_write_failed', 'output_directory');
+  }
+  try {
+    fileSystem.writeFileSync(jsonPath, serializeGoldenSessionPackage(pkg), 'utf8');
+    fileSystem.writeFileSync(markdownPath, markdown, 'utf8');
   } catch {
     failStage('artifact_write_failed');
   }
 
   const missing = pkg.stage_presence.filter((s) => s.present === false).map((s) => s.missing_label);
-  process.stdout.write('run-golden-session OK (internal only, no delivery)\n');
-  process.stdout.write(`  ams_input_mode=${args.amsInput.mode}\n`);
-  process.stdout.write(`  ams_invoked=${String(args.amsInput.mode === 'fresh_ams')}\n`);
+  stdout.write('run-golden-session OK (internal only, no delivery)\n');
+  stdout.write(`  ams_input_mode=${args.amsInput.mode}\n`);
+  stdout.write(`  ams_invoked=${String(args.amsInput.mode === 'fresh_ams')}\n`);
   if (args.amsInput.mode === 'existing_run') {
     // One typed metadata object is the sole source of this block, so every fact
     // stays distinct and none can be collapsed into a single "reconciled"
@@ -358,19 +416,42 @@ async function main(): Promise<void> {
     // embeds no run id, so `golden_json_embedded_run_id` is structurally false
     // and the linkage is only ever: supplied run id → unique persisted
     // run/card ↔ Golden JSON overlapping subject and source-event identity.
-    const metadata = buildExistingRunReportMetadata(args.amsInput.ams_run_id, reconciliationFlags);
-    for (const line of renderExistingRunReportMetadata(metadata)) {
-      process.stdout.write(`${line}\n`);
+    for (const line of renderExistingRunReportMetadata(existingRunMetadata!)) {
+      stdout.write(`${line}\n`);
     }
   }
-  process.stdout.write(`  ams_status=${pkg.ams_authoritative.status}\n`);
-  process.stdout.write(`  authoritative_final_decision=${pkg.ams_authoritative.authoritative_final_decision}\n`);
-  process.stdout.write(`  buyer_motion=${pkg.buyer_motion}\n`);
-  process.stdout.write(`  recommended_operator_action=${pkg.recommended_operator_action}\n`);
-  process.stdout.write(`  evidence_atoms=${pkg.evidence_atoms.length}\n`);
-  process.stdout.write(`  missing_stages=${missing.length === 0 ? 'none' : missing.join(',')}\n`);
-  process.stdout.write(`  json_artifact=${jsonPath}\n`);
-  process.stdout.write(`  markdown_artifact=${markdownPath}\n`);
+  stdout.write(`  ams_status=${pkg.ams_authoritative.status}\n`);
+  stdout.write(`  authoritative_final_decision=${pkg.ams_authoritative.authoritative_final_decision}\n`);
+  stdout.write(`  buyer_motion=${pkg.buyer_motion}\n`);
+  stdout.write(`  recommended_operator_action=${pkg.recommended_operator_action}\n`);
+  stdout.write(`  evidence_atoms=${pkg.evidence_atoms.length}\n`);
+  stdout.write(`  missing_stages=${missing.length === 0 ? 'none' : missing.join(',')}\n`);
+  stdout.write(`  json_artifact=${jsonPath}\n`);
+  stdout.write(`  markdown_artifact=${markdownPath}\n`);
+
+  return { json_path: jsonPath, markdown_path: markdownPath, package: pkg };
 }
 
-main().catch(() => failStage('report_build_failed', 'unexpected'));
+export async function runGoldenSessionCli(
+  argv: string[],
+  dependencies: GoldenSessionRunDependencies = PRODUCTION_DEPENDENCIES,
+  stderr: { write(value: string): unknown } = process.stderr,
+): Promise<number> {
+  try {
+    await runGoldenSession(argv, dependencies);
+    return 0;
+  } catch (error: unknown) {
+    const failure =
+      error instanceof GoldenSessionRunFailure
+        ? error
+        : new GoldenSessionRunFailure('report_build_failed', 'unexpected');
+    stderr.write(`${failure.message}\n`);
+    return 1;
+  }
+}
+
+if (require.main === module) {
+  runGoldenSessionCli(process.argv.slice(2)).then((exitCode) => {
+    process.exitCode = exitCode;
+  });
+}

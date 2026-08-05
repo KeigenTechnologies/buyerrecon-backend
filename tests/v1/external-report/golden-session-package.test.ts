@@ -28,6 +28,10 @@ import {
   type GoldenSessionDbClient,
   type SessionPersistedRows,
 } from '../../../src/reports/external/session-evidence-atoms.js';
+import {
+  buildExistingRunReportMetadata,
+  type AmsRunVerificationFlags,
+} from '../../../src/reports/external/ams-existing-run.js';
 
 // ---------------------------------------------------------------------------
 // Fixtures: injected fake AMS process result + injected fake database rows.
@@ -722,6 +726,68 @@ describe('final-decision authority wording', () => {
   it('exposes the neutral authority constant rather than a stage name', () => {
     expect(FINAL_DECISION_AUTHORITY).toBe('authoritative_ams_result');
     expect(String(FINAL_DECISION_AUTHORITY)).not.toMatch(/pass/i);
+  });
+});
+
+describe('existing-run linkage metadata in package JSON and Markdown', () => {
+  const verified: AmsRunVerificationFlags = {
+    persisted_provenance_verified: true,
+    golden_json_decision_verified: true,
+    persisted_final_decision_verified: false,
+    persisted_final_decision_unavailable_by_schema: true,
+    decision_authority: 'golden_json',
+    operator_decision_expectation_supplied: false,
+    operator_decision_expectation_matched: 'not_applicable',
+    cross_source_consistency_linkage_verified: true,
+    observationally_equivalent_run_candidate_count: 0,
+    run_linkage_ambiguity_detected: false,
+  };
+
+  const buildWith = (verification: AmsRunVerificationFlags | undefined) =>
+    buildGoldenSessionPackage({
+      backend_identity: IDENTITY,
+      ams: validatedAms(),
+      rows: emptyRows(),
+      existing_run_verification: buildExistingRunReportMetadata(
+        '9005b50c-e37e-4e78-81c0-a3ec94f4f9f9',
+        verification,
+      ),
+    });
+
+  it('serializes exact non-overclaiming linkage facts into JSON', () => {
+    const json = JSON.parse(serializeGoldenSessionPackage(buildWith(verified)));
+    expect(json.existing_run_verification).toMatchObject({
+      cryptographic_linkage: false,
+      embedded_run_linkage: false,
+      cross_source_linkage: 'consistency_linkage',
+      golden_json_embedded_run_id: false,
+      cross_source_consistency_linkage_verified: true,
+    });
+  });
+
+  it('renders the linkage boundary explicitly in Markdown', () => {
+    const md = renderGoldenSessionMarkdown(buildWith(verified));
+    expect(md).toContain('## Existing-run linkage boundary');
+    expect(md).toContain('- Consistency linkage verified: true');
+    expect(md).toContain('- Cryptographic linkage: false');
+    expect(md).toContain('- Embedded run linkage: false');
+    expect(md).toContain('- Cross-source linkage: consistency_linkage');
+    expect(md).toContain('- Golden JSON embedded run ID: false');
+    expect(md).toContain(
+      'Consistency linkage does not mean cryptographic linkage or a Golden-artifact-native replay-run binding.',
+    );
+    expect(md).not.toMatch(/securely linked|cryptographically verified|direct Golden-run binding/i);
+  });
+
+  it('keeps fixed linkage classifications when consistency verification is false', () => {
+    const pkg = buildWith(undefined);
+    expect(pkg.existing_run_verification).toMatchObject({
+      cryptographic_linkage: false,
+      embedded_run_linkage: false,
+      cross_source_linkage: 'consistency_linkage',
+      cross_source_consistency_linkage_verified: false,
+    });
+    expect(renderGoldenSessionMarkdown(pkg)).toContain('- Consistency linkage verified: false');
   });
 });
 

@@ -405,6 +405,9 @@ export interface AmsRunVerificationFlags {
  * persistence. It is NOT embedded in, or asserted by, the artifact.
  */
 export const GOLDEN_JSON_EMBEDDED_RUN_ID = false as const;
+export const CRYPTOGRAPHIC_LINKAGE = false as const;
+export const EMBEDDED_RUN_LINKAGE = false as const;
+export const CROSS_SOURCE_LINKAGE = 'consistency_linkage' as const;
 
 /**
  * Canonical existing-run execution metadata: one typed object that is the sole
@@ -425,6 +428,12 @@ export interface ExistingRunReportMetadata {
   readonly persisted_final_decision_unavailable_by_schema: true;
   /** Literal `false`: the artifact has no embedded run id to verify against. */
   readonly golden_json_embedded_run_id: false;
+  /** Literal `false`: consistency checks are not cryptographic proof. */
+  readonly cryptographic_linkage: false;
+  /** Literal `false`: the Golden JSON is not natively bound to the replay run. */
+  readonly embedded_run_linkage: false;
+  /** Literal classification of the only linkage this implementation establishes. */
+  readonly cross_source_linkage: typeof CROSS_SOURCE_LINKAGE;
   /** Literal `'golden_json'`: the sole source of the actual final decision. */
   readonly decision_authority: typeof GOLDEN_JSON_DECISION_AUTHORITY;
   readonly operator_decision_expectation_supplied: boolean;
@@ -467,6 +476,9 @@ export function buildExistingRunReportMetadata(
     persisted_final_decision_verified: false,
     persisted_final_decision_unavailable_by_schema: true,
     golden_json_embedded_run_id: GOLDEN_JSON_EMBEDDED_RUN_ID,
+    cryptographic_linkage: CRYPTOGRAPHIC_LINKAGE,
+    embedded_run_linkage: EMBEDDED_RUN_LINKAGE,
+    cross_source_linkage: CROSS_SOURCE_LINKAGE,
     decision_authority: GOLDEN_JSON_DECISION_AUTHORITY,
     operator_decision_expectation_supplied:
       verification?.operator_decision_expectation_supplied === true,
@@ -498,6 +510,9 @@ export function renderExistingRunReportMetadata(
       metadata.persisted_final_decision_unavailable_by_schema,
     )}`,
     `  golden_json_embedded_run_id=${String(metadata.golden_json_embedded_run_id)}`,
+    `  cryptographic_linkage=${String(metadata.cryptographic_linkage)}`,
+    `  embedded_run_linkage=${String(metadata.embedded_run_linkage)}`,
+    `  cross_source_linkage=${metadata.cross_source_linkage}`,
     `  decision_authority=${metadata.decision_authority}`,
     `  operator_decision_expectation_supplied=${String(
       metadata.operator_decision_expectation_supplied,

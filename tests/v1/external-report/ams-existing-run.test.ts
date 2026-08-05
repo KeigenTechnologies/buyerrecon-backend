@@ -6,6 +6,9 @@ import {
   AMS_EXISTING_RUN_REQUIRED_FLAGS,
   AMS_FINAL_DECISIONS,
   AMS_FRESH_RUN_FLAGS,
+  CRYPTOGRAPHIC_LINKAGE,
+  CROSS_SOURCE_LINKAGE,
+  EMBEDDED_RUN_LINKAGE,
   GOLDEN_JSON_EMBEDDED_RUN_ID,
   GOLDEN_SESSION_CANONICAL_SOURCE_EVENT_IDS,
   PERSISTED_RUN_AUTHORITY,
@@ -712,6 +715,22 @@ describe('existing-run report metadata', () => {
     expect(typeof meta.golden_json_embedded_run_id).toBe('boolean');
   });
 
+  it('emits literal linkage-boundary classifications from the metadata object', () => {
+    expect(CRYPTOGRAPHIC_LINKAGE).toBe(false);
+    expect(EMBEDDED_RUN_LINKAGE).toBe(false);
+    expect(CROSS_SOURCE_LINKAGE).toBe('consistency_linkage');
+    expect(meta.cryptographic_linkage).toBe(false);
+    expect(meta.embedded_run_linkage).toBe(false);
+    expect(meta.cross_source_linkage).toBe('consistency_linkage');
+    expect(JSON.parse(JSON.stringify(meta))).toMatchObject({
+      cryptographic_linkage: false,
+      embedded_run_linkage: false,
+      cross_source_linkage: 'consistency_linkage',
+      golden_json_embedded_run_id: false,
+      cross_source_consistency_linkage_verified: true,
+    });
+  });
+
   it('does not omit the key', () => {
     expect(Object.hasOwn(meta, 'golden_json_embedded_run_id')).toBe(true);
     expect('golden_json_embedded_run_id' in meta).toBe(true);
@@ -743,6 +762,9 @@ describe('existing-run report metadata', () => {
       for (const runId of [RUN_ID, '', 'not-a-uuid']) {
         const built = buildExistingRunReportMetadata(runId, input);
         expect(built.golden_json_embedded_run_id).toBe(false);
+        expect(built.cryptographic_linkage).toBe(false);
+        expect(built.embedded_run_linkage).toBe(false);
+        expect(built.cross_source_linkage).toBe('consistency_linkage');
         expect(built.persisted_final_decision_verified).toBe(false);
         expect(built.persisted_final_decision_unavailable_by_schema).toBe(true);
       }
@@ -783,6 +805,9 @@ describe('existing-run report metadata', () => {
       '  persisted_final_decision_verified=false',
       '  persisted_final_decision_unavailable_by_schema=true',
       '  golden_json_embedded_run_id=false',
+      '  cryptographic_linkage=false',
+      '  embedded_run_linkage=false',
+      '  cross_source_linkage=consistency_linkage',
       '  decision_authority=golden_json',
       '  operator_decision_expectation_supplied=true',
       '  operator_decision_expectation_matched=true',
@@ -837,7 +862,27 @@ describe('existing-run report metadata', () => {
     expect(lines).toContain('  golden_json_decision_verified=false');
     // The schema facts are unaffected by a missing reconciliation.
     expect(lines).toContain('  golden_json_embedded_run_id=false');
+    expect(lines).toContain('  cryptographic_linkage=false');
+    expect(lines).toContain('  embedded_run_linkage=false');
+    expect(lines).toContain('  cross_source_linkage=consistency_linkage');
+    expect(lines).toContain('  cross_source_consistency_linkage_verified=false');
     expect(lines).toContain('  persisted_final_decision_unavailable_by_schema=true');
+  });
+
+  it('does not permit operator-controlled linkage classification', () => {
+    const injectedVerification = {
+      ...verified,
+      cryptographic_linkage: true,
+      embedded_run_linkage: true,
+      cross_source_linkage: 'cryptographic',
+    } as AmsRunVerificationFlags;
+
+    for (const runId of [RUN_ID, 'operator-value', 'cryptographic', 'embedded']) {
+      const built = buildExistingRunReportMetadata(runId, injectedVerification);
+      expect(built.cryptographic_linkage).toBe(false);
+      expect(built.embedded_run_linkage).toBe(false);
+      expect(built.cross_source_linkage).toBe('consistency_linkage');
+    }
   });
 });
 

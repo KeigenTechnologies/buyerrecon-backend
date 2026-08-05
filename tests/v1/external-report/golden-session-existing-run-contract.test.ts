@@ -22,13 +22,13 @@ const moduleCode = stripComments(moduleSrc);
 describe('golden-session entrypoint — existing-run mode cannot invoke AMS', () => {
   it('spawns AMS from exactly one place', () => {
     expect(entrypointCode.match(/execFile\(/g) ?? []).toHaveLength(1);
-    expect(entrypointCode.match(/await runAmsOnce\(/g) ?? []).toHaveLength(1);
+    expect(entrypointCode.match(/await dependencies\.runAmsOnce\(/g) ?? []).toHaveLength(1);
   });
 
   it('calls runAmsOnce only inside the fresh_ams branch', () => {
     const freshBranch = entrypointCode.indexOf("args.amsInput.mode === 'fresh_ams'");
     const elseBranch = entrypointCode.indexOf('} else {', freshBranch);
-    const callSite = entrypointCode.indexOf('await runAmsOnce(');
+    const callSite = entrypointCode.indexOf('await dependencies.runAmsOnce(');
     expect(freshBranch).toBeGreaterThan(0);
     expect(elseBranch).toBeGreaterThan(freshBranch);
     expect(callSite).toBeGreaterThan(freshBranch);
@@ -68,7 +68,7 @@ describe('golden-session entrypoint — existing-run mode cannot invoke AMS', ()
     const reconcileCall = entrypointCode.indexOf('reconcilePersistedAmsRun(');
     const raise = entrypointCode.indexOf("failStage('ams_run_reconciliation_failed'");
     const buildPackage = entrypointCode.indexOf('buildGoldenSessionPackage(');
-    const writeArtifacts = entrypointCode.indexOf('writeFileSync(');
+    const writeArtifacts = entrypointCode.indexOf('fileSystem.writeFileSync(', buildPackage);
     expect(reconcileCall).toBeGreaterThan(0);
     expect(raise).toBeGreaterThan(reconcileCall);
     expect(buildPackage).toBeGreaterThan(raise);
@@ -90,6 +90,9 @@ describe('golden-session entrypoint — existing-run mode cannot invoke AMS', ()
       'persisted_final_decision_verified=',
       'persisted_final_decision_unavailable_by_schema=',
       'golden_json_embedded_run_id=',
+      'cryptographic_linkage=',
+      'embedded_run_linkage=',
+      'cross_source_linkage=',
       'decision_authority=',
       'operator_decision_expectation_supplied=',
       'operator_decision_expectation_matched=',
@@ -116,6 +119,34 @@ describe('golden-session entrypoint — existing-run mode cannot invoke AMS', ()
     expect(entrypointCode).not.toMatch(/golden_json_embedded_run_id=true/);
     // The field is not typed as a plain boolean, which would unlock `true`.
     expect(moduleCode).not.toMatch(/golden_json_embedded_run_id:\s*boolean/);
+  });
+
+  it('locks every linkage boundary to a literal non-overclaiming value', () => {
+    expect(moduleCode).toMatch(/export const CRYPTOGRAPHIC_LINKAGE = false as const;/);
+    expect(moduleCode).toMatch(/export const EMBEDDED_RUN_LINKAGE = false as const;/);
+    expect(moduleCode).toMatch(
+      /export const CROSS_SOURCE_LINKAGE = 'consistency_linkage' as const;/,
+    );
+    expect(moduleCode).toMatch(/readonly cryptographic_linkage:\s*false;/);
+    expect(moduleCode).toMatch(/readonly embedded_run_linkage:\s*false;/);
+    expect(moduleCode).toMatch(
+      /readonly cross_source_linkage:\s*typeof CROSS_SOURCE_LINKAGE;/,
+    );
+    expect(moduleCode).not.toMatch(/cryptographic_linkage:\s*true/);
+    expect(moduleCode).not.toMatch(/embedded_run_linkage:\s*true/);
+    expect(moduleCode).not.toMatch(/CROSS_SOURCE_LINKAGE = '(?:cryptographic|embedded)'/);
+  });
+
+  it('creates the selected output directory on the shared artifact-write path', () => {
+    const buildPackage = entrypointCode.indexOf('buildGoldenSessionPackage(');
+    const sharedMkdir = entrypointCode.indexOf(
+      'fileSystem.mkdirSync(args.output, { recursive: true })',
+      buildPackage,
+    );
+    const firstWrite = entrypointCode.indexOf('fileSystem.writeFileSync(', buildPackage);
+    expect(sharedMkdir).toBeGreaterThan(buildPackage);
+    expect(sharedMkdir).toBeLessThan(firstWrite);
+    expect(entrypointCode.match(/fileSystem\.mkdirSync\(args\.output,/g) ?? []).toHaveLength(1);
   });
 
   it('populates the reported decision from the validated Golden JSON, not from CLI args', () => {
@@ -217,7 +248,7 @@ describe('golden-session entrypoint — existing-run mode cannot invoke AMS', ()
       expect(moduleCode, `missing comparison: ${reason}`).toContain(reason);
     }
     // The entrypoint must supply the independent third source and candidates.
-    expect(entrypointCode).toMatch(/readAcceptedEventIdSequence\(pool, identity\)/);
+    expect(entrypointCode).toMatch(/readAcceptedEventIdSequence\(db, identity\)/);
     expect(entrypointCode).toMatch(/readRunCandidatesForSubject\(/);
   });
 

@@ -35,6 +35,7 @@ import {
 import type { EvidenceAtom, ReportSnapshot, SessionEvidenceCard } from './contracts.js';
 import { renderReportMarkdown } from './renderer.js';
 import { sanitizeCustomerText } from './safe-claims.js';
+import type { ExistingRunReportMetadata } from './ams-existing-run.js';
 import {
   mapSessionRowsToEvidenceAtoms,
   summarizeStagePresence,
@@ -395,6 +396,8 @@ export interface GoldenSessionPackage {
   buyer_motion: BuyerMotionPresentation;
   recommended_operator_action: string;
   ams_authoritative: AmsGoldenSessionResult;
+  /** Existing-run provenance boundary; null for fresh-AMS packages. */
+  existing_run_verification: ExistingRunReportMetadata | null;
   /**
    * Full-session raw accepted-event evidence — the authoritative route and form
    * facts. Structurally distinct from `ams_reduced_latest_summary`.
@@ -420,6 +423,8 @@ export interface GoldenSessionPackage {
 export interface GoldenSessionPackageInput {
   backend_identity: BackendSessionIdentity;
   ams: AmsGoldenSessionResult;
+  /** One authoritative existing-run metadata object, shared by all renderers. */
+  existing_run_verification?: ExistingRunReportMetadata;
   rows: SessionPersistedRows;
   /**
    * FULL-SESSION raw accepted-event evidence. Authoritative for route and form
@@ -516,6 +521,7 @@ export function buildGoldenSessionPackage(input: GoldenSessionPackageInput): Gol
     buyer_motion: deriveBuyerMotionPresentation(ams),
     recommended_operator_action: deriveRecommendedOperatorAction(ams),
     ams_authoritative: ams,
+    existing_run_verification: input.existing_run_verification ?? null,
     full_session_raw_evidence: fullSessionRaw ?? null,
     ams_reduced_latest_summary: amsReduced ?? { represented: false },
     stage_presence: stagePresence,
@@ -585,6 +591,26 @@ export function renderGoldenSessionMarkdown(pkg: GoldenSessionPackage): string {
   out.push(`- Authoritative AMS final decision: ${ams.authoritative_final_decision}; gating reason codes: ${codes(ams.runtime_decision?.GatingReasonCodes)}`);
   out.push(`- Recommended operator action: ${pkg.recommended_operator_action}`);
   out.push('');
+  const existingRun = pkg.existing_run_verification;
+  if (existingRun !== null) {
+    out.push('## Existing-run linkage boundary');
+    out.push('');
+    out.push(
+      `- Consistency linkage verified: ${String(
+        existingRun.cross_source_consistency_linkage_verified,
+      )}`,
+    );
+    out.push(`- Cryptographic linkage: ${String(existingRun.cryptographic_linkage)}`);
+    out.push(`- Embedded run linkage: ${String(existingRun.embedded_run_linkage)}`);
+    out.push(`- Cross-source linkage: ${existingRun.cross_source_linkage}`);
+    out.push(
+      `- Golden JSON embedded run ID: ${String(existingRun.golden_json_embedded_run_id)}`,
+    );
+    out.push(
+      '- Consistency linkage does not mean cryptographic linkage or a Golden-artifact-native replay-run binding.',
+    );
+    out.push('');
+  }
 
   // Two surfaces, never conflated. The raw one is what the session contained;
   // the reduced one is only what the AMS LatestSummary carried. Presenting the
