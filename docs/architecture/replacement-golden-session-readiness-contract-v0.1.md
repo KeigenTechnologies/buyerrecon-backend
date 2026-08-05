@@ -52,6 +52,8 @@ The previous Golden Session is permanently closed. It is recorded here so that n
 future work reopens it by accident.
 
 ```text
+workspace_id=buyerrecon_staging_ws
+site_id=buyerrecon_com
 session_id=ses_x0vrbqik
 browser_id=brw_dnrzh1ta
 AMS_run_id=9005b50c-e37e-4e78-81c0-a3ec94f4f9f9
@@ -67,6 +69,7 @@ browser_retry_authorized=false
 
 policy_pass_2_acceptance_readiness=BLOCKED
 golden_session_acceptance_status=NOT_ASSESSED
+acceptance_claimed=false
 ```
 
 The engineering pipeline for that session succeeded. The customer package was
@@ -79,13 +82,20 @@ These prohibitions are permanent and are not discharged by any later gate:
 
 ```text
 no retry of ses_x0vrbqik
+no retry of browser session brw_dnrzh1ta
 no retry of AMS run 9005b50c-e37e-4e78-81c0-a3ec94f4f9f9
+no reuse or impersonation of brw_dnrzh1ta, ses_x0vrbqik, events 51-59,
+or AMS run 9005b50c-e37e-4e78-81c0-a3ec94f4f9f9
 no reconstruction of the deleted Golden JSON
+no representation of the closed session as an accepted Golden Session
 no ephemeral-only canonical artifacts
 no cleanup before retention verification
-no Policy Pass 2 authority claim without validated evidence
+no Policy Pass 2 authority claim without authority-qualifying evidence
 no replacement-session execution from this planning operation
 ```
+
+The closed session **MUST NOT** be represented, described, marketed, or recorded
+as an accepted Golden Session. This prohibition is permanent.
 
 The deleted artifact must never be reconstructed from database rows, logs,
 transcripts, selected JSON fields, hash records, human prose, or any prompt. A
@@ -364,7 +374,7 @@ documentation prose
 operator-supplied boolean
 ```
 
-## B3. Canonical producer
+## B3. Canonical producer requirements
 
 ### B3.1 Architectural finding (evidence-based)
 
@@ -388,38 +398,83 @@ Pass-2-resolved decision from a pre-Pass-2 early exit or a degraded fallback.
 This is the concrete, code-level reason `final_decision=HOLD` cannot establish
 Pass 2 authority, and why Gate D exists independently of the retention failure.
 
-### B3.2 Narrowest truthful producer
+### B3.2 Candidate observation boundary — not selected
 
 ```text
-producer_boundary = internal/policy/pass2.go :: ResolveFinal()
-                    (or its immediate return site in internal/orchestration/pipeline.go)
+producer_selection_status=BLOCKING_ARCHITECTURE_CHOICE
+implementation_authorized=false
 ```
 
-This is the narrowest boundary that can truthfully assert
-`policy_pass_2_executed=true`, because it is the only site that executes Pass 2.
-Any producer further downstream would be inferring, not observing.
+`internal/policy/pass2.go :: ResolveFinal()` is the narrowest boundary that can
+directly observe Pass 2 execution. Its immediate return site in
+`internal/orchestration/pipeline.go` can observe which orchestration branch ran.
+Neither location is selected as the canonical evidence producer by this
+document. Observing Pass 2 inputs or a final output alone is insufficient: the
+selected producer must satisfy the complete observation contract in B3.3.
 
 ### B3.3 Unresolved architectural choice
 
-Two viable placements remain, and the choice is **not** resolved by this document:
+Two candidate placements remain, and the choice is **not** resolved by this
+document:
 
 - **`B3-a` — inside `ResolveFinal()`.** Pass 2 emits its own evidence. Narrowest
   and least inferential, but places emission concerns inside a pure policy
-  function and changes its signature or adds an output field.
+  function and changes its signature or adds an output field. As currently
+  described, it is **not eligible for selection** until it can establish every
+  identity, ownership, conflict, and duplicate fact required below.
 - **`B3-b` — at the call site in `pipeline.go`.** The orchestrator records which
   branch it took. Keeps `ResolveFinal()` pure, but the assertion is made one frame
   away from the fact, and each of the three branches must be instrumented
   correctly and exhaustively or the evidence silently under-reports.
 
-Selecting between `B3-a` and `B3-b` is a prerequisite to implementation and is
-recorded as a blocking finding.
+**Producer-selection gate `B3-SELECT` (blocking).** Future implementation
+authorization must map every field below to its authoritative observation
+source:
+
+```text
+workspace_id
+site_id
+subject_id
+session_id
+AMS_run_id
+source_event_ids
+final_decision
+policy_pass_1_is_not_final
+policy_pass_2_executed
+policy_pass_2_final_decision_verified
+policy_pass_2_is_sole_final_decision
+sole_final_decision_owner
+conflicting_final_decision_count
+duplicate_final_decision_count
+```
+
+For every field, the mapping must specify:
+
+```text
+authoritative_source
+observation_point
+production_timing
+linkage_method
+contradiction_behavior
+```
+
+The producer may directly observe a fact or atomically receive it from an
+authoritative sub-boundary. A candidate is rejected if any required fact cannot
+be directly and truthfully observed or atomically established. In particular,
+the selected boundary must observe decision ownership and the production of any
+duplicate or conflicting final decisions; zero counts must not be assumed from a
+single successful return. Until `B3-SELECT` closes,
+`producer_selection_status=BLOCKING_ARCHITECTURE_CHOICE` and
+`implementation_authorized=false` remain in force.
 
 ### B3.4 Consumer boundary
 
 The validator is backend-side and must be independent of the producer. Candidate
 location follows the existing external-report validation surface established by
 PR #441 (`src/reports/external/`). The validator never repairs, defaults, or
-infers a missing field.
+infers a missing field. The backend packaging layer remains a consumer and
+validator; it must not become the authority producer merely because it can read
+the artifact or evidence.
 
 ## B4. Proposed schema
 
@@ -439,26 +494,55 @@ Machine-readable. No free-form prose field carries authority.
 | `policy_pass_2_executed` | boolean | Must be `true`; `false` ⇒ acceptance BLOCKED (not an error) |
 | `policy_pass_2_final_decision_verified` | boolean | `true` only if the recorded decision equals the Golden JSON decision |
 | `policy_pass_2_is_sole_final_decision` | boolean | `true` only if conflict and duplicate counts are both `0` |
-| `sole_final_decision_owner` | string | Exact literal identifying the Pass 2 boundary; unknown value ⇒ reject |
+| `sole_final_decision_owner` | string literal | Exact value `"policy_pass_2"`; every other value ⇒ reject |
 | `conflicting_final_decision_count` | integer | `>= 0`; any value `> 0` ⇒ acceptance BLOCKED |
 | `duplicate_final_decision_count` | integer | `>= 0`; any value `> 0` ⇒ acceptance BLOCKED |
 | `producer_identity` | string | Producer name + AMS commit SHA (full, 40 hex) |
 | `produced_at` | string | RFC3339 UTC, must fall within the execution window |
 | `evidence_sha256` | string | 64 lowercase hex; digest of the canonical serialization excluding this field |
 
-### B4.1 Fail-closed validation rules
+### B4.1 Fail-closed validation and authority qualification
+
+`schema-valid evidence` and `authority-qualifying evidence` are distinct
+states. Schema validity proves only that the object is well-formed, hash-valid,
+and exactly linked. It does not authorize Policy Pass 2 wording.
 
 1. Any missing field ⇒ **reject**. No defaulting.
 2. Any type mismatch or out-of-domain literal ⇒ **reject**.
 3. Any identity field not matching §B2 ⇒ **reject**.
-4. `policy_pass_2_executed=false` ⇒ evidence is *valid* but acceptance is
-   `BLOCKED`. This is a legitimate outcome, distinct from malformed evidence.
+4. `policy_pass_2_executed=false` may be schema-valid, but is never
+   authority-qualifying and acceptance remains `BLOCKED`.
 5. `conflicting_final_decision_count > 0` or `duplicate_final_decision_count > 0`
    ⇒ `policy_pass_2_is_sole_final_decision` must be `false`; if it is `true`,
-   the evidence is self-contradictory ⇒ **reject**.
+   the evidence is self-contradictory ⇒ **reject**. With the flag correctly
+   `false`, the evidence remains nonqualifying and acceptance remains `BLOCKED`.
 6. `final_decision` ≠ Golden JSON decision ⇒ **reject** and `BLOCKED`.
 7. `evidence_sha256` mismatch on recomputation ⇒ **reject**.
-8. Rejection never degrades to partial acceptance. There is no partial-credit path.
+8. `sole_final_decision_owner` must equal the exact literal `"policy_pass_2"`;
+   every other value ⇒ **reject**.
+9. Rejection never degrades to partial acceptance. There is no partial-credit path.
+
+One exact evidence object is authority-qualifying only when it is strictly
+validated, exactly linked, and affirmatively satisfies **all** of:
+
+```text
+policy_pass_1_is_not_final=true
+policy_pass_2_executed=true
+policy_pass_2_final_decision_verified=true
+policy_pass_2_is_sole_final_decision=true
+sole_final_decision_owner="policy_pass_2"
+conflicting_final_decision_count=0
+duplicate_final_decision_count=0
+```
+
+Any other value or state, including a missing object, schema failure, unlinked or
+contradictory identity, unverified decision, false sole ownership, wrong owner
+literal, nonzero conflict or duplicate count, or invalid hash, requires:
+
+```text
+policy_pass_2_authority_verified=false
+policy_pass_2_acceptance_readiness=BLOCKED
+```
 
 ## B5. Durable retention of the evidence
 
@@ -480,11 +564,14 @@ both before authorizing cleanup.
 ## B6. Packaging boundary
 
 ```text
-validated execution-authority evidence present
+one exact, strictly validated, exactly linked, authority-qualifying
+execution-authority evidence object satisfies every B4.1 affirmative condition
 → Policy Pass 2 authority wording may be emitted
 
-evidence absent, invalid, contradictory or unlinked
+evidence absent, schema-invalid, unlinked, contradictory, nonqualifying,
+hash-invalid, or not affirmative on every B4.1 authority condition
 → only neutral authoritative-AMS wording is permitted
+→ policy_pass_2_authority_verified=false
 → policy_pass_2_acceptance_readiness=BLOCKED
 ```
 
@@ -496,7 +583,7 @@ Authoritative AMS final decision: <decision>
 
 Neutral wording is the **default**. Authority wording is a narrow, evidence-gated
 exception. Packaging must never upgrade wording on the basis of a decision value,
-a run id, or an operator assertion.
+a run id, an operator assertion, or schema validity alone.
 
 ---
 
@@ -508,15 +595,14 @@ Containment cleanup may occur only after a pre-cleanup verification reports **al
 canonical_artifact_durably_stored=true
 secondary_copy_verified=true
 retention_manifest_stored=true
-required_execution_evidence_stored=true|not_required_for_declared_scope
+required_execution_evidence_stored=true
 packaging_completed=true|explicitly_deferred_with_durable_inputs
 cleanup_authorized=true
 ```
 
 An unconditional `rm -rf <execution directory>` is **prohibited** before this gate
-passes. `not_required_for_declared_scope` is permitted only when the session was
-declared up front as engineering/package validation only (§6.1) — it may never be
-used to retro-fit a session that attempted acceptance.
+passes. There is no reduced-scope exception for a real replacement browser
+session, backend run, or AMS invocation.
 
 ---
 
@@ -526,6 +612,16 @@ A replacement Golden Session cannot receive execution authorization until **ever
 item below is `INDEPENDENTLY_VERIFIED`:
 
 ```text
+Workstream A implemented
+every mandatory Workstream A test passed
+Workstream A independently reviewed
+Workstream A non-production qualified
+
+Workstream B implemented
+every mandatory Workstream B test passed
+Workstream B independently reviewed
+Workstream B non-production qualified
+
 artifact primary store implemented
 artifact secondary copy implemented
 read-back hash verification implemented
@@ -534,12 +630,14 @@ cleanup gate implemented
 Policy Pass 2 evidence producer implemented
 Policy Pass 2 evidence validator implemented
 execution-authority evidence durable retention implemented
-end-to-end dry-run or fixture verification passed
-independent review passed
+complete frozen test matrix passed
+non-production qualification passed
+independent implementation review passed
 ```
 
 **Planning approval alone must not authorize execution.** Merging this document
-satisfies none of the above.
+satisfies none of the above. After every precondition passes, a separate scoped
+replacement-session execution authorization is still required.
 
 ---
 
@@ -558,16 +656,23 @@ Golden JSON artifact identity
 It must not reuse or impersonate `ses_x0vrbqik`, `brw_dnrzh1ta`, events 51–59, or
 run_id `9005b50c-e37e-4e78-81c0-a3ec94f4f9f9`.
 
-### 6.1 Declared scope classification (mandatory, pre-execution)
+### 6.1 No reduced-scope execution exception
 
-If Workstream B is not `INDEPENDENTLY_VERIFIED` when the replacement session is
-authorized, that session **must** be declared, before execution, as:
+No real replacement Golden Session may be authorized under a reduced
+`engineering/package validation only` scope. Before Workstream B is
+`INDEPENDENTLY_VERIFIED`, permitted activity is limited to:
 
 ```text
-engineering/package validation only — not full Golden Session acceptance
+non-executing schema validation
+unit fixtures
+mocked tests
+non-production dry runs that do not create a real browser session
+non-production dry runs that do not invoke AMS
 ```
 
-The classification is chosen before execution and cannot be revised afterwards.
+These activities are qualification inputs, not replacement Golden Sessions. They
+must not perform real browser execution, real backend processing, or AMS
+invocation, and they cannot consume or reserve replacement-session identities.
 
 ---
 
@@ -590,7 +695,7 @@ this operation.**
 | Component | Expected change |
 |---|---|
 | `src/reports/external/` (new module) | Pass 2 evidence validator |
-| `src/reports/external/golden-session-package.ts` | Consume validated evidence; gate authority wording |
+| `src/reports/external/golden-session-package.ts` | Consume schema-valid evidence; emit authority wording only for authority-qualifying evidence |
 | `src/reports/external/ams-existing-run.ts` | Resolve Golden JSON from the durable store identifier |
 | `scripts/run-golden-session.ts` | Retention sequence (A4) and cleanup gate (E) |
 | `config/constants.ts`, `.claude/constants.md` | Register store location and env-var names |
@@ -617,26 +722,35 @@ This file. Revisions are versioned
 
 ---
 
-## 8. Minimum required tests
+## 8. Frozen mandatory test matrix
 
-All are L1/L2. **No test in this matrix may connect to production or invoke AMS.**
+All are mandatory L1/L2 cases. The list is normative, not illustrative or
+optional. **No test in this matrix may connect to production or invoke AMS.**
 
 | # | Test | Required outcome |
 |---|---|---|
 | 1 | Primary write failure | Retention aborts; cleanup prohibited; artifact retained |
 | 2 | Secondary write failure | Retention aborts; cleanup prohibited |
 | 3 | Hash mismatch between copies | Retention invalid; neither copy authoritative |
-| 4 | Read-back failure | Retention invalid; cleanup prohibited |
-| 5 | Manifest write failure | Cleanup prohibited even with both copies verified |
-| 6 | Premature cleanup rejection | Cleanup before Gate E exits non-zero |
-| 7 | Missing Pass 2 evidence | Validator rejects; neutral wording; `BLOCKED` |
-| 8 | Contradictory Pass 2 evidence | Validator rejects (rule B4.1.5) |
-| 9 | Wrong run/session linkage | Validator rejects as absent |
-| 10 | Duplicate final-decision evidence | `duplicate_final_decision_count > 0` ⇒ `BLOCKED` |
-| 11 | Neutral wording fallback | Default path emits exactly the neutral sentence |
-| 12 | Durable artifact survival after execution-directory deletion | Fixture deletes the execution dir; artifact and manifest remain readable and hash-valid |
+| 4 | Byte-count mismatch between copies | Retention invalid; cleanup prohibited |
+| 5 | Read-back failure | Retention invalid; cleanup prohibited |
+| 6 | Manifest write failure | Cleanup prohibited even with both copies verified |
+| 7 | Premature cleanup rejection | Cleanup before Gate E exits non-zero |
+| 8 | Missing Pass 2 evidence | Validator rejects; neutral wording; `BLOCKED` |
+| 9 | Invalid execution-authority evidence schema | Validator rejects; neutral wording; `BLOCKED` |
+| 10 | Contradictory Pass 2 evidence | Validator rejects (rule B4.1.5) |
+| 11 | Wrong run/session linkage | Validator rejects as absent |
+| 12 | Duplicate final-decision evidence | `duplicate_final_decision_count > 0` ⇒ neutral wording and `BLOCKED` |
+| 13 | Conflicting final-decision evidence | `conflicting_final_decision_count > 0` ⇒ neutral wording and `BLOCKED` |
+| 14 | Neutral wording fallback | Default path emits exactly the neutral sentence |
+| 15 | Positive Policy Pass 2 wording gate | Wording is permitted only after one fully authority-qualifying B4.1 evidence object passes |
+| 16 | Durable artifact survival after execution-directory deletion | Fixture deletes the execution dir; artifact and manifest remain readable and hash-valid |
 
-Test 12 is the direct regression test for the failure that closed `ses_x0vrbqik`.
+Test 16 is the direct regression test for the failure that closed `ses_x0vrbqik`.
+
+All mandatory cases in this frozen test matrix **MUST** pass before either
+workstream may be classified as `INDEPENDENTLY_VERIFIED` or before any
+replacement-session execution may be authorized.
 
 ---
 
@@ -649,7 +763,7 @@ Test 12 is the direct regression test for the failure that closed `ses_x0vrbqik`
 - Review must confirm that no readiness item was advanced past `DEFINED` without
   corresponding merged code or provisioned infrastructure.
 - Review must confirm that the closed session was not reopened, retried, or
-  reconstructed.
+  reconstructed, reused, or represented as accepted.
 
 ---
 
