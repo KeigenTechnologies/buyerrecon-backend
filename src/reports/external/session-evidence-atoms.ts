@@ -219,11 +219,20 @@ export interface RawAcceptedEventRow {
   readonly event_name: unknown;
   /** Drift carrier: older rows put the semantic type here instead. */
   readonly legacy_event_type: unknown;
+  /** Canonical sprint2 wire route field — the PRIMARY route source. */
+  readonly path: unknown;
+  /** Legacy route field, retained as fallback compatibility. */
   readonly page_path: unknown;
 }
 
-/** Transport sentinels carry no semantic meaning on their own. */
-const TRANSPORT_EVENT_TYPE_SENTINELS = new Set(['page', 'track']);
+/**
+ * The literal `event_name` value that means "not populated". Matched EXACTLY:
+ * the canonical extractor uses `NULLIF(raw->>'event_name', 'unknown')`, which is
+ * case-sensitive, so `'UNKNOWN'` is NOT this sentinel and is taken at face
+ * value. Documented rather than silently normalised, to avoid inventing a rule
+ * the canonical SQL does not have.
+ */
+const EVENT_NAME_UNKNOWN_SENTINEL = 'unknown';
 
 /** Bounded read: a Golden Session is one session, not an unbounded scan. */
 export const RAW_ACCEPTED_EVENT_READ_LIMIT = 1000;
@@ -247,6 +256,7 @@ export async function readRawAcceptedEventEvidence(
             event_type,
             raw->>'event_name' AS event_name,
             raw->>'legacy_event_type' AS legacy_event_type,
+            raw->>'path' AS path,
             raw->>'page_path' AS page_path
        FROM accepted_events
       WHERE workspace_id = $1 AND site_id = $2 AND session_id = $3
@@ -259,7 +269,7 @@ export async function readRawAcceptedEventEvidence(
 }
 
 /** Where a row's semantic event type was actually resolved from. */
-export type SemanticEventSource = 'event_name' | 'legacy_event_type' | 'event_type' | 'unresolved';
+export type SemanticEventSource = 'event_name' | 'legacy_event_type' | 'unresolved';
 
 export interface ResolvedSemanticEvent {
   readonly event_id: number | null;
@@ -277,12 +287,15 @@ export interface ResolvedSemanticEvent {
  * instead, so a reader can tell a genuine `event_name` from a legacy fallback.
  */
 export function resolveSemanticEvent(row: RawAcceptedEventRow): ResolvedSemanticEvent {
-  const str = (v: unknown): string | null =>
-    typeof v === 'string' && v.trim() !== '' ? v : null;
+  const nonEmpty = (v: unknown): string | null => (typeof v === 'string' && v !== '' ? v : null);
 
-  const eventName = str(row.event_name);
-  const legacy = str(row.legacy_event_type);
-  const transport = str(row.event_type);
+  // Canonical: COALESCE(NULLIF(NULLIF(event_name,''),'unknown'), legacy_event_type)
+  // The transport `event_type` column is NOT a semantic source in the canonical
+  // contract, so `track` can never stand in for — or override — the semantic
+  // type carried by legacy_event_type.
+  const named = nonEmpty(row.event_name);
+  const eventName = named === EVENT_NAME_UNKNOWN_SENTINEL ? null : named;
+  const legacy = nonEmpty(row.legacy_event_type);
 
   let semantic: string | null = null;
   let source: SemanticEventSource = 'unresolved';
@@ -292,9 +305,6 @@ export function resolveSemanticEvent(row: RawAcceptedEventRow): ResolvedSemantic
   } else if (legacy !== null) {
     semantic = legacy;
     source = 'legacy_event_type';
-  } else if (transport !== null && TRANSPORT_EVENT_TYPE_SENTINELS.has(transport) === false) {
-    semantic = transport;
-    source = 'event_type';
   }
 
   const id = typeof row.event_id === 'number'
@@ -307,7 +317,8 @@ export function resolveSemanticEvent(row: RawAcceptedEventRow): ResolvedSemantic
     event_id: Number.isSafeInteger(id) ? id : null,
     semantic_event_type: semantic,
     semantic_source: source,
-    page_path: str(row.page_path),
+    // Canonical: COALESCE(NULLIF(path,''), NULLIF(page_path,''))
+    page_path: nonEmpty(row.path) ?? nonEmpty(row.page_path),
   };
 }
 
@@ -328,7 +339,13 @@ export interface FullSessionRawEvidence {
   readonly event_count: number;
 }
 
-const PAGE_VIEW_TYPES = new Set(['page_view', 'page_state']);
+/**
+ * Route steps come from semantic `page_view` events ONLY — never session_start,
+ * page_state or summary events — matching the canonical extractor. This is also
+ * what stops several non-route events that share one path from inflating the
+ * route with duplicate steps.
+ */
+const ROUTE_EVENT_TYPE = 'page_view';
 
 /**
  * Derive full-session route and form facts from raw accepted events.
@@ -343,7 +360,7 @@ export function buildFullSessionRawEvidence(
   const route: string[] = [];
   const sourceIds: number[] = [];
   const counts: Record<SemanticEventSource, number> = {
-    event_name: 0, legacy_event_type: 0, event_type: 0, unresolved: 0,
+    event_name: 0, legacy_event_type: 0, unresolved: 0,
   };
 
   let formStartEventId: number | null = null;
@@ -356,7 +373,7 @@ export function buildFullSessionRawEvidence(
     if (resolved.event_id !== null) sourceIds.push(resolved.event_id);
 
     const type = resolved.semantic_event_type;
-    if (type !== null && PAGE_VIEW_TYPES.has(type) && resolved.page_path !== null) {
+    if (type === ROUTE_EVENT_TYPE && resolved.page_path !== null) {
       route.push(resolved.page_path);
     }
     if (type === 'form_start') {

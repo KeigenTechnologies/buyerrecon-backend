@@ -12,6 +12,10 @@ import {
   type AmsGoldenSessionResult,
 } from '../../../src/reports/external/golden-session-package.js';
 import {
+  EXPECTED_ROUTE,
+  GOLDEN_SESSION_RAW_EVENTS,
+} from './raw-accepted-event-evidence.test.js';
+import {
   GOLDEN_SESSION_STAGE_MISSING_LABELS,
   buildFullSessionRawEvidence,
   mapSessionRowsToEvidenceAtoms,
@@ -942,5 +946,114 @@ describe('full-session raw evidence and the AMS reduced surface', () => {
     expect(q.text).toMatch(/session_id = \$3/);
     expect(q.text).toMatch(/ORDER BY received_at ASC, event_id ASC/);
     expect(q.text).toMatch(/LIMIT 1000/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PRODUCTION-SHAPED end-to-end: raw wire events → extraction → package → JSON +
+// Markdown. The synthetic fixtures above stay as compatibility coverage; these
+// use the real drift shape (event_name="unknown", semantics in
+// legacy_event_type, transport "track", route in raw.path).
+
+describe('production-shaped Golden Session evidence, end to end', () => {
+  const REDUCED = {
+    represented: true,
+    path_sequence: ['/en'],
+    form_started: false,
+    form_abandon_after_start: false,
+  } as const;
+
+  const buildFromWire = (over: Record<string, unknown> = {}) =>
+    buildGoldenSessionPackage({
+      backend_identity: IDENTITY,
+      ams: validatedAms(),
+      rows: emptyRows(),
+      full_session_raw_evidence: buildFullSessionRawEvidence(GOLDEN_SESSION_RAW_EVENTS),
+      ams_reduced_latest_summary: REDUCED,
+      ...over,
+    });
+
+  it('carries the exact four-step route through package construction', () => {
+    expect(buildFromWire().full_session_raw_evidence?.route_progression).toEqual([...EXPECTED_ROUTE]);
+  });
+
+  it('carries event-57 form start, no submit and abandonment through construction', () => {
+    expect(buildFromWire().full_session_raw_evidence?.form_evidence).toEqual({
+      form_start_event_id: 57,
+      form_started: true,
+      form_submit: false,
+      form_abandon_after_start: true,
+    });
+  });
+
+  it('preserves the supporting event ids through package construction', () => {
+    expect(buildFromWire().full_session_raw_evidence?.source_event_ids).toEqual([
+      51, 52, 53, 54, 55, 56, 57, 58, 59,
+    ]);
+  });
+
+  it('keeps the AMS reduced surface separate and unchanged', () => {
+    const pkg = buildFromWire();
+    expect(pkg.ams_reduced_latest_summary).toEqual({
+      represented: true,
+      path_sequence: ['/en'],
+      form_started: false,
+      form_abandon_after_start: false,
+    });
+    // Both surfaces are truthful and disagree legitimately.
+    expect(pkg.full_session_raw_evidence?.route_progression).toHaveLength(4);
+    expect(pkg.full_session_raw_evidence?.form_evidence.form_started).toBe(true);
+  });
+
+  it('never lets the reduced surface overwrite raw route or form facts', () => {
+    const pkg = buildFromWire();
+    expect(pkg.full_session_raw_evidence?.route_progression).not.toEqual(['/en']);
+    expect(pkg.full_session_raw_evidence?.form_evidence.form_started).toBe(true);
+    expect(pkg.full_session_raw_evidence?.form_evidence.form_abandon_after_start).toBe(true);
+  });
+
+  it('emits JSON that cannot be read as "route was only /en" or "no form interaction"', () => {
+    const json = JSON.parse(serializeGoldenSessionPackage(buildFromWire()));
+    expect(json.full_session_raw_evidence.route_progression).toEqual([...EXPECTED_ROUTE]);
+    expect(json.full_session_raw_evidence.form_evidence.form_started).toBe(true);
+    expect(json.full_session_raw_evidence.form_evidence.form_abandon_after_start).toBe(true);
+    expect(json.ams_reduced_latest_summary.path_sequence).toEqual(['/en']);
+    // The reduced value is present but never as the full-session route.
+    expect(json.full_session_raw_evidence.route_progression).not.toEqual(
+      json.ams_reduced_latest_summary.path_sequence,
+    );
+  });
+
+  it('does not imply event_name held the semantic type when legacy_event_type supplied it', () => {
+    const json = JSON.parse(serializeGoldenSessionPackage(buildFromWire()));
+    expect(json.full_session_raw_evidence.semantic_source_counts).toEqual({
+      event_name: 0,
+      legacy_event_type: 9,
+      unresolved: 0,
+    });
+    const md = renderGoldenSessionMarkdown(buildFromWire());
+    expect(md).toContain('event_name 0, legacy_event_type 9');
+    expect(md).toContain('their semantic type was read from `legacy_event_type`');
+  });
+
+  it('renders Markdown distinguishing the two surfaces, with neutral decision wording', () => {
+    const md = renderGoldenSessionMarkdown(buildFromWire());
+    expect(md).toContain('## Full-session raw accepted-event evidence (authoritative for route and form)');
+    expect(md).toContain('## AMS reduced LatestSummary surface (NOT the full session)');
+    expect(md).toContain('/en → /en/product → /en/buyer-motion-evidence-report → /en');
+    expect(md).toMatch(/started true; submitted false; abandoned after start true/);
+    expect(md).toContain('form_start event_id 57');
+    expect(md).toContain('This surface is REDUCED');
+    expect(md).toMatch(/- Authoritative AMS final decision:/);
+    expect(md).not.toMatch(/Policy Pass 2/);
+  });
+
+  it('keeps JSON and Markdown mutually consistent', () => {
+    const pkg = buildFromWire();
+    const json = JSON.parse(serializeGoldenSessionPackage(pkg));
+    const md = renderGoldenSessionMarkdown(pkg);
+    for (const step of json.full_session_raw_evidence.route_progression) expect(md).toContain(step);
+    expect(md).toContain(String(json.full_session_raw_evidence.form_evidence.form_start_event_id));
+    expect(md).toContain(json.ams_reduced_latest_summary.path_sequence.join(' → '));
   });
 });

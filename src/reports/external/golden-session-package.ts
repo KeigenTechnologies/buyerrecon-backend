@@ -614,7 +614,7 @@ export function renderGoldenSessionMarkdown(pkg: GoldenSessionPackage): string {
     // Drift stated plainly rather than concealed.
     const bySource = raw.semantic_source_counts;
     out.push(
-      `- Event-type provenance: event_name ${bySource.event_name}, legacy_event_type ${bySource.legacy_event_type}, transport event_type ${bySource.event_type}, unresolved ${bySource.unresolved}`,
+      `- Event-type provenance: event_name ${bySource.event_name}, legacy_event_type ${bySource.legacy_event_type}, unresolved ${bySource.unresolved}`,
     );
     if (bySource.legacy_event_type > 0) {
       out.push(
