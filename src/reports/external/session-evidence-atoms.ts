@@ -206,6 +206,181 @@ export async function readAcceptedEventIdSequence(
   return result.rows.map((row) => row.event_id);
 }
 
+/**
+ * One accepted-event row, projected to exactly the fields the package needs.
+ * Nothing else is read: no payloads, no PII-bearing raw blobs.
+ */
+export interface RawAcceptedEventRow {
+  readonly event_id: unknown;
+  readonly received_at: unknown;
+  /** Transport-level column value; `page` / `track` are transport sentinels. */
+  readonly event_type: unknown;
+  /** Canonical semantic name, when the row carries one. */
+  readonly event_name: unknown;
+  /** Drift carrier: older rows put the semantic type here instead. */
+  readonly legacy_event_type: unknown;
+  readonly page_path: unknown;
+}
+
+/** Transport sentinels carry no semantic meaning on their own. */
+const TRANSPORT_EVENT_TYPE_SENTINELS = new Set(['page', 'track']);
+
+/** Bounded read: a Golden Session is one session, not an unbounded scan. */
+export const RAW_ACCEPTED_EVENT_READ_LIMIT = 1000;
+
+/**
+ * Read the raw accepted-event evidence for EXACTLY one workspace + site +
+ * session inside the pinned bounds. SELECT-only, bounded, deterministically
+ * ordered, and projected to the minimum field set.
+ *
+ * This is the FULL-SESSION source of truth for route and form facts. It is
+ * deliberately independent of any AMS-reduced summary, which may legitimately
+ * describe far less than the session actually contains.
+ */
+export async function readRawAcceptedEventEvidence(
+  db: GoldenSessionDbClient,
+  identity: BackendSessionIdentity,
+): Promise<ReadonlyArray<RawAcceptedEventRow>> {
+  const result = await db.query(
+    `SELECT event_id,
+            received_at,
+            event_type,
+            raw->>'event_name' AS event_name,
+            raw->>'legacy_event_type' AS legacy_event_type,
+            raw->>'page_path' AS page_path
+       FROM accepted_events
+      WHERE workspace_id = $1 AND site_id = $2 AND session_id = $3
+        AND received_at >= $4::timestamptz AND received_at <= $5::timestamptz
+      ORDER BY received_at ASC, event_id ASC
+      LIMIT ${RAW_ACCEPTED_EVENT_READ_LIMIT}`,
+    [identity.workspace_id, identity.site_id, identity.session_id, identity.window_start, identity.window_end],
+  );
+  return result.rows as unknown as ReadonlyArray<RawAcceptedEventRow>;
+}
+
+/** Where a row's semantic event type was actually resolved from. */
+export type SemanticEventSource = 'event_name' | 'legacy_event_type' | 'event_type' | 'unresolved';
+
+export interface ResolvedSemanticEvent {
+  readonly event_id: number | null;
+  readonly semantic_event_type: string | null;
+  readonly semantic_source: SemanticEventSource;
+  readonly page_path: string | null;
+}
+
+/**
+ * Resolve one row's semantic event type, recording WHERE it came from.
+ *
+ * Known drift: `event_name` may be absent while `legacy_event_type` carries the
+ * real semantic type, and the `event_type` column may hold only a transport
+ * sentinel. The row is never mutated or "repaired"; the provenance is reported
+ * instead, so a reader can tell a genuine `event_name` from a legacy fallback.
+ */
+export function resolveSemanticEvent(row: RawAcceptedEventRow): ResolvedSemanticEvent {
+  const str = (v: unknown): string | null =>
+    typeof v === 'string' && v.trim() !== '' ? v : null;
+
+  const eventName = str(row.event_name);
+  const legacy = str(row.legacy_event_type);
+  const transport = str(row.event_type);
+
+  let semantic: string | null = null;
+  let source: SemanticEventSource = 'unresolved';
+  if (eventName !== null) {
+    semantic = eventName;
+    source = 'event_name';
+  } else if (legacy !== null) {
+    semantic = legacy;
+    source = 'legacy_event_type';
+  } else if (transport !== null && TRANSPORT_EVENT_TYPE_SENTINELS.has(transport) === false) {
+    semantic = transport;
+    source = 'event_type';
+  }
+
+  const id = typeof row.event_id === 'number'
+    ? row.event_id
+    : typeof row.event_id === 'string' && row.event_id.trim() !== ''
+      ? Number(row.event_id)
+      : Number.NaN;
+
+  return {
+    event_id: Number.isSafeInteger(id) ? id : null,
+    semantic_event_type: semantic,
+    semantic_source: source,
+    page_path: str(row.page_path),
+  };
+}
+
+/** Route and form facts derived from the FULL raw accepted-event stream. */
+export interface FullSessionRawEvidence {
+  /** Every page_view path in canonical order, repeats preserved. */
+  readonly route_progression: ReadonlyArray<string>;
+  readonly form_evidence: {
+    readonly form_start_event_id: number | null;
+    readonly form_started: boolean;
+    readonly form_submit: boolean;
+    readonly form_abandon_after_start: boolean;
+  };
+  /** The accepted-event ids these facts were derived from, in order. */
+  readonly source_event_ids: ReadonlyArray<number>;
+  /** How many rows resolved from each semantic source — drift, stated plainly. */
+  readonly semantic_source_counts: Readonly<Record<SemanticEventSource, number>>;
+  readonly event_count: number;
+}
+
+const PAGE_VIEW_TYPES = new Set(['page_view', 'page_state']);
+
+/**
+ * Derive full-session route and form facts from raw accepted events.
+ *
+ * Pure. Never consults, and can never be overwritten by, any AMS-reduced
+ * summary: the reduced surface routinely describes less than the session
+ * contains, and silently preferring it would erase real buyer behaviour.
+ */
+export function buildFullSessionRawEvidence(
+  rows: ReadonlyArray<RawAcceptedEventRow>,
+): FullSessionRawEvidence {
+  const route: string[] = [];
+  const sourceIds: number[] = [];
+  const counts: Record<SemanticEventSource, number> = {
+    event_name: 0, legacy_event_type: 0, event_type: 0, unresolved: 0,
+  };
+
+  let formStartEventId: number | null = null;
+  let formStarted = false;
+  let formSubmit = false;
+
+  for (const row of rows) {
+    const resolved = resolveSemanticEvent(row);
+    counts[resolved.semantic_source] += 1;
+    if (resolved.event_id !== null) sourceIds.push(resolved.event_id);
+
+    const type = resolved.semantic_event_type;
+    if (type !== null && PAGE_VIEW_TYPES.has(type) && resolved.page_path !== null) {
+      route.push(resolved.page_path);
+    }
+    if (type === 'form_start') {
+      if (formStarted === false) formStartEventId = resolved.event_id;
+      formStarted = true;
+    }
+    if (type === 'form_submit' || type === 'generate_lead') formSubmit = true;
+  }
+
+  return {
+    route_progression: route,
+    form_evidence: {
+      form_start_event_id: formStartEventId,
+      form_started: formStarted,
+      form_submit: formSubmit,
+      // Abandonment is a raw-stream fact: a start with no later submit.
+      form_abandon_after_start: formStarted === true && formSubmit === false,
+    },
+    source_event_ids: sourceIds,
+    semantic_source_counts: counts,
+    event_count: rows.length,
+  };
+}
+
 export async function readSessionPersistedRows(
   db: GoldenSessionDbClient,
   identity: BackendSessionIdentity,

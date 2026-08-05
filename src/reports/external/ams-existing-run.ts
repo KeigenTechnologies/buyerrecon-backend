@@ -167,10 +167,24 @@ export type SourceEventIdValidation =
  * Driver-supplied numeric strings are accepted and normalised, since Postgres
  * may return bigint columns as strings; nothing else is coerced.
  */
+/**
+ * The locked canonical source-event contract for BuyerRecon Golden Session
+ * v0.1: the exact ordered accepted-event ids AMS consumed for the authoritative
+ * run. Pinned as an explicit contract value rather than derived from any of the
+ * three sources, because a value derived from a source cannot be used to
+ * validate that source.
+ *
+ * Any other session requires its own explicit contract; nothing here infers one.
+ */
+export const GOLDEN_SESSION_CANONICAL_SOURCE_EVENT_IDS = Object.freeze([
+  51, 52, 53, 54, 55, 56, 57, 58, 59,
+] as const);
+
 export function validateSourceEventIdSequence(
   value: unknown,
   label: string,
   declaredCount?: unknown,
+  canonicalSequence?: ReadonlyArray<number>,
 ): SourceEventIdValidation {
   const reasons: string[] = [];
   if (Array.isArray(value) === false) {
@@ -208,6 +222,17 @@ export function validateSourceEventIdSequence(
     }
   }
 
+  // Canonical-order proof. The sequence must ALREADY equal the pinned contract:
+  // it is never sorted or otherwise normalised into passing, so a reordering
+  // shared by every source is still a failure.
+  if (canonicalSequence !== undefined) {
+    if (ids.length !== canonicalSequence.length) {
+      reasons.push(`${label}_source_event_count_not_exactly_${canonicalSequence.length}`);
+    } else if (ids.some((v, i) => v !== canonicalSequence[i]) === true) {
+      reasons.push(`${label}_source_event_ids_not_canonical_sequence`);
+    }
+  }
+
   if (reasons.length > 0) return { ok: false, reasons };
   return { ok: true, ids };
 }
@@ -227,6 +252,12 @@ export interface SourceEventProvenanceInput {
    * workspace + site + session. Event truth, independent of AMS.
    */
   readonly accepted_event_ids: unknown;
+  /**
+   * The pinned canonical contract sequence. When supplied, EVERY source must
+   * already equal it exactly and in order — which is what makes a malformation
+   * shared by all three sources fail instead of passing by agreement.
+   */
+  readonly canonical_sequence?: ReadonlyArray<number>;
 }
 
 export type SourceEventProvenanceResult =
@@ -244,17 +275,25 @@ export type SourceEventProvenanceResult =
 export function reconcileSourceEventProvenance(
   input: SourceEventProvenanceInput,
 ): SourceEventProvenanceResult {
+  const canonical = input.canonical_sequence;
   const golden = validateSourceEventIdSequence(
     input.golden_source_event_ids,
     'golden_json',
     input.golden_declared_count,
+    canonical,
   );
   const card = validateSourceEventIdSequence(
     input.card_source_event_ids,
     'persisted_card',
     input.card_declared_count,
+    canonical,
   );
-  const accepted = validateSourceEventIdSequence(input.accepted_event_ids, 'accepted_events');
+  const accepted = validateSourceEventIdSequence(
+    input.accepted_event_ids,
+    'accepted_events',
+    undefined,
+    canonical,
+  );
 
   const reasons: string[] = [
     ...(golden.ok === false ? golden.reasons : []),
@@ -676,6 +715,8 @@ export interface PersistedAmsRunExpectation {
    * session — the independent third source.
    */
   readonly accepted_event_ids: unknown;
+  /** Pinned canonical contract sequence for this Golden Session. */
+  readonly canonical_sequence?: ReadonlyArray<number>;
   /** Replay run/card candidates sharing this site and subject. */
   readonly run_candidates?: ReadonlyArray<Record<string, unknown>>;
   /** From the supplied artifact's authoritative_final_decision. */
@@ -779,6 +820,7 @@ export function reconcilePersistedAmsRun(
     card_source_event_ids: card.source_event_ids,
     card_declared_count: expected.card_declared_source_event_count,
     accepted_event_ids: expected.accepted_event_ids,
+    canonical_sequence: expected.canonical_sequence,
   });
   if (provenance.ok === false) provenanceReasons.push(...provenance.reasons);
 

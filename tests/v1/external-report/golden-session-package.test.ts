@@ -13,8 +13,11 @@ import {
 } from '../../../src/reports/external/golden-session-package.js';
 import {
   GOLDEN_SESSION_STAGE_MISSING_LABELS,
+  buildFullSessionRawEvidence,
   mapSessionRowsToEvidenceAtoms,
   readAcceptedEventIdSequence,
+  readRawAcceptedEventEvidence,
+  resolveSemanticEvent,
   readSessionPersistedRows,
   summarizeStagePresence,
   type BackendSessionIdentity,
@@ -715,5 +718,229 @@ describe('final-decision authority wording', () => {
   it('exposes the neutral authority constant rather than a stage name', () => {
     expect(FINAL_DECISION_AUTHORITY).toBe('authoritative_ams_result');
     expect(String(FINAL_DECISION_AUTHORITY)).not.toMatch(/pass/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BLOCK-2 (review 085a7a1) — represented browser identity must be reconciled.
+// The canonical scope key set is CLOSED: identity is asserted through
+// subject_id only, so any represented browser_id fails closed rather than being
+// ignored because subject_id happened to match.
+
+describe('Golden JSON browser-identity containment', () => {
+  const EXPECTED_BROWSER = 'browser_subject_abc';
+  const withScope = (over: Record<string, unknown>): string => {
+    const parsed = JSON.parse(amsFixtureJson());
+    parsed.scope = { ...parsed.scope, ...over };
+    return JSON.stringify(parsed);
+  };
+  const expectation = { ...EXPECTED_AMS_IDENTITY, session_id: 'ses_golden', workspace_id: 'ws_golden' };
+
+  it('accepts the canonical subject_id alone', () => {
+    const v = validateAmsGoldenSessionJson(withScope({ subject_id: EXPECTED_BROWSER }), expectation);
+    expect(v.ok).toBe(true);
+  });
+
+  it('rejects a correct subject_id paired with a contradictory browser_id', () => {
+    const v = validateAmsGoldenSessionJson(
+      withScope({ subject_id: EXPECTED_BROWSER, browser_id: 'wrong_browser' }), expectation,
+    );
+    expect(v.ok).toBe(false);
+    if (v.ok) return;
+    expect(v.reasons).toContain('unexpected_scope_key:browser_id');
+  });
+
+  it('rejects a wrong subject_id paired with a correct browser_id', () => {
+    const v = validateAmsGoldenSessionJson(
+      withScope({ subject_id: 'wrong_subject', browser_id: EXPECTED_BROWSER }), expectation,
+    );
+    expect(v.ok).toBe(false);
+  });
+
+  it('rejects subject_id and browser_id that disagree with each other', () => {
+    const v = validateAmsGoldenSessionJson(
+      withScope({ subject_id: EXPECTED_BROWSER, browser_id: 'brw_someone_else' }), expectation,
+    );
+    expect(v.ok).toBe(false);
+    if (v.ok) return;
+    expect(v.reasons).toContain('unexpected_scope_key:browser_id');
+  });
+
+  it('rejects a matching browser_id supplied alone, because the schema closes the key set', () => {
+    // The canonical scope has no browser_id. Accepting it would mean honouring
+    // an identity assertion the schema does not define.
+    const v = validateAmsGoldenSessionJson(withScope({ browser_id: EXPECTED_BROWSER }), expectation);
+    expect(v.ok).toBe(false);
+    if (v.ok) return;
+    expect(v.reasons).toContain('unexpected_scope_key:browser_id');
+  });
+
+  it('rejects any unknown identity-like scope key', () => {
+    for (const key of ['browser_subject', 'visitor_id', 'device_id', 'user_id']) {
+      const v = validateAmsGoldenSessionJson(withScope({ [key]: 'x' }), expectation);
+      expect(v.ok, `unknown scope key ${key} must fail closed`).toBe(false);
+      if (v.ok) continue;
+      expect(v.reasons).toContain(`unexpected_scope_key:${key}`);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BLOCK-3 (review 085a7a1) — raw full-session evidence vs AMS reduced surface
+
+describe('full-session raw evidence and the AMS reduced surface', () => {
+  const rawRows = [
+    { event_id: 51, received_at: '2026-07-24T10:00:00Z', event_type: 'track', event_name: 'page_view', legacy_event_type: null, page_path: '/en' },
+    { event_id: 52, received_at: '2026-07-24T10:00:05Z', event_type: 'track', event_name: 'page_view', legacy_event_type: null, page_path: '/en/product' },
+    { event_id: 53, received_at: '2026-07-24T10:00:10Z', event_type: 'track', event_name: 'cta_click', legacy_event_type: null, page_path: '/en/product' },
+    { event_id: 54, received_at: '2026-07-24T10:00:15Z', event_type: 'track', event_name: 'page_view', legacy_event_type: null, page_path: '/en/buyer-motion-evidence-report' },
+    { event_id: 57, received_at: '2026-07-24T10:00:30Z', event_type: 'track', event_name: 'form_start', legacy_event_type: null, page_path: '/en/buyer-motion-evidence-report' },
+    { event_id: 59, received_at: '2026-07-24T10:00:45Z', event_type: 'track', event_name: 'page_view', legacy_event_type: null, page_path: '/en' },
+  ];
+  const REDUCED = {
+    represented: true,
+    path_sequence: ['/en'],
+    form_started: false,
+    form_abandon_after_start: false,
+  } as const;
+
+  const build = (over: Record<string, unknown> = {}) =>
+    buildGoldenSessionPackage({
+      backend_identity: IDENTITY,
+      ams: validatedAms(),
+      rows: emptyRows(),
+      full_session_raw_evidence: buildFullSessionRawEvidence(rawRows),
+      ams_reduced_latest_summary: REDUCED,
+      ...over,
+    });
+
+  it('preserves the exact four-step route through package construction', () => {
+    const pkg = build();
+    expect(pkg.full_session_raw_evidence?.route_progression).toEqual([
+      '/en', '/en/product', '/en/buyer-motion-evidence-report', '/en',
+    ]);
+  });
+
+  it('preserves event-57 form start and abandonment', () => {
+    const pkg = build();
+    expect(pkg.full_session_raw_evidence?.form_evidence).toEqual({
+      form_start_event_id: 57,
+      form_started: true,
+      form_submit: false,
+      form_abandon_after_start: true,
+    });
+  });
+
+  it('keeps the reduced LatestSummary separately represented', () => {
+    const pkg = build();
+    expect(pkg.ams_reduced_latest_summary).toEqual(REDUCED);
+    // Structurally distinct objects, not merged.
+    expect(pkg.ams_reduced_latest_summary).not.toBe(pkg.full_session_raw_evidence);
+  });
+
+  it('allows the raw and reduced surfaces to disagree without either being rewritten', () => {
+    const pkg = build();
+    expect(pkg.ams_reduced_latest_summary.path_sequence).toEqual(['/en']);
+    expect(pkg.full_session_raw_evidence?.route_progression).toHaveLength(4);
+    expect(pkg.ams_reduced_latest_summary.form_started).toBe(false);
+    expect(pkg.full_session_raw_evidence?.form_evidence.form_started).toBe(true);
+  });
+
+  it('never lets reduced false form values overwrite raw true evidence', () => {
+    const pkg = build();
+    expect(pkg.full_session_raw_evidence?.form_evidence.form_started).toBe(true);
+    expect(pkg.full_session_raw_evidence?.form_evidence.form_abandon_after_start).toBe(true);
+  });
+
+  it('renders both surfaces distinctly and never implies the route was only /en', () => {
+    const md = renderGoldenSessionMarkdown(build());
+    expect(md).toContain('## Full-session raw accepted-event evidence (authoritative for route and form)');
+    expect(md).toContain('## AMS reduced LatestSummary surface (NOT the full session)');
+    expect(md).toContain('/en → /en/product → /en/buyer-motion-evidence-report → /en');
+    expect(md).toMatch(/started true; submitted false; abandoned after start true/);
+    expect(md).toContain('form_start event_id 57');
+    expect(md).toMatch(/- Authoritative AMS final decision:/);
+    expect(md).not.toMatch(/Policy Pass 2/);
+    // The reduced surface is labelled reduced, never as the full session.
+    expect(md).toContain('This surface is REDUCED');
+  });
+
+  it('keeps JSON and Markdown consistent about both surfaces', () => {
+    const pkg = build();
+    const json = JSON.parse(serializeGoldenSessionPackage(pkg));
+    const md = renderGoldenSessionMarkdown(pkg);
+    expect(json.full_session_raw_evidence.route_progression).toEqual([
+      '/en', '/en/product', '/en/buyer-motion-evidence-report', '/en',
+    ]);
+    expect(json.ams_reduced_latest_summary.path_sequence).toEqual(['/en']);
+    for (const path of json.full_session_raw_evidence.route_progression) {
+      expect(md).toContain(path);
+    }
+    expect(json.full_session_raw_evidence.form_evidence.form_abandon_after_start).toBe(true);
+  });
+
+  it('reports an absent reduced surface honestly rather than inventing one', () => {
+    const pkg = build({ ams_reduced_latest_summary: undefined });
+    expect(pkg.ams_reduced_latest_summary).toEqual({ represented: false });
+    const md = renderGoldenSessionMarkdown(pkg);
+    expect(md).toContain('did not represent a LatestSummary surface');
+  });
+
+  it('resolves semantics from legacy_event_type without modifying the source row', () => {
+    // Known drift: event_name unpopulated, legacy_event_type carries the type,
+    // and the transport column holds only a sentinel.
+    const driftRow = {
+      event_id: 57, received_at: '2026-07-24T10:00:30Z', event_type: 'track',
+      event_name: null, legacy_event_type: 'form_start', page_path: '/en/x',
+    };
+    const frozen = JSON.stringify(driftRow);
+    const resolved = resolveSemanticEvent(driftRow);
+    expect(resolved.semantic_event_type).toBe('form_start');
+    expect(resolved.semantic_source).toBe('legacy_event_type');
+    // The row itself is untouched — nothing is repaired or backfilled.
+    expect(JSON.stringify(driftRow)).toBe(frozen);
+
+    const evidence = buildFullSessionRawEvidence([driftRow]);
+    expect(evidence.form_evidence.form_started).toBe(true);
+    expect(evidence.semantic_source_counts.legacy_event_type).toBe(1);
+    expect(evidence.semantic_source_counts.event_name).toBe(0);
+
+    const md = renderGoldenSessionMarkdown(build({ full_session_raw_evidence: evidence }));
+    expect(md).toContain('legacy_event_type 1');
+    expect(md).toContain('their semantic type was read from `legacy_event_type`');
+  });
+
+  it('treats a transport sentinel as carrying no semantic meaning', () => {
+    const sentinelOnly = {
+      event_id: 60, received_at: '2026-07-24T10:01:00Z', event_type: 'track',
+      event_name: null, legacy_event_type: null, page_path: '/en',
+    };
+    const resolved = resolveSemanticEvent(sentinelOnly);
+    expect(resolved.semantic_event_type).toBeNull();
+    expect(resolved.semantic_source).toBe('unresolved');
+    // An unresolved event contributes no route step and no form fact.
+    const evidence = buildFullSessionRawEvidence([sentinelOnly]);
+    expect(evidence.route_progression).toEqual([]);
+    expect(evidence.form_evidence.form_started).toBe(false);
+    expect(evidence.semantic_source_counts.unresolved).toBe(1);
+  });
+
+  it('reads raw accepted events read-only, bounded, scoped and ordered', async () => {
+    const seen: Array<{ text: string; values: ReadonlyArray<string> }> = [];
+    const db: GoldenSessionDbClient = {
+      query: async (text: string, values: ReadonlyArray<string>) => {
+        seen.push({ text, values });
+        return { rows: [] };
+      },
+    };
+    await readRawAcceptedEventEvidence(db, IDENTITY);
+    const q = seen[0];
+    expect(q.text.trimStart().startsWith('SELECT')).toBe(true);
+    expect(/\b(INSERT|UPDATE|DELETE|UPSERT|COPY|TRUNCATE|ALTER|CREATE|DROP)\b/i.test(q.text)).toBe(false);
+    expect(q.text).toMatch(/workspace_id = \$1/);
+    expect(q.text).toMatch(/site_id = \$2/);
+    expect(q.text).toMatch(/session_id = \$3/);
+    expect(q.text).toMatch(/ORDER BY received_at ASC, event_id ASC/);
+    expect(q.text).toMatch(/LIMIT 1000/);
   });
 });

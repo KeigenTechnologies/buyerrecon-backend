@@ -207,7 +207,7 @@ describe('golden-session entrypoint — existing-run mode cannot invoke AMS', ()
     // Each source is validated on its own terms; agreement alone is not validity.
     expect(moduleCode).toMatch(/validateSourceEventIdSequence\(\s*input\.golden_source_event_ids/);
     expect(moduleCode).toMatch(/validateSourceEventIdSequence\(\s*input\.card_source_event_ids/);
-    expect(moduleCode).toMatch(/validateSourceEventIdSequence\(input\.accepted_event_ids/);
+    expect(moduleCode).toMatch(/validateSourceEventIdSequence\(\s*input\.accepted_event_ids/);
     // ...and all three pairwise comparisons are required.
     for (const reason of [
       'golden_json_and_persisted_card_source_event_ids_differ',

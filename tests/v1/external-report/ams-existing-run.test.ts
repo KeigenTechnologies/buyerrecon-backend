@@ -7,6 +7,7 @@ import {
   AMS_FINAL_DECISIONS,
   AMS_FRESH_RUN_FLAGS,
   GOLDEN_JSON_EMBEDDED_RUN_ID,
+  GOLDEN_SESSION_CANONICAL_SOURCE_EVENT_IDS,
   PERSISTED_RUN_AUTHORITY,
   buildExistingRunReportMetadata,
   persistedFinalDecision,
@@ -17,6 +18,7 @@ import {
   renderExistingRunReportMetadata,
   resolveAmsInputMode,
   resolveGoldenJsonFinalDecision,
+  validateSourceEventIdSequence,
   type AmsRunVerificationFlags,
   type PersistedAmsRunExpectation,
   type PersistedAmsRunRows,
@@ -1053,5 +1055,110 @@ describe('run-linkage ambiguity (no embedded run id)', () => {
     expect(r.verification.cross_source_consistency_linkage_verified).toBe(true);
     expect(r.verification.observationally_equivalent_run_candidate_count).toBe(0);
     expect(r.verification.run_linkage_ambiguity_detected).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BLOCK-1 (review 085a7a1) — shared malformation across ALL THREE sources.
+// Three-way equality is not validity: each source must already be canonical.
+
+describe('shared malformation across all three provenance sources', () => {
+  const CANON = [...GOLDEN_SESSION_CANONICAL_SOURCE_EVENT_IDS];
+  const allThree = (ids: unknown) =>
+    reconcileSourceEventProvenance({
+      golden_source_event_ids: ids,
+      card_source_event_ids: ids,
+      accepted_event_ids: ids,
+      canonical_sequence: CANON,
+    });
+
+  it('accepts only the exact canonical sequence 51..59', () => {
+    expect(allThree([...CANON])).toEqual({ ok: true, ids: CANON, count: 9 });
+  });
+
+  it.each([
+    ['eight ids', [51, 52, 53, 54, 55, 56, 57, 58]],
+    ['ten ids', [51, 52, 53, 54, 55, 56, 57, 58, 59, 60]],
+    ['a duplicate', [51, 51, 52, 53, 54, 55, 56, 57, 58]],
+    ['the correct ids in the wrong order', [52, 51, 53, 54, 55, 56, 57, 58, 59]],
+    ['a zero', [0, 52, 53, 54, 55, 56, 57, 58, 59]],
+    ['a negative id', [-51, 52, 53, 54, 55, 56, 57, 58, 59]],
+    ['a non-integer', [51.5, 52, 53, 54, 55, 56, 57, 58, 59]],
+    ['an unsafe integer', [Number.MAX_SAFE_INTEGER + 2, 52, 53, 54, 55, 56, 57, 58, 59]],
+  ])('fails closed when all three sources share %s', (_label, ids) => {
+    const r = allThree(ids);
+    expect(r.ok, `all three sharing ${_label} must fail`).toBe(false);
+    if (r.ok) return;
+    // The failure must name each source independently, not a cross-source diff:
+    // agreement is exactly what made the old two-sided model accept these.
+    expect(r.reasons.some((x) => x.startsWith('golden_json_'))).toBe(true);
+    expect(r.reasons.some((x) => x.startsWith('persisted_card_'))).toBe(true);
+    expect(r.reasons.some((x) => x.startsWith('accepted_events_'))).toBe(true);
+  });
+
+  it('never sorts a reordered sequence into passing', () => {
+    const reordered = [59, 58, 57, 56, 55, 54, 53, 52, 51];
+    const r = allThree(reordered);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reasons).toContain('golden_json_source_event_ids_not_canonical_sequence');
+    expect(r.reasons).toContain('persisted_card_source_event_ids_not_canonical_sequence');
+    expect(r.reasons).toContain('accepted_events_source_event_ids_not_canonical_sequence');
+  });
+
+  it('enforces exactly nine per source, independently', () => {
+    for (const label of ['golden_json', 'persisted_card', 'accepted_events'] as const) {
+      const v = validateSourceEventIdSequence(CANON.slice(0, 8), label, undefined, CANON);
+      expect(v.ok).toBe(false);
+      if (v.ok) continue;
+      expect(v.reasons).toContain(`${label}_source_event_count_not_exactly_9`);
+    }
+  });
+
+  it.each([
+    ['only Golden malformed', { g: [51, 52], c: null, a: null }],
+    ['only the replay card malformed', { g: null, c: [51, 52], a: null }],
+    ['only accepted events malformed', { g: null, c: null, a: [51, 52] }],
+  ])('still fails closed when %s', (_label, m) => {
+    const r = reconcileSourceEventProvenance({
+      golden_source_event_ids: m.g ?? [...CANON],
+      card_source_event_ids: m.c ?? [...CANON],
+      accepted_event_ids: m.a ?? [...CANON],
+      canonical_sequence: CANON,
+    });
+    expect(r.ok).toBe(false);
+  });
+
+  it('fails closed on a wrong self-declared count and on cross-source mismatch', () => {
+    const badCount = reconcileSourceEventProvenance({
+      golden_source_event_ids: [...CANON],
+      golden_declared_count: 8,
+      card_source_event_ids: [...CANON],
+      accepted_event_ids: [...CANON],
+      canonical_sequence: CANON,
+    });
+    expect(badCount.ok).toBe(false);
+
+    const crossMismatch = reconcileSourceEventProvenance({
+      golden_source_event_ids: [...CANON],
+      card_source_event_ids: [...CANON],
+      accepted_event_ids: [51, 52, 53, 54, 55, 56, 57, 58, 60],
+      canonical_sequence: CANON,
+    });
+    expect(crossMismatch.ok).toBe(false);
+  });
+
+  it('fails reconciliation before package construction', () => {
+    const eight = CANON.slice(0, 8);
+    const r = reconcilePersistedAmsRun(
+      rows({ cards: [{ run_id: RUN_ID, subject_id: SUBJECT, status: 'DEGRADED',
+        source_event_ids: [...eight], evidence_card: { RequestedAction: 'suppress' } }] }),
+      expectation({
+        source_event_ids: [...eight],
+        accepted_event_ids: [...eight],
+        canonical_sequence: [...CANON],
+      }),
+    );
+    expect(r.ok).toBe(false);
   });
 });

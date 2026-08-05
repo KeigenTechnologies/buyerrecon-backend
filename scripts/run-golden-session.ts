@@ -63,12 +63,15 @@ import {
   validateAmsGoldenSessionJson,
 } from '../src/reports/external/golden-session-package.js';
 import {
+  buildFullSessionRawEvidence,
   readAcceptedEventIdSequence,
+  readRawAcceptedEventEvidence,
   readSessionPersistedRows,
   type BackendSessionIdentity,
 } from '../src/reports/external/session-evidence-atoms.js';
 import {
   AMS_EXISTING_RUN_FLAGS,
+  GOLDEN_SESSION_CANONICAL_SOURCE_EVENT_IDS,
   buildExistingRunReportMetadata,
   readPersistedAmsRunRows,
   readRunCandidatesForSubject,
@@ -257,6 +260,7 @@ async function main(): Promise<void> {
   };
 
   let rows;
+  let rawAcceptedEvents: Awaited<ReturnType<typeof readRawAcceptedEventEvidence>> = [];
   let reconciliationFailure: string | undefined;
   let reconciliationFlags: AmsRunVerificationFlags | undefined;
   try {
@@ -274,6 +278,9 @@ async function main(): Promise<void> {
       const reconciliation = reconcilePersistedAmsRun(persisted, {
         accepted_event_ids: acceptedEventIds,
         run_candidates: runCandidates,
+        // Pinned contract: every source must already equal this exact ordered
+        // sequence, so a malformation shared by all three still fails.
+        canonical_sequence: GOLDEN_SESSION_CANONICAL_SOURCE_EVENT_IDS,
         ams_run_id: args.amsInput.ams_run_id,
         site_id: args.site,
         subject_id: args.subject,
@@ -294,6 +301,9 @@ async function main(): Promise<void> {
       else reconciliationFlags = reconciliation.verification;
     }
     rows = await readSessionPersistedRows(pool, identity);
+    // Full-session raw evidence: authoritative route and form facts, read
+    // read-only and kept structurally separate from any AMS-reduced summary.
+    rawAcceptedEvents = await readRawAcceptedEventEvidence(pool, identity);
   } catch {
     failStage('evidence_read_failed');
   } finally {
@@ -307,7 +317,12 @@ async function main(): Promise<void> {
 
   let pkg;
   try {
-    pkg = buildGoldenSessionPackage({ backend_identity: identity, ams: validation.result, rows });
+    pkg = buildGoldenSessionPackage({
+      backend_identity: identity,
+      ams: validation.result,
+      rows,
+      full_session_raw_evidence: buildFullSessionRawEvidence(rawAcceptedEvents),
+    });
   } catch {
     failStage('report_build_failed');
   }
