@@ -11,7 +11,9 @@ import {
   buildExistingRunReportMetadata,
   persistedFinalDecision,
   readPersistedAmsRunRows,
+  detectRunLinkageAmbiguity,
   reconcilePersistedAmsRun,
+  reconcileSourceEventProvenance,
   renderExistingRunReportMetadata,
   resolveAmsInputMode,
   resolveGoldenJsonFinalDecision,
@@ -74,6 +76,11 @@ function expectation(over: Partial<PersistedAmsRunExpectation> = {}): PersistedA
     // The canonical golden JSON carries no run id at all (see the schema-fact
     // assertions below), so the artifact-side run id is absent by default.
     artifact_run_id: undefined,
+    // Independent third provenance source: canonical accepted-event ids for the
+    // exact workspace/site/session. Agreement of the artifact and the card is
+    // not sufficient on its own.
+    accepted_event_ids: [...EVENT_IDS],
+    run_candidates: [],
     ...over,
   };
 }
@@ -87,6 +94,9 @@ const VERIFIED_FLAGS = {
   decision_authority: 'golden_json',
   operator_decision_expectation_supplied: true,
   operator_decision_expectation_matched: true,
+  cross_source_consistency_linkage_verified: true,
+  observationally_equivalent_run_candidate_count: 0,
+  run_linkage_ambiguity_detected: false,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -284,7 +294,7 @@ describe('reconcilePersistedAmsRun', () => {
     const r = reconcilePersistedAmsRun(rows({ cards: [card] }), expectation());
     expect(r.ok).toBe(false);
     if (r.ok) return;
-    expect(r.reasons).toContain('persisted_source_event_count_mismatch');
+    expect(r.reasons).toContain('golden_json_and_persisted_card_source_event_ids_differ');
   });
 
   it('fails closed on the same set in a different order (canonical order enforced)', () => {
@@ -293,7 +303,7 @@ describe('reconcilePersistedAmsRun', () => {
     const r = reconcilePersistedAmsRun(rows({ cards: [card] }), expectation());
     expect(r.ok).toBe(false);
     if (r.ok) return;
-    expect(r.reasons).toContain('persisted_source_event_ids_mismatch');
+    expect(r.reasons).toContain('golden_json_and_persisted_card_source_event_ids_differ');
   });
 
   it('fails closed on a different event id entirely', () => {
@@ -302,7 +312,7 @@ describe('reconcilePersistedAmsRun', () => {
     const r = reconcilePersistedAmsRun(rows({ cards: [card] }), expectation());
     expect(r.ok).toBe(false);
     if (r.ok) return;
-    expect(r.reasons).toContain('persisted_source_event_ids_mismatch');
+    expect(r.reasons).toContain('golden_json_and_persisted_card_source_event_ids_differ');
   });
 
   it('Golden JSON final-decision mismatch fails closed', () => {
@@ -385,13 +395,13 @@ describe('reconcilePersistedAmsRun', () => {
         field: 'source_event_ids',
         rows: rows(),
         expect: expectation({ source_event_ids: [51, 52, 53, 54, 55, 56, 57, 58, 60] }),
-        reason: 'persisted_source_event_ids_mismatch',
+        reason: 'golden_json_and_persisted_card_source_event_ids_differ',
       },
       {
         field: 'source_event_count',
         rows: rows(),
         expect: expectation({ source_event_ids: EVENT_IDS.slice(0, 8) }),
-        reason: 'persisted_source_event_count_mismatch',
+        reason: 'golden_json_and_persisted_card_source_event_ids_differ',
       },
       {
         field: 'card_to_run_linkage',
@@ -506,7 +516,7 @@ describe('reconcilePersistedAmsRun', () => {
     const agreeingDecision = reconcilePersistedAmsRun(rows(), expectation({ source_event_ids: ids }));
     expect(agreeingDecision.ok).toBe(false);
     if (agreeingDecision.ok === false) {
-      expect(agreeingDecision.reasons).toContain('persisted_source_event_ids_mismatch');
+      expect(agreeingDecision.reasons).toContain('golden_json_and_persisted_card_source_event_ids_differ');
       expect(agreeingDecision.reasons).not.toContain('golden_json_final_decision_mismatch');
     }
 
@@ -524,7 +534,7 @@ describe('reconcilePersistedAmsRun', () => {
       expectation({ source_event_ids: ids }),
     );
     expect(bad.ok).toBe(false);
-    if (bad.ok === false) expect(bad.reasons).toContain('persisted_source_event_ids_mismatch');
+    if (bad.ok === false) expect(bad.reasons).toContain('golden_json_and_persisted_card_source_event_ids_differ');
 
     const good = reconcilePersistedAmsRun(rows({ cards: [noDecisionCard] }), expectation());
     expect(good.ok).toBe(true);
@@ -689,6 +699,9 @@ describe('existing-run report metadata', () => {
     decision_authority: 'golden_json',
     operator_decision_expectation_supplied: true,
     operator_decision_expectation_matched: true,
+    cross_source_consistency_linkage_verified: true,
+    observationally_equivalent_run_candidate_count: 0,
+    run_linkage_ambiguity_detected: false,
   };
   const meta = buildExistingRunReportMetadata(RUN_ID, verified);
 
@@ -771,6 +784,11 @@ describe('existing-run report metadata', () => {
       '  decision_authority=golden_json',
       '  operator_decision_expectation_supplied=true',
       '  operator_decision_expectation_matched=true',
+      '  cross_source_consistency_linkage_verified=true',
+      '  observationally_equivalent_run_candidate_count=0',
+      '  run_linkage_ambiguity_detected=false',
+      '  policy_pass_2_authority_verified=false',
+      '  final_decision_authority=authoritative_ams_result',
     ]);
   });
 
@@ -843,5 +861,197 @@ describe('readPersistedAmsRunRows', () => {
     }
     expect(seen.some((s) => /FROM replay_runs/.test(s))).toBe(true);
     expect(seen.some((s) => /FROM replay_evidence_cards/.test(s))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BLOCK-1 — three-source source-event provenance
+//
+// Mutual agreement between the artifact and the replay card is NOT validity.
+// Each source is independently validated, then all three must match exactly and
+// in canonical order.
+
+describe('three-source source-event provenance', () => {
+  const CANONICAL = [51, 52, 53, 54, 55, 56, 57, 58, 59];
+
+  it('accepts the exact canonical sequence 51..59 across all three sources', () => {
+    const r = reconcileSourceEventProvenance({
+      golden_source_event_ids: [...CANONICAL],
+      card_source_event_ids: [...CANONICAL],
+      accepted_event_ids: [...CANONICAL],
+    });
+    expect(r).toEqual({ ok: true, ids: CANONICAL, count: 9 });
+  });
+
+  it('rejects eight mutually matching ids shared by Golden and card', () => {
+    const eight = CANONICAL.slice(0, 8);
+    const r = reconcileSourceEventProvenance({
+      golden_source_event_ids: [...eight],
+      card_source_event_ids: [...eight],
+      accepted_event_ids: [...CANONICAL],
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    // Agreement between the two did not rescue them: event truth disagrees.
+    expect(r.reasons).toContain('golden_json_and_accepted_events_source_event_ids_differ');
+    expect(r.reasons).toContain('persisted_card_and_accepted_events_source_event_ids_differ');
+  });
+
+  it('rejects a duplicate id shared by Golden and card', () => {
+    const dup = [51, 51, 52, 53, 54, 55, 56, 57, 58];
+    const r = reconcileSourceEventProvenance({
+      golden_source_event_ids: [...dup],
+      card_source_event_ids: [...dup],
+      accepted_event_ids: [...CANONICAL],
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    // Caught by independent validation, before any comparison.
+    expect(r.reasons).toContain('golden_json_source_event_ids_contain_duplicates');
+    expect(r.reasons).toContain('persisted_card_source_event_ids_contain_duplicates');
+  });
+
+  it('rejects the same reordered sequence shared by Golden and card', () => {
+    const reordered = [52, 51, 53, 54, 55, 56, 57, 58, 59];
+    const r = reconcileSourceEventProvenance({
+      golden_source_event_ids: [...reordered],
+      card_source_event_ids: [...reordered],
+      accepted_event_ids: [...CANONICAL],
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    // Set-equivalent but not order-equivalent: canonical order is contractual.
+    expect(r.reasons).toContain('golden_json_and_accepted_events_source_event_ids_differ');
+  });
+
+  it('rejects a Golden count that disagrees with its own array', () => {
+    const r = reconcileSourceEventProvenance({
+      golden_source_event_ids: [...CANONICAL],
+      golden_declared_count: 8,
+      card_source_event_ids: [...CANONICAL],
+      accepted_event_ids: [...CANONICAL],
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reasons).toContain('golden_json_source_event_count_disagrees_with_own_array');
+  });
+
+  it('rejects a card count that disagrees with its own array', () => {
+    const r = reconcileSourceEventProvenance({
+      golden_source_event_ids: [...CANONICAL],
+      card_source_event_ids: [...CANONICAL],
+      card_declared_count: 10,
+      accepted_event_ids: [...CANONICAL],
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reasons).toContain('persisted_card_source_event_count_disagrees_with_own_array');
+  });
+
+  it('rejects Golden/card agreement that disagrees with accepted events', () => {
+    const shifted = [61, 62, 63, 64, 65, 66, 67, 68, 69];
+    const r = reconcileSourceEventProvenance({
+      golden_source_event_ids: [...shifted],
+      card_source_event_ids: [...shifted],
+      accepted_event_ids: [...CANONICAL],
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reasons).toContain('golden_json_and_accepted_events_source_event_ids_differ');
+  });
+
+  it.each([
+    ['non-integer', [51.5, 52, 53]],
+    ['unsafe integer', [Number.MAX_SAFE_INTEGER + 2, 52, 53]],
+    ['zero', [0, 52, 53]],
+    ['negative', [-51, 52, 53]],
+    ['non-numeric string', ['fifty-one', 52, 53]],
+    ['null entry', [null, 52, 53]],
+    ['boolean entry', [true, 52, 53]],
+  ])('rejects %s ids in every source', (_label, bad) => {
+    for (const key of ['golden_source_event_ids', 'card_source_event_ids', 'accepted_event_ids'] as const) {
+      const input = {
+        golden_source_event_ids: [...CANONICAL],
+        card_source_event_ids: [...CANONICAL],
+        accepted_event_ids: [...CANONICAL],
+        [key]: bad,
+      };
+      const r = reconcileSourceEventProvenance(input as never);
+      expect(r.ok, `${_label} must be rejected in ${key}`).toBe(false);
+    }
+  });
+
+  it('rejects a non-array source entirely', () => {
+    for (const notArray of [undefined, null, 'x', 9, {}]) {
+      const r = reconcileSourceEventProvenance({
+        golden_source_event_ids: [...CANONICAL],
+        card_source_event_ids: [...CANONICAL],
+        accepted_event_ids: notArray,
+      });
+      expect(r.ok).toBe(false);
+      if (r.ok) continue;
+      expect(r.reasons).toContain('accepted_events_source_event_ids_not_an_array');
+    }
+  });
+
+  it('normalises driver-supplied numeric strings without loosening validation', () => {
+    const ok = reconcileSourceEventProvenance({
+      golden_source_event_ids: [...CANONICAL],
+      card_source_event_ids: CANONICAL.map(String),
+      accepted_event_ids: CANONICAL.map(String),
+    });
+    expect(ok).toEqual({ ok: true, ids: CANONICAL, count: 9 });
+  });
+});
+
+describe('run-linkage ambiguity (no embedded run id)', () => {
+  const CANONICAL = [51, 52, 53, 54, 55, 56, 57, 58, 59];
+  const candidate = (runId: string, ids: number[] = CANONICAL) => ({
+    run_id: runId, subject_id: SUBJECT, site_id: SITE, source_event_ids: [...ids],
+  });
+
+  it('accepts a unique candidate', () => {
+    const a = detectRunLinkageAmbiguity([candidate(RUN_ID)], RUN_ID, CANONICAL);
+    expect(a).toEqual({
+      observationally_equivalent_run_candidate_count: 0,
+      run_linkage_ambiguity_detected: false,
+    });
+  });
+
+  it('detects another run indistinguishable on every overlapping field', () => {
+    const other = '11111111-1111-4111-8111-111111111111';
+    const a = detectRunLinkageAmbiguity([candidate(RUN_ID), candidate(other)], RUN_ID, CANONICAL);
+    expect(a).toEqual({
+      observationally_equivalent_run_candidate_count: 1,
+      run_linkage_ambiguity_detected: true,
+    });
+  });
+
+  it('does not count a candidate with a different source-event set', () => {
+    const other = '22222222-2222-4222-8222-222222222222';
+    const a = detectRunLinkageAmbiguity(
+      [candidate(RUN_ID), candidate(other, [61, 62, 63])], RUN_ID, CANONICAL,
+    );
+    expect(a.run_linkage_ambiguity_detected).toBe(false);
+  });
+
+  it('fails reconciliation closed when an equivalent candidate exists', () => {
+    const other = '33333333-3333-4333-8333-333333333333';
+    const r = reconcilePersistedAmsRun(
+      rows(),
+      expectation({ run_candidates: [candidate(RUN_ID), candidate(other)] }),
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reasons).toContain('observationally_equivalent_run_candidate_present');
+  });
+
+  it('reports linkage as cross-source consistency, never artifact-native', () => {
+    const r = reconcilePersistedAmsRun(rows(), expectation());
+    expect(r.ok).toBe(true);
+    if (r.ok === false) return;
+    expect(r.verification.cross_source_consistency_linkage_verified).toBe(true);
+    expect(r.verification.observationally_equivalent_run_candidate_count).toBe(0);
+    expect(r.verification.run_linkage_ambiguity_detected).toBe(false);
   });
 });

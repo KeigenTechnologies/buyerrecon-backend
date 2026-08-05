@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   AMS_GOLDEN_SCHEMA_VERSION,
+  FINAL_DECISION_AUTHORITY,
   GOLDEN_PACKAGE_ARTIFACT_VERSION,
   buildGoldenSessionPackage,
   deriveBuyerMotionPresentation,
@@ -13,6 +14,7 @@ import {
 import {
   GOLDEN_SESSION_STAGE_MISSING_LABELS,
   mapSessionRowsToEvidenceAtoms,
+  readAcceptedEventIdSequence,
   readSessionPersistedRows,
   summarizeStagePresence,
   type BackendSessionIdentity,
@@ -285,7 +287,7 @@ describe('AMS golden JSON validation', () => {
 });
 
 describe('authoritative decision preservation (no recalculation)', () => {
-  it('preserves the Policy Pass 2 final decision exactly as AMS reported it', () => {
+  it('preserves the authoritative AMS final decision exactly as AMS reported it', () => {
     const pkg = buildFixturePackage();
     expect(pkg.ams_authoritative.authoritative_final_decision).toBe('ALLOW_WITH_FRICTION');
     expect(pkg.ams_authoritative.runtime_decision?.FinalDecision).toBe('ALLOW_WITH_FRICTION');
@@ -491,7 +493,7 @@ describe('artifact determinism and completeness', () => {
       'PoI: score 61',
       'Trust / confidence: band building',
       'Policy Pass 1: trust invocation CONTINUE',
-      'Policy Pass 2 final decision (authoritative): ALLOW_WITH_FRICTION',
+      'Authoritative AMS final decision: ALLOW_WITH_FRICTION',
       'Recommended operator action: review_session_evidence_and_friction_outcome',
       '## Limitations',
       'session_level_isolation=false',
@@ -534,5 +536,184 @@ describe('injected read-only database dependency', () => {
       expect(q.text).not.toContain('scoring_output_lane');
       expect(q.values).toContain(IDENTITY.session_id);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BLOCK-2 — exact workspace/site/session containment
+
+describe('Golden JSON identity containment', () => {
+  const withScope = (over: Record<string, unknown>): string => {
+    const parsed = JSON.parse(amsFixtureJson());
+    parsed.scope = { ...parsed.scope, ...over };
+    return JSON.stringify(parsed);
+  };
+  const expectation = {
+    ...EXPECTED_AMS_IDENTITY,
+    session_id: 'ses_golden',
+    workspace_id: 'ws_golden',
+  };
+
+  it('rejects a Golden scope.session_id that contradicts the requested session', () => {
+    const v = validateAmsGoldenSessionJson(withScope({ session_id: 'wrong_session' }), expectation);
+    expect(v.ok).toBe(false);
+    if (v.ok) return;
+    expect(v.reasons).toContain('session_mismatch');
+  });
+
+  it('rejects a represented workspace that contradicts the requested workspace', () => {
+    const v = validateAmsGoldenSessionJson(withScope({ workspace_id: 'other_ws' }), expectation);
+    expect(v.ok).toBe(false);
+    if (v.ok) return;
+    expect(v.reasons).toContain('workspace_mismatch');
+  });
+
+  it('rejects a represented site that contradicts the requested site', () => {
+    const v = validateAmsGoldenSessionJson(withScope({ site_id: 'other_site' }), expectation);
+    expect(v.ok).toBe(false);
+    if (v.ok) return;
+    expect(v.reasons).toContain('site_mismatch');
+  });
+
+  it('accepts a matching represented session identity', () => {
+    const v = validateAmsGoldenSessionJson(withScope({ session_id: 'ses_golden' }), expectation);
+    expect(v.ok).toBe(true);
+  });
+
+  it('treats absence as legitimately optional, but contradiction as fatal', () => {
+    // The canonical scope carries session_id as optional and no workspace at all.
+    const absent = validateAmsGoldenSessionJson(amsFixtureJson(), expectation);
+    expect(absent.ok).toBe(true);
+    const contradictory = validateAmsGoldenSessionJson(
+      withScope({ session_id: 'ses_other' }), expectation,
+    );
+    expect(contradictory.ok).toBe(false);
+  });
+});
+
+describe('accepted-event query containment', () => {
+  const identity: BackendSessionIdentity = {
+    workspace_id: 'ws_golden',
+    project_id: 'proj',
+    site_id: 'site_golden',
+    session_id: 'ses_golden',
+    window_start: WINDOW_START,
+    window_end: WINDOW_END,
+  };
+
+  function recordingDb(rowsByTable: Record<string, Array<Record<string, unknown>>> = {}) {
+    const seen: Array<{ text: string; values: ReadonlyArray<string> }> = [];
+    const db: GoldenSessionDbClient = {
+      query: async (text: string, values: ReadonlyArray<string>) => {
+        seen.push({ text, values });
+        const key = Object.keys(rowsByTable).find((t) => text.includes(t));
+        return { rows: key !== undefined ? rowsByTable[key] : [] };
+      },
+    };
+    return { db, seen };
+  }
+
+  it('scopes the accepted-events read by workspace, site and session', async () => {
+    const { db, seen } = recordingDb();
+    await readSessionPersistedRows(db, identity);
+    const accepted = seen.find((q) => /FROM accepted_events/.test(q.text));
+    expect(accepted).toBeDefined();
+    expect(accepted?.text).toMatch(/workspace_id = \$1/);
+    expect(accepted?.text).toMatch(/site_id = \$2/);
+    expect(accepted?.text).toMatch(/session_id = \$3/);
+    expect(accepted?.values.slice(0, 3)).toEqual(['ws_golden', 'site_golden', 'ses_golden']);
+  });
+
+  it('scopes and orders the accepted-event id sequence canonically', async () => {
+    const { db, seen } = recordingDb({ accepted_events: [{ event_id: 51 }, { event_id: 52 }] });
+    const ids = await readAcceptedEventIdSequence(db, identity);
+    expect(ids).toEqual([51, 52]);
+    const q = seen[0];
+    expect(q.text).toMatch(/workspace_id = \$1/);
+    expect(q.text).toMatch(/site_id = \$2/);
+    expect(q.text).toMatch(/session_id = \$3/);
+    expect(q.text).toMatch(/ORDER BY received_at ASC, event_id ASC/);
+    expect(q.values.slice(0, 3)).toEqual(['ws_golden', 'site_golden', 'ses_golden']);
+  });
+
+  it('cannot admit rows from another workspace sharing site and session', async () => {
+    // The driver only returns rows matching the bound parameters; a foreign
+    // workspace's rows are excluded by the predicate, so the sequence is empty
+    // and provenance fails closed rather than silently pooling events.
+    const { db, seen } = recordingDb();
+    const ids = await readAcceptedEventIdSequence(db, identity);
+    expect(ids).toEqual([]);
+    expect(seen[0].values).toContain('ws_golden');
+    expect(seen[0].values).not.toContain('other_workspace');
+  });
+
+  it('keeps every persisted read workspace-scoped', async () => {
+    const { db, seen } = recordingDb();
+    await readSessionPersistedRows(db, identity);
+    for (const q of seen) {
+      expect(q.text, `query must be workspace scoped: ${q.text.slice(0, 60)}`).toMatch(/workspace_id = \$1/);
+      expect(q.values[0]).toBe('ws_golden');
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BLOCK-3 — decision authority must be evidenced, never inferred
+
+describe('final-decision authority wording', () => {
+  const markdownFor = (decision: string, over: Record<string, unknown> = {}): string => {
+    const parsed = JSON.parse(amsFixtureJson());
+    parsed.authoritative_final_decision = decision;
+    parsed.runtime_decision = { ...parsed.runtime_decision, FinalDecision: decision };
+    Object.assign(parsed, over);
+    const v = validateAmsGoldenSessionJson(JSON.stringify(parsed), EXPECTED_AMS_IDENTITY);
+    if (v.ok === false) throw new Error(`fixture must validate: ${v.reasons.join(',')}`);
+    return renderGoldenSessionMarkdown(
+      buildGoldenSessionPackage({ backend_identity: IDENTITY, ams: v.result, rows: emptyRows() }),
+    );
+  };
+
+  it('uses neutral authoritative wording with no execution-authority evidence', () => {
+    const md = markdownFor('HOLD');
+    expect(md).toContain('- Authoritative AMS final decision: HOLD');
+  });
+
+  it('never claims Policy Pass 2 anywhere in the customer artifact', () => {
+    for (const decision of ['ALLOW', 'ALLOW_WITH_FRICTION', 'HOLD', 'REVIEW', 'DENY', 'NO_ACTION']) {
+      const md = markdownFor(decision);
+      expect(md, `decision ${decision}`).not.toMatch(/Policy Pass 2/);
+      expect(md).not.toMatch(/sole final authority/i);
+    }
+  });
+
+  it('HOLD alone does not produce a Policy Pass 2 claim', () => {
+    expect(markdownFor('HOLD')).not.toMatch(/Policy Pass 2/);
+  });
+
+  it('RequestedAction=suppress does not produce a Policy Pass 2 claim', () => {
+    const md = markdownFor('HOLD', {
+      product_decision: { RequestedAction: 'suppress', ReasonCodes: ['PRODUCT.SUPPRESS'] },
+    });
+    expect(md).toContain('- Action proposal (product layer): suppress');
+    expect(md).not.toMatch(/Policy Pass 2/);
+  });
+
+  it('a SKIP_TRUST direct-finalisation fixture produces no Policy Pass 2 claim', () => {
+    // Canonical AMS permits finalising directly under SKIP_TRUST, so Pass 2 may
+    // never have run. The wording must not assert that it owned the decision.
+    const md = markdownFor('HOLD', {
+      policy_pass_1: {
+        TrustInvocationMode: 'SKIP_TRUST', ActionTier: 'tier_2',
+        GatingReasonCodes: ['POLICY.DIRECT_FINALISATION'],
+      },
+      trust: undefined,
+    });
+    expect(md).toContain('- Authoritative AMS final decision: HOLD');
+    expect(md).not.toMatch(/Policy Pass 2/);
+  });
+
+  it('exposes the neutral authority constant rather than a stage name', () => {
+    expect(FINAL_DECISION_AUTHORITY).toBe('authoritative_ams_result');
+    expect(String(FINAL_DECISION_AUTHORITY)).not.toMatch(/pass/i);
   });
 });

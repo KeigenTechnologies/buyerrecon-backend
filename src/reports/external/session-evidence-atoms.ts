@@ -180,6 +180,32 @@ function asText(value: unknown): string {
  * query is scoped to the one session identity and the pinned bounds, and every
  * multi-row read has a stable ORDER BY so downstream mapping is deterministic.
  */
+/**
+ * Read the canonical ordered accepted-event id sequence for EXACTLY one
+ * workspace + site + session inside the pinned bounds. SELECT-only.
+ *
+ * This is the independent third provenance source: it is derived from event
+ * truth itself, not from the AMS artifact or the replay card, so a malformation
+ * those two happen to share cannot survive comparison against it.
+ *
+ * Canonical ordering is `received_at ASC, event_id ASC` — the same order AMS
+ * consumed — so the comparison is order-sensitive and not merely set-based.
+ */
+export async function readAcceptedEventIdSequence(
+  db: GoldenSessionDbClient,
+  identity: BackendSessionIdentity,
+): Promise<ReadonlyArray<unknown>> {
+  const result = await db.query(
+    `SELECT event_id
+       FROM accepted_events
+      WHERE workspace_id = $1 AND site_id = $2 AND session_id = $3
+        AND received_at >= $4::timestamptz AND received_at <= $5::timestamptz
+      ORDER BY received_at ASC, event_id ASC`,
+    [identity.workspace_id, identity.site_id, identity.session_id, identity.window_start, identity.window_end],
+  );
+  return result.rows.map((row) => row.event_id);
+}
+
 export async function readSessionPersistedRows(
   db: GoldenSessionDbClient,
   identity: BackendSessionIdentity,
@@ -187,6 +213,9 @@ export async function readSessionPersistedRows(
   const sessionScope = [identity.site_id, identity.session_id, identity.window_start, identity.window_end];
   const workspaceScope = [identity.workspace_id, ...sessionScope];
 
+  // Workspace-scoped like every sibling read. Without workspace_id in the
+  // predicate, two workspaces sharing a site_id + session_id pair would pool
+  // their events into one session's evidence.
   const accepted = await db.query(
     `SELECT COUNT(*)::int AS source_event_count,
             MIN(event_id) AS first_event_id,
@@ -194,9 +223,9 @@ export async function readSessionPersistedRows(
             MIN(received_at) AS first_received_at,
             MAX(received_at) AS last_received_at
        FROM accepted_events
-      WHERE site_id = $1 AND session_id = $2
-        AND received_at >= $3::timestamptz AND received_at <= $4::timestamptz`,
-    sessionScope,
+      WHERE workspace_id = $1 AND site_id = $2 AND session_id = $3
+        AND received_at >= $4::timestamptz AND received_at <= $5::timestamptz`,
+    workspaceScope,
   );
 
   const features = await db.query(

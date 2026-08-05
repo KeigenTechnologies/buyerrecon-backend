@@ -150,6 +150,138 @@ export function persistedFinalDecision(_rows: PersistedAmsRunRows): null {
   return null;
 }
 
+/** Independent validation outcome for one source-event id sequence. */
+export type SourceEventIdValidation =
+  | { readonly ok: true; readonly ids: ReadonlyArray<number> }
+  | { readonly ok: false; readonly reasons: ReadonlyArray<string> };
+
+/**
+ * Validate ONE source-event id sequence on its own terms, before it is compared
+ * with anything else.
+ *
+ * Mutual agreement between two sources is not validity: if the artifact and the
+ * replay card carry the same malformed array — eight ids, a duplicate, a
+ * reordering — agreement alone would accept it. Each source must therefore be
+ * independently well-formed first.
+ *
+ * Driver-supplied numeric strings are accepted and normalised, since Postgres
+ * may return bigint columns as strings; nothing else is coerced.
+ */
+export function validateSourceEventIdSequence(
+  value: unknown,
+  label: string,
+  declaredCount?: unknown,
+): SourceEventIdValidation {
+  const reasons: string[] = [];
+  if (Array.isArray(value) === false) {
+    return { ok: false, reasons: [`${label}_source_event_ids_not_an_array`] };
+  }
+
+  const ids: number[] = [];
+  for (const raw of value as ReadonlyArray<unknown>) {
+    const n =
+      typeof raw === 'number' ? raw : typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : Number.NaN;
+    if (Number.isFinite(n) === false || Number.isSafeInteger(n) === false) {
+      reasons.push(`${label}_source_event_id_not_a_safe_integer`);
+      break;
+    }
+    if (n <= 0) {
+      reasons.push(`${label}_source_event_id_not_positive`);
+      break;
+    }
+    ids.push(n);
+  }
+  if (reasons.length > 0) return { ok: false, reasons };
+
+  if (ids.length === 0) reasons.push(`${label}_source_event_ids_empty`);
+  if (new Set(ids).size !== ids.length) reasons.push(`${label}_source_event_ids_contain_duplicates`);
+
+  if (declaredCount !== undefined) {
+    const declared =
+      typeof declaredCount === 'number'
+        ? declaredCount
+        : typeof declaredCount === 'string' && declaredCount.trim() !== ''
+          ? Number(declaredCount)
+          : Number.NaN;
+    if (Number.isSafeInteger(declared) === false || declared !== ids.length) {
+      reasons.push(`${label}_source_event_count_disagrees_with_own_array`);
+    }
+  }
+
+  if (reasons.length > 0) return { ok: false, reasons };
+  return { ok: true, ids };
+}
+
+/** The three independently validated provenance sources, before comparison. */
+export interface SourceEventProvenanceInput {
+  /** From the validated Golden JSON. */
+  readonly golden_source_event_ids: unknown;
+  /** Count the artifact declares about itself, when it represents one. */
+  readonly golden_declared_count?: unknown;
+  /** From `replay_evidence_cards.source_event_ids`. */
+  readonly card_source_event_ids: unknown;
+  /** Count the card represents about itself, when separately represented. */
+  readonly card_declared_count?: unknown;
+  /**
+   * Canonical ordered accepted-event ids read read-only for the exact
+   * workspace + site + session. Event truth, independent of AMS.
+   */
+  readonly accepted_event_ids: unknown;
+}
+
+export type SourceEventProvenanceResult =
+  | { readonly ok: true; readonly ids: ReadonlyArray<number>; readonly count: number }
+  | { readonly ok: false; readonly reasons: ReadonlyArray<string> };
+
+/**
+ * Reconcile source-event provenance across three independently validated
+ * sources, requiring exact ORDERED equality of all three.
+ *
+ * Order-sensitive by construction: canonical order (`received_at ASC,
+ * event_id ASC`) is part of the contract, so a set-equivalent reordering is a
+ * failure, not a pass.
+ */
+export function reconcileSourceEventProvenance(
+  input: SourceEventProvenanceInput,
+): SourceEventProvenanceResult {
+  const golden = validateSourceEventIdSequence(
+    input.golden_source_event_ids,
+    'golden_json',
+    input.golden_declared_count,
+  );
+  const card = validateSourceEventIdSequence(
+    input.card_source_event_ids,
+    'persisted_card',
+    input.card_declared_count,
+  );
+  const accepted = validateSourceEventIdSequence(input.accepted_event_ids, 'accepted_events');
+
+  const reasons: string[] = [
+    ...(golden.ok === false ? golden.reasons : []),
+    ...(card.ok === false ? card.reasons : []),
+    ...(accepted.ok === false ? accepted.reasons : []),
+  ];
+  if (golden.ok === false || card.ok === false || accepted.ok === false) {
+    return { ok: false, reasons };
+  }
+
+  const sameSequence = (a: ReadonlyArray<number>, b: ReadonlyArray<number>): boolean =>
+    a.length === b.length && a.every((v, i) => v === b[i]);
+
+  if (sameSequence(golden.ids, card.ids) === false) {
+    reasons.push('golden_json_and_persisted_card_source_event_ids_differ');
+  }
+  if (sameSequence(golden.ids, accepted.ids) === false) {
+    reasons.push('golden_json_and_accepted_events_source_event_ids_differ');
+  }
+  if (sameSequence(card.ids, accepted.ids) === false) {
+    reasons.push('persisted_card_and_accepted_events_source_event_ids_differ');
+  }
+
+  if (reasons.length > 0) return { ok: false, reasons };
+  return { ok: true, ids: golden.ids, count: golden.ids.length };
+}
+
 export type GoldenJsonFinalDecisionResolution =
   | { readonly ok: true; readonly final_decision: string }
   | { readonly ok: false; readonly reason: string };
@@ -206,6 +338,15 @@ export interface AmsRunVerificationFlags {
   readonly operator_decision_expectation_supplied: boolean;
   /** Comparison outcome, or `'not_applicable'` when no expectation was given. */
   readonly operator_decision_expectation_matched: boolean | 'not_applicable';
+  /**
+   * Three independently validated sources agreed on the exact ordered
+   * source-event sequence. Cross-source consistency only — NOT cryptographic
+   * and NOT artifact-native run linkage.
+   */
+  readonly cross_source_consistency_linkage_verified: boolean;
+  /** Other replay runs indistinguishable from the supplied one. */
+  readonly observationally_equivalent_run_candidate_count: number;
+  readonly run_linkage_ambiguity_detected: boolean;
 }
 
 /**
@@ -249,7 +390,27 @@ export interface ExistingRunReportMetadata {
   readonly decision_authority: typeof GOLDEN_JSON_DECISION_AUTHORITY;
   readonly operator_decision_expectation_supplied: boolean;
   readonly operator_decision_expectation_matched: boolean | 'not_applicable';
+  readonly cross_source_consistency_linkage_verified: boolean;
+  readonly observationally_equivalent_run_candidate_count: number;
+  readonly run_linkage_ambiguity_detected: boolean;
+  /**
+   * Literal `false`: no machine-verifiable execution-authority evidence source
+   * exists, so which policy stage owned finalisation is not established.
+   */
+  readonly policy_pass_2_authority_verified: false;
+  /** Literal: the decision is attributed to the authoritative AMS result. */
+  readonly final_decision_authority: typeof FINAL_DECISION_AUTHORITY_VALUE;
 }
+
+/**
+ * How the customer-facing decision is attributed. Neutral by construction: no
+ * available source establishes WHICH policy stage owned finalisation, so the
+ * attribution names the artifact's own authority and nothing finer.
+ */
+export const FINAL_DECISION_AUTHORITY_VALUE = 'authoritative_ams_result' as const;
+
+/** Literal `false` until a validated execution-authority evidence source exists. */
+export const POLICY_PASS_2_AUTHORITY_VERIFIED = false as const;
 
 /**
  * Build the existing-run reporting metadata. Pure. The three schema-fact fields
@@ -272,6 +433,13 @@ export function buildExistingRunReportMetadata(
       verification?.operator_decision_expectation_supplied === true,
     operator_decision_expectation_matched:
       verification?.operator_decision_expectation_matched ?? 'not_applicable',
+    cross_source_consistency_linkage_verified:
+      verification?.cross_source_consistency_linkage_verified === true,
+    observationally_equivalent_run_candidate_count:
+      verification?.observationally_equivalent_run_candidate_count ?? 0,
+    run_linkage_ambiguity_detected: verification?.run_linkage_ambiguity_detected === true,
+    policy_pass_2_authority_verified: POLICY_PASS_2_AUTHORITY_VERIFIED,
+    final_decision_authority: FINAL_DECISION_AUTHORITY_VALUE,
   };
 }
 
@@ -298,6 +466,15 @@ export function renderExistingRunReportMetadata(
     `  operator_decision_expectation_matched=${String(
       metadata.operator_decision_expectation_matched,
     )}`,
+    `  cross_source_consistency_linkage_verified=${String(
+      metadata.cross_source_consistency_linkage_verified,
+    )}`,
+    `  observationally_equivalent_run_candidate_count=${String(
+      metadata.observationally_equivalent_run_candidate_count,
+    )}`,
+    `  run_linkage_ambiguity_detected=${String(metadata.run_linkage_ambiguity_detected)}`,
+    `  policy_pass_2_authority_verified=${String(metadata.policy_pass_2_authority_verified)}`,
+    `  final_decision_authority=${metadata.final_decision_authority}`,
   ];
 }
 
@@ -415,13 +592,92 @@ export async function readPersistedAmsRunRows(
   return { runs: runs.rows, cards: cards.rows };
 }
 
+/**
+ * Read every replay run/card sharing this subject and site, so the caller can
+ * establish that the supplied run is the ONLY candidate matching the artifact's
+ * overlapping fields. SELECT-only.
+ *
+ * Necessary because the artifact carries no embedded run id: association rests
+ * on the operator-supplied id, and AMS replay persistence is append-only with
+ * no conflict target, so a second run over the same subject and window would be
+ * observationally indistinguishable on every field both sides share.
+ */
+export async function readRunCandidatesForSubject(
+  db: GoldenSessionDbClient,
+  siteId: string,
+  subjectId: string,
+): Promise<ReadonlyArray<Record<string, unknown>>> {
+  const result = await db.query(
+    `SELECT c.run_id, c.subject_id, c.source_event_ids, r.site_id
+       FROM replay_evidence_cards c
+       JOIN replay_runs r ON r.run_id = c.run_id
+      WHERE r.site_id = $1 AND c.subject_id = $2
+      ORDER BY c.run_id ASC, c.id ASC`,
+    [siteId, subjectId],
+  );
+  return result.rows;
+}
+
+export interface RunLinkageAmbiguity {
+  /** Candidates other than the supplied run that match on every shared field. */
+  readonly observationally_equivalent_run_candidate_count: number;
+  readonly run_linkage_ambiguity_detected: boolean;
+}
+
+/**
+ * Count replay runs OTHER than the supplied one that are indistinguishable from
+ * it on every overlapping field available: site, subject, and the exact ordered
+ * source-event sequence with its count.
+ *
+ * This is cross-source consistency linkage, NOT cryptographic or artifact-native
+ * linkage: it proves the supplied run is the unique candidate consistent with
+ * the artifact, not that the artifact was produced by that run.
+ */
+export function detectRunLinkageAmbiguity(
+  candidates: ReadonlyArray<Record<string, unknown>>,
+  suppliedRunId: string,
+  canonicalIds: ReadonlyArray<number>,
+): RunLinkageAmbiguity {
+  let equivalent = 0;
+  for (const candidate of candidates) {
+    if (String(candidate.run_id) === suppliedRunId) continue;
+    const validated = validateSourceEventIdSequence(candidate.source_event_ids, 'candidate');
+    if (validated.ok === false) continue;
+    if (
+      validated.ids.length === canonicalIds.length &&
+      validated.ids.every((v, i) => v === canonicalIds[i])
+    ) {
+      equivalent += 1;
+    }
+  }
+  return {
+    observationally_equivalent_run_candidate_count: equivalent,
+    run_linkage_ambiguity_detected: equivalent > 0,
+  };
+}
+
 /** What the supplied golden JSON asserts, to be reconciled against persistence. */
 export interface PersistedAmsRunExpectation {
   readonly ams_run_id: string;
   readonly site_id: string;
   readonly subject_id: string;
-  /** From the supplied artifact's scope.source_event_ids, in artifact order. */
-  readonly source_event_ids: ReadonlyArray<number>;
+  /**
+   * From the supplied artifact's `source_event_ids`, in artifact order. Passed
+   * as `unknown`-tolerant data: it is independently validated here rather than
+   * trusted because the canonical validator already type-checked it.
+   */
+  readonly source_event_ids: unknown;
+  /** A self-declared count, if the artifact separately represents one. */
+  readonly golden_declared_source_event_count?: unknown;
+  /** A self-declared count on the card, if separately represented. */
+  readonly card_declared_source_event_count?: unknown;
+  /**
+   * Canonical ordered accepted-event ids for the exact workspace + site +
+   * session — the independent third source.
+   */
+  readonly accepted_event_ids: unknown;
+  /** Replay run/card candidates sharing this site and subject. */
+  readonly run_candidates?: ReadonlyArray<Record<string, unknown>>;
   /** From the supplied artifact's authoritative_final_decision. */
   readonly artifact_final_decision: string;
   /**
@@ -514,15 +770,32 @@ export function reconcilePersistedAmsRun(
   if (String(card.run_id) !== expected.ams_run_id) provenanceReasons.push('persisted_card_run_id_mismatch');
   if (String(card.subject_id) !== expected.subject_id) provenanceReasons.push('persisted_card_subject_mismatch');
 
-  const persistedIds = toNumberArray(card.source_event_ids);
-  if (persistedIds === undefined) {
-    provenanceReasons.push('persisted_source_event_ids_invalid');
-  } else {
-    if (persistedIds.length !== expected.source_event_ids.length) {
-      provenanceReasons.push('persisted_source_event_count_mismatch');
-    } else if (persistedIds.some((id, i) => id !== expected.source_event_ids[i])) {
-      // Exact ordered equality: canonical order must match, not just set equality.
-      provenanceReasons.push('persisted_source_event_ids_mismatch');
+  // Three independently validated sources, compared for exact ordered equality.
+  // Each is well-formedness-checked on its own terms first, so a malformation
+  // shared by the artifact and the card cannot pass by mutual agreement.
+  const provenance = reconcileSourceEventProvenance({
+    golden_source_event_ids: expected.source_event_ids,
+    golden_declared_count: expected.golden_declared_source_event_count,
+    card_source_event_ids: card.source_event_ids,
+    card_declared_count: expected.card_declared_source_event_count,
+    accepted_event_ids: expected.accepted_event_ids,
+  });
+  if (provenance.ok === false) provenanceReasons.push(...provenance.reasons);
+
+  // Unique-candidate check. The artifact embeds no run id, so the supplied run
+  // must be the only one consistent with it on every overlapping field.
+  let linkage: RunLinkageAmbiguity = {
+    observationally_equivalent_run_candidate_count: 0,
+    run_linkage_ambiguity_detected: false,
+  };
+  if (provenance.ok === true) {
+    linkage = detectRunLinkageAmbiguity(
+      expected.run_candidates ?? [],
+      expected.ams_run_id,
+      provenance.ids,
+    );
+    if (linkage.run_linkage_ambiguity_detected) {
+      provenanceReasons.push('observationally_equivalent_run_candidate_present');
     }
   }
 
@@ -561,7 +834,7 @@ export function reconcilePersistedAmsRun(
 
   return {
     ok: true,
-    source_event_count: expected.source_event_ids.length,
+    source_event_count: provenance.ok === true ? provenance.count : 0,
     verification: {
       persisted_provenance_verified: provenanceReasons.length === 0,
       golden_json_decision_verified: decisionReasons.length === 0,
@@ -570,6 +843,10 @@ export function reconcilePersistedAmsRun(
       decision_authority: GOLDEN_JSON_DECISION_AUTHORITY,
       operator_decision_expectation_supplied: expectationSupplied,
       operator_decision_expectation_matched: expectationMatched,
+      cross_source_consistency_linkage_verified: true,
+      observationally_equivalent_run_candidate_count:
+        linkage.observationally_equivalent_run_candidate_count,
+      run_linkage_ambiguity_detected: linkage.run_linkage_ambiguity_detected,
     },
   };
 }

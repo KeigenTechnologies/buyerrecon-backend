@@ -14,6 +14,8 @@ function stripComments(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
 }
 
+const atomsSrc = readFileSync('src/reports/external/session-evidence-atoms.ts', 'utf8');
+const packageSrc = readFileSync('src/reports/external/golden-session-package.ts', 'utf8');
 const entrypointCode = stripComments(entrypoint);
 const moduleCode = stripComments(moduleSrc);
 
@@ -176,6 +178,52 @@ describe('golden-session entrypoint — existing-run mode cannot invoke AMS', ()
     ]) {
       expect(combined, `must not emit: ${forbidden}`).not.toContain(forbidden);
     }
+  });
+
+  it('scopes every accepted-events query by workspace, site and session', () => {
+    // Static guard: a future edit that drops workspace_id would silently pool
+    // two workspaces' events into one session's evidence and provenance.
+    const atoms = stripComments(atomsSrc);
+    const queries = atoms.match(/FROM accepted_events[\s\S]{0,400}?(?=`)/g) ?? [];
+    expect(queries.length).toBeGreaterThanOrEqual(2);
+    for (const q of queries) {
+      expect(q, `accepted_events query must scope workspace_id: ${q.slice(0, 80)}`).toMatch(/workspace_id = \$1/);
+      expect(q).toMatch(/site_id = \$2/);
+      expect(q).toMatch(/session_id = \$3/);
+    }
+    // The id-sequence read must preserve canonical ordering.
+    expect(atoms).toMatch(/ORDER BY received_at ASC, event_id ASC/);
+  });
+
+  it('makes no Policy Pass 2 authority claim in customer output', () => {
+    const pkg = stripComments(packageSrc);
+    expect(pkg).not.toMatch(/Policy Pass 2 final decision/);
+    expect(pkg).not.toMatch(/sole final authority/i);
+    expect(pkg).toMatch(/Authoritative AMS final decision/);
+    expect(pkg).toMatch(/FINAL_DECISION_AUTHORITY = 'authoritative_ams_result' as const;/);
+  });
+
+  it('validates all three provenance sources independently before comparing them', () => {
+    // Each source is validated on its own terms; agreement alone is not validity.
+    expect(moduleCode).toMatch(/validateSourceEventIdSequence\(\s*input\.golden_source_event_ids/);
+    expect(moduleCode).toMatch(/validateSourceEventIdSequence\(\s*input\.card_source_event_ids/);
+    expect(moduleCode).toMatch(/validateSourceEventIdSequence\(input\.accepted_event_ids/);
+    // ...and all three pairwise comparisons are required.
+    for (const reason of [
+      'golden_json_and_persisted_card_source_event_ids_differ',
+      'golden_json_and_accepted_events_source_event_ids_differ',
+      'persisted_card_and_accepted_events_source_event_ids_differ',
+    ]) {
+      expect(moduleCode, `missing comparison: ${reason}`).toContain(reason);
+    }
+    // The entrypoint must supply the independent third source and candidates.
+    expect(entrypointCode).toMatch(/readAcceptedEventIdSequence\(pool, identity\)/);
+    expect(entrypointCode).toMatch(/readRunCandidatesForSubject\(/);
+  });
+
+  it('passes exact session and workspace identity into Golden JSON validation', () => {
+    expect(entrypointCode).toMatch(/session_id:\s*args\.session/);
+    expect(entrypointCode).toMatch(/workspace_id:\s*args\.workspace/);
   });
 
   it('never emits a persisted final-decision value', () => {

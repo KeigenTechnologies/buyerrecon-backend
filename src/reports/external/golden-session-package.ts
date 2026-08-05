@@ -9,8 +9,12 @@
  *
  * Authority split (never violated here):
  *   - AMS owns Risk / Series / PoI / Fit / Intent / Window-Timing / TRQ /
- *     Action proposal / Policy Pass 1 / Trust / Policy Pass 2 final decision.
+ *     Action proposal / Policy Pass 1 / Trust / the authoritative final decision.
  *     Nothing in this module recalculates, re-scores, or overrides any of it.
+ *     Which policy stage OWNED finalisation is deliberately not claimed: the
+ *     canonical artifact has no Pass-2 finality field, the replay tables persist
+ *     no final-authority field, and AMS permits direct finalisation under
+ *     SKIP_TRUST. See FINAL_DECISION_AUTHORITY.
  *   - The backend owns event truth, persisted session evidence, EvidenceAtom
  *     construction, SessionEvidenceCard, ReportSnapshot, and packaging.
  *
@@ -143,12 +147,30 @@ const AMS_TOP_LEVEL_KEYS = new Set([
   'source_event_ids',
 ]);
 
+/**
+ * The stage that owned final decision-making is NOT established by anything the
+ * backend can read: the canonical Golden JSON has `authoritative_final_decision`
+ * but no Policy-Pass-2 finality field, the replay tables persist no
+ * final-decision or final-authority column, and canonical AMS permits direct
+ * finalisation under SKIP_TRUST. Customer output therefore attributes the
+ * decision to the authoritative AMS result, never to a named policy stage.
+ */
+export const FINAL_DECISION_AUTHORITY = 'authoritative_ams_result' as const;
+
 /** Expected AMS decision identity (identity truth #2), pinned by the operator. */
 export interface AmsIdentityExpectation {
   site_id: string;
   subject_id: string;
   window_start: string;
   window_end: string;
+  /**
+   * Backend session identity, cross-checked against the artifact scope when the
+   * artifact represents it. The canonical scope carries `session_id` as
+   * OPTIONAL and carries no workspace at all, so absence is tolerated — but a
+   * represented contradictory value must fail closed rather than be ignored.
+   */
+  session_id?: string;
+  workspace_id?: string;
 }
 
 export type AmsValidationFailureStage = 'ams_output_invalid' | 'ams_identity_mismatch';
@@ -226,6 +248,19 @@ export function validateAmsGoldenSessionJson(
   if (scope.subject_id !== expected.subject_id) identityReasons.push('subject_mismatch');
   if (scope.window_start !== expected.window_start) identityReasons.push('window_start_mismatch');
   if (scope.window_end !== expected.window_end) identityReasons.push('window_end_mismatch');
+
+  // Represented-but-contradictory must fail closed; absent-and-optional must not.
+  // Silently ignoring a wrong scope.session_id would let an artifact from another
+  // session be packaged against this session's backend evidence.
+  if (expected.session_id !== undefined && scope.session_id !== undefined &&
+      scope.session_id !== expected.session_id) {
+    identityReasons.push('session_mismatch');
+  }
+  const scopeWorkspace = (scope as { workspace_id?: unknown }).workspace_id;
+  if (expected.workspace_id !== undefined && scopeWorkspace !== undefined &&
+      scopeWorkspace !== expected.workspace_id) {
+    identityReasons.push('workspace_mismatch');
+  }
   if (identityReasons.length > 0) return mismatch(identityReasons);
 
   if (typeof parsed.authoritative_final_decision !== 'string') {
@@ -473,7 +508,13 @@ export function renderGoldenSessionMarkdown(pkg: GoldenSessionPackage): string {
   out.push(`- Action proposal (product layer): ${ams.product_decision?.RequestedAction ?? 'not_reported'}; reason codes: ${codes(ams.product_decision?.ReasonCodes)}`);
   out.push(`- Policy Pass 1: trust invocation ${ams.policy_pass_1?.TrustInvocationMode ?? 'not_reported'}; action tier ${ams.policy_pass_1?.ActionTier ?? 'not_reported'}; gating reason codes: ${codes(ams.policy_pass_1?.GatingReasonCodes)}`);
   out.push(`- Trust / confidence: band ${ams.trust?.TrustBand ?? 'not_invoked'}; decision ${ams.trust?.Decision ?? 'not_invoked'}; confidence ${ams.trust?.ConfidenceScore01 !== undefined ? String(ams.trust.ConfidenceScore01) : 'not_reported'}; reason codes: ${codes(ams.trust?.ReasonCodes)}`);
-  out.push(`- Policy Pass 2 final decision (authoritative): ${ams.authoritative_final_decision}; gating reason codes: ${codes(ams.runtime_decision?.GatingReasonCodes)}`);
+  // Neutral, evidenced wording. The artifact carries `authoritative_final_decision`
+  // and no Policy-Pass-2 finality field, and the replay tables persist no
+  // final-decision or final-authority field, so WHICH stage owned finalisation is
+  // not established by anything available here — canonical AMS also permits direct
+  // finalisation under SKIP_TRUST. Naming Pass 2 would be an inference, so the
+  // claim is limited to what the artifact actually asserts.
+  out.push(`- Authoritative AMS final decision: ${ams.authoritative_final_decision}; gating reason codes: ${codes(ams.runtime_decision?.GatingReasonCodes)}`);
   out.push(`- Recommended operator action: ${pkg.recommended_operator_action}`);
   out.push('');
   out.push('## Limitations');

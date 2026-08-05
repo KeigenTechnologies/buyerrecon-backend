@@ -39,8 +39,11 @@
  *     --workspace <workspace_id> --site <site_id> --session <session_id> \
  *     --subject <ams_browser_subject_id> --start YYYY-MM-DD --end YYYY-MM-DD \
  *     --ams-golden-json /abs/path/to/<site>_<start>_<end>_golden.json \
- *     --ams-run-id <uuid> --ams-final-decision <CANONICAL_DECISION> \
- *     [--project <project_id>] [--output <dir>]
+ *     --ams-run-id <uuid> \
+ *     [--ams-final-decision <CANONICAL_DECISION>] [--project <project_id>] [--output <dir>]
+ *
+ *   --ams-final-decision is OPTIONAL and comparison-only. The validated Golden
+ *   JSON is the sole authority for the actual decision.
  *
  * Backend DB: the existing src/db/client pool (its own allowlisted env read).
  * Failures are reported with finite safe stage labels only — never raw child
@@ -60,6 +63,7 @@ import {
   validateAmsGoldenSessionJson,
 } from '../src/reports/external/golden-session-package.js';
 import {
+  readAcceptedEventIdSequence,
   readSessionPersistedRows,
   type BackendSessionIdentity,
 } from '../src/reports/external/session-evidence-atoms.js';
@@ -67,6 +71,7 @@ import {
   AMS_EXISTING_RUN_FLAGS,
   buildExistingRunReportMetadata,
   readPersistedAmsRunRows,
+  readRunCandidatesForSubject,
   reconcilePersistedAmsRun,
   renderExistingRunReportMetadata,
   resolveAmsInputMode,
@@ -235,6 +240,10 @@ async function main(): Promise<void> {
     subject_id: args.subject,
     window_start: windowStart,
     window_end: windowEnd,
+    // Exact containment: a represented-but-contradictory session or workspace in
+    // the artifact scope fails closed instead of being silently ignored.
+    session_id: args.session,
+    workspace_id: args.workspace,
   });
   if (validation.ok === false) failStage(validation.failure_stage, validation.reasons.join(','));
 
@@ -255,7 +264,16 @@ async function main(): Promise<void> {
       // Reconcile the supplied artifact against the persisted authoritative
       // run BEFORE any package is constructed. SELECT-only.
       const persisted = await readPersistedAmsRunRows(pool, args.amsInput.ams_run_id);
+      // Independent third provenance source: event truth for the exact
+      // workspace + site + session, in canonical order. Read before
+      // reconciliation so a shared artifact/card malformation cannot pass.
+      const acceptedEventIds = await readAcceptedEventIdSequence(pool, identity);
+      // Every replay run/card sharing this site and subject, so the supplied run
+      // can be shown to be the unique consistent candidate.
+      const runCandidates = await readRunCandidatesForSubject(pool, args.site, args.subject);
       const reconciliation = reconcilePersistedAmsRun(persisted, {
+        accepted_event_ids: acceptedEventIds,
+        run_candidates: runCandidates,
         ams_run_id: args.amsInput.ams_run_id,
         site_id: args.site,
         subject_id: args.subject,
