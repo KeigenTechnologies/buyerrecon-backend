@@ -748,8 +748,103 @@ implemented here.
 | Backend-generated Pass 2 authority | `check:customer-output-boundary`, extended — authority wording must remain reachable only through the validator predicate | Existing gate, extension frozen |
 | Operator-supplied authority claims | `check:customer-output-boundary`, extended — reject operator booleans, `RequestedAction`, run ID alone, or replay-card existence as authority inputs | Existing gate, extension frozen |
 | Unregistered store/credential names | `check:constants` | Existing gate, unchanged |
+| Persistent or embedded AWS credential secrets | New `check:aws-credential-secrets` — fail closed when persistent AWS credential material is committed or embedded in repository-controlled runtime, configuration, manifest, artifact-fixture, documentation-example, or generated-evidence-template surfaces | New; obligation frozen as `DEFINED` / `REQUIRED`; not implemented or verified |
+| One identity or credential controls both evidence stores | New `check:cross-store-credential-authority` — validate registered identity-to-store authority and fail closed when one runtime identity unexpectedly spans both primary and secondary evidence stores | New; obligation frozen as `DEFINED` / `REQUIRED`; not implemented or verified |
 | Producer drift away from the selected boundary | New `check:authority-producer-boundary` — reject a second evidence producer or a backend-side producer | New; obligation frozen |
 | Runtime drift on L1 surfaces | `check:no-runtime-imports`, `check:static-boundaries` | Existing gates, unchanged |
+
+### 11.1 Credential static-gate obligations
+
+Exactly two credential static-gate obligations are frozen here. They preserve
+the credential model ratified in §7; they do not implement a checker or claim a
+passing result.
+
+**Persistent or embedded credential-secret gate.**
+
+```text
+credential_static_gate_persistent_secret_status=REQUIRED
+credential_static_gate_persistent_secret_implementation_status=NOT_IMPLEMENTED
+credential_static_gate_persistent_secret_verification_status=NOT_VERIFIED
+```
+
+The future gate must fail closed when repository-controlled runtime or
+configuration surfaces contain persistent AWS credential material. Its minimum
+rejection contract is:
+
+```text
+AWS access key IDs committed to source or tracked configuration
+AWS secret access keys
+AWS session-token literals persisted in tracked files
+long-lived static credential pairs
+credentials embedded in source code
+credentials embedded in manifests or artifact fixtures
+credentials embedded in runtime configuration committed to Git
+credentials written into documentation examples as real values
+credentials written into generated evidence templates as literal secrets
+```
+
+The checker implementation must define exact secret-pattern and allowlist
+behaviour. It must distinguish authentic secret material from harmless,
+non-secret resource and configuration identifiers. AWS account IDs, bucket
+names, IAM role ARNs, KMS key ARNs, CloudTrail identifiers, environment-variable
+names, and clearly marked placeholder/example values must not fail merely for
+being AWS-shaped identifiers.
+
+```text
+No persistent AWS credential secret may be committed, embedded, or registered
+as a BuyerRecon implementation constant.
+
+credential_model=short-lived, role-based, federated session credentials only
+persistent_access_keys_allowed=false
+```
+
+**Cross-store credential-authority gate.**
+
+```text
+credential_static_gate_cross_store_authority_status=REQUIRED
+credential_static_gate_cross_store_authority_implementation_status=NOT_IMPLEMENTED
+credential_static_gate_cross_store_authority_verification_status=NOT_VERIFIED
+one_identity_controls_both_evidence_stores=false
+```
+
+The future gate must validate registered identity-to-store authority and fail
+closed when any unexpected cross-store authority exists. The frozen assertions
+are:
+
+```text
+primary writer cannot write the secondary evidence store
+secondary writer cannot write the primary evidence store
+primary read-back identity cannot read the secondary evidence store
+secondary read-back identity cannot read the primary evidence store
+no manifest writer may receive unrestricted primary plus secondary evidence-object administration
+no cleanup-authorization identity may possess destructive or retention-shortening authority over both stores
+```
+
+The gate may evaluate ratified constants and registries, IAM policy fixtures,
+infrastructure definitions, role-to-store mappings, or generated policy
+documents. The exact mechanism belongs to the future implementation PR. Any
+unexpected cross-store authority fails implementation qualification; it cannot
+be accepted as a warning or manually defaulted to pass.
+
+### 11.2 Relationship to `G2` and `G3`
+
+The credential static gates are frozen as implementation obligations now. They
+are not implemented, not verified, and do not pretend that unresolved resource
+or role bindings can be fully evaluated today.
+
+```text
+G2-RESOURCE-IDENTIFIER=OPEN
+G3-CONSTANT-REGISTRATION=OPEN
+
+G2 resource identities are ratified
+→ G3 constants/registries are populated
+→ implementation static gates are implemented
+→ concrete resource/role bindings become enforceable
+```
+
+Neither open gate is advanced by this section. The two static-gate obligations
+remain blocking for future implementation qualification, not evidence that any
+AWS resource, identity, credential, or checker already exists.
 
 Every new gate is L1/static. None may claim to prove runtime behaviour, DB role
 binding, worker behaviour, L2, or L3.
