@@ -107,6 +107,26 @@ The selected C2 design relies on these current official AWS capabilities:
 These citations establish product capabilities only. No AWS account, region,
 bucket, key, role, credential, or trail is created or selected by identifier here.
 
+### 2.5 Explicit capability limits
+
+Object Lock compliance mode prevents overwrite and deletion of a specific object
+version for the duration of that version's retention period. It does not protect
+against:
+
+```text
+AWS account closure, suspension, or account deletion
+KMS key deletion or key-material removal that renders retained ciphertext undecryptable
+bucket-administration authority exercised outside the object-version lifecycle
+retention-policy administration authority applied to future writes
+loss or capture of the custodian relationship that administers the account
+```
+
+No statement in this document may claim that Object Lock, versioning, or
+compliance-mode retention mitigates account closure or KMS-key deletion. Those
+residual risks are addressed only by the separated-custodian and
+separated-authority ratification requirements in §14.1, and they remain
+`PENDING_RATIFICATION`.
+
 ---
 
 ## 3. Closed-session boundary
@@ -178,7 +198,7 @@ may choose only one bucket.
 |---|---|
 | `primary_store_type` | Amazon S3 general-purpose bucket with Versioning and Object Lock enabled in compliance mode |
 | `primary_store_location_class` | Dedicated evidence-custody bucket in the primary evidence AWS account and a ratified primary AWS region; never mounted inside the execution host |
-| `primary_object_naming_scheme` | `golden-sessions/v0.1/<workspace_id>/<site_id>/<session_id>/<AMS_run_id>/<object_kind>/<sha256>.<ext>` plus immutable S3 `versionId`; `object_kind` is `golden-json`, `authority-evidence`, or `retention-manifest` |
+| `primary_object_naming_scheme` | `golden-sessions/v0.1/<workspace_id>/<site_id>/<session_id>/<AMS_run_id>/<object_kind>/<sha256>.<ext>` plus immutable S3 `versionId`; `object_kind` is exactly one of `golden-json`, `authority-evidence`, `execution-retention-manifest`, or `cleanup-authorization-record` |
 | `primary_owner` | `PENDING_RATIFICATION`: one named human primary evidence custodian; never the execution agent or runtime role |
 | `primary_access_control_model` | Block Public Access; bucket-owner-enforced ownership; least-privilege write/read-back role; separate custodian read/review role; no delete or retention-bypass permission in the execution role |
 | `primary_retention_period` | Minimum 730 calendar days per immutable object version |
@@ -195,11 +215,12 @@ may choose only one bucket.
 | `read_back_verification_method` | Full `GetObject` by exact bucket, key, and `versionId` after each write; stream every returned byte; metadata-only `HEAD` is insufficient |
 | `SHA_256_verification_method` | Compute SHA-256 over each full read-back and require equality with the canonical pre-store digest and the other read-back digest; ETag or upload-time digest is not read-back proof |
 | `byte_count_verification_method` | Count bytes during each full read-back and require equality with the canonical pre-store count and the other copy's count |
-| `retention_manifest_location` | One logical deterministic manifest, serialized once, retained as immutable versioned objects in both buckets; primary is authoritative and secondary is its independently read-back-verified copy |
-| `cleanup_authorization_dependency` | Cleanup remains false until both Golden JSON copies, both authority-evidence copies, and both manifest copies are readable by exact version, hash-valid, byte-count-valid, retention-valid, and mutually consistent |
-| `credential_delivery_model` | Two separately scoped short-lived IAM role sessions supplied from approved secret custody or workload identity; values are never printed, logged, embedded, committed, or placed in the manifest. Non-secret parameter names must be registered before implementation. |
+| `execution_retention_manifest_location` | Phase 1 record (`record_type=execution_retention_manifest`, `cleanup_authorized=false`) serialized exactly once after the four evidence copies are read back and verified; retained as two independently retained immutable versioned objects, one per account/region/bucket. It is never rewritten, patched, or superseded in place. See §10.2. |
+| `cleanup_authorization_record_location` | Phase 2 record (`record_type=cleanup_authorization_record`, `cleanup_authorized=true`) serialized exactly once and only after the §10.6 cleanup gate passes; retained as two independently retained immutable versioned objects, one per account/region/bucket. It is never rewritten, patched, or superseded in place. See §10.3. |
+| `cleanup_authorization_dependency` | Cleanup remains prohibited until all eight tracked object versions in §10.1 — 2 Golden JSON copies, 2 authority-evidence copies, 2 Phase 1 execution-retention-manifest copies, and 2 Phase 2 cleanup-authorization-record copies — are individually write-confirmed, read back by exact `versionId`, hash-valid, byte-count-valid, Object-Lock-verified, retention-valid, independence-valid, and mutually consistent. Store-level or aggregate status never substitutes for per-copy verification. |
+| `credential_delivery_model` | Two separately scoped short-lived IAM role sessions supplied from approved secret custody or workload identity; values are never printed, logged, embedded, committed, or placed in any retained record, including the Phase 1 execution retention manifest and the Phase 2 cleanup authorization record. Non-secret parameter names must be registered before implementation. |
 | `audit_log_source` | Independent CloudTrail S3 data-event trails/event data stores in the two custody accounts, covering object writes, reads, retention operations, and attempted deletes; audit destinations do not share the execution-workspace lifecycle |
-| `failure_behavior` | Fail closed. Any write, read-back, hash, byte-count, retention, encryption, manifest, credential, audit-configuration, or cross-store contradiction keeps `cleanup_authorized=false` and permits no ephemeral or one-copy fallback. |
+| `failure_behavior` | Fail closed. Any write, read-back, hash, byte-count, Object Lock, retention, encryption, execution-retention-manifest, cleanup-authorization-record, copy-independence, credential, audit-configuration, or cross-store contradiction keeps cleanup prohibited, prevents emission of a Phase 2 cleanup authorization record, and permits no ephemeral or one-copy fallback. |
 
 ### 5.3 Precise independence boundary
 
@@ -210,7 +231,16 @@ retention, bypass Object Lock, alter lifecycle rules, or delete an object versio
 
 An authoritative object ID is the tuple of account class, bucket identifier,
 region, object key, and `versionId`. Resolved non-secret identifiers are recorded
-in the manifest; credential values are never recorded.
+in the Phase 1 execution retention manifest and, for the Phase 1 manifest copies
+themselves, in the Phase 2 cleanup authorization record; credential values are
+never recorded in either record type.
+
+Independence is a property of the copy pair, not of a single store. Two copies
+fail independence if they share any one of: AWS account, region, bucket, IAM
+administration authority or execution credential, KMS key, named custodian or
+account-closure authority, retention-policy administration authority, lifecycle
+rule, audit stream, or cleanup path. Per §2.5, Object Lock does not compensate
+for a shared account-closure or KMS-deletion authority.
 
 ---
 
@@ -362,6 +392,31 @@ atomically closes the ledger. Counts and owner are immutable at closure. The
 closed ledger is not reachable by later steps; any attempted late publication is
 a fatal governance error and invalidates authority qualification.
 
+`Finalize()` has an explicit convergence precondition. Every possible
+final-decision publication path in the exact scope must be either **converged**
+(it published a typed candidate through `Record()`) or **excluded** (it is proven
+not to have run and cannot subsequently run). A path that is open, pending,
+in-flight, or unaccounted for is neither, and `Finalize()` MUST fail closed:
+
+```text
+convergence_precondition = every possible publication path is converged or excluded
+
+if convergence_precondition is false:
+    Finalize() fails closed
+    the ledger is not closed
+    no authority-qualifying evidence object is emitted
+    policy_pass_2_authority_verified=false
+    policy_pass_2_acceptance_readiness=BLOCKED
+    neutral wording remains required
+```
+
+Zero duplicate and zero conflict counts, and `policy_pass_2_is_sole_final_decision=true`,
+are claims about the complete set of publications. They cannot become immutable
+while any possible publisher remains unclosed, because an unclosed publisher
+could still contribute a duplicate or a conflicting publication. An
+absence-of-observation is therefore never evidence of absence, and premature
+closure is a decision-accounting error, not a timing optimization.
+
 `policy_pass_2_is_sole_final_decision=true` is emitted only when:
 
 ```text
@@ -377,16 +432,17 @@ duplicate_final_decision_count=0
 Pass 1 state becomes known
 → Pass 2 execution state becomes known
 → one typed final-decision candidate crosses Record()
-→ all decision paths converge
+→ every possible publication path is converged or excluded
+→ the convergence precondition is verified before closure is attempted
 → duplicate/conflict accounting is finalized and the ledger closes
 → exact GoldenExecutionIdentity equality is revalidated
 → evidence object is serialized deterministically
 → evidence SHA-256 and byte count are calculated
-→ evidence enters the A1 primary/secondary retention flow
+→ evidence satisfies §10.5 step 2 and enters the A1 retention lifecycle
 ```
 
-Evidence is never emitted as authority-qualifying before ledger closure and
-identity revalidation.
+Evidence is never emitted as authority-qualifying before the convergence
+precondition holds, the ledger closes, and identity is revalidated.
 
 ### 8.6 Minimum future implementation surface for the enhancement
 
@@ -397,6 +453,7 @@ query and enforce exact workspace/site/subject/session scope
 expose accepted/projected event IDs separately from rejected IDs
 add closed typed DecisionOwner enum
 funnel every final-decision path through one FinalDecisionPublicationLedger
+enforce the Finalize() convergence precondition and fail closed when a path is open
 atomically close publication accounting before serialization
 add deterministic authority-evidence schema and serializer
 bind producer identity to full AMS build commit
@@ -438,80 +495,303 @@ backend packaging inference, or an operator-supplied boolean.
 
 ---
 
-## 10. Cross-workstream manifest and lifecycle
+## 10. Cross-workstream retention records and lifecycle
 
-### 10.1 Separate authoritative objects
+This section defines two distinct immutable record types. Wherever the record
+type matters, this document names it explicitly as the **Phase 1 execution
+retention manifest** or the **Phase 2 cleanup authorization record**. The bare
+term "the manifest" is not used as a load-bearing term anywhere in this
+document.
+
+### 10.1 Separate authoritative objects and the eight tracked object versions
 
 The selected integration requires:
 
 ```text
 Golden JSON and execution-authority evidence are separate authoritative objects
-each object has a primary and secondary retained copy
-each object has its own SHA-256 and byte count
-one logical durable manifest links both objects to the same exact execution
-the logical manifest itself has primary and secondary immutable retained copies
-cleanup remains prohibited until both object pairs and both manifest copies verify
+each authoritative object has one primary and one secondary retained copy
+each copy has its own object key, versionId, SHA-256, and byte count
+retention state is recorded by two distinct immutable record types, never by one mutable record
+the Phase 1 execution retention manifest links the four evidence copies to the same exact execution
+the Phase 2 cleanup authorization record links the two Phase 1 manifest copies to the cleanup gate result
+cleanup remains prohibited until all eight tracked object versions verify
 ```
 
-Neither object may be derived from the other. The backend retention layer is a
-consumer of AMS-produced bytes and must not alter them.
+Neither authoritative object may be derived from the other. The backend
+retention layer is a consumer of AMS-produced bytes and must not alter them.
 
-### 10.2 Manifest binding
-
-The deterministically serialized manifest binds at least:
+The selected design tracks exactly eight independently retained immutable object
+versions:
 
 ```text
-schema_version
+2 Golden JSON copies
+2 authority-evidence copies
+2 execution-retention-manifest copies
+2 cleanup-authorization-record copies
+
+total_tracked_object_versions=8
+```
+
+For every one of the eight object versions the design requires, individually and
+without aggregation:
+
+```text
+object ID/key
+version ID
+byte count
+SHA-256
+write confirmation
+read-back status
+Object Lock status
+retention expiry
+```
+
+A store-level, phase-level, or pair-level status never substitutes for these
+per-copy fields. "Both copies stored" is not a verification result.
+
+### 10.2 Phase 1 — execution retention manifest
+
+Phase 1 is an immutable record produced only after the four authoritative
+evidence copies — Golden JSON primary, Golden JSON secondary, authority-evidence
+primary, authority-evidence secondary — have been written:
+
+```text
+record_type=execution_retention_manifest
+schema_version=execution_retention_manifest_v0_1
+cleanup_authorized=false
+```
+
+`schema_version` is the fixed literal `execution_retention_manifest_v0_1` for
+this selection. The Phase 1 manifest MUST NOT claim, imply, or reserve cleanup
+authorization; `cleanup_authorized=false` is the only permitted value in a Phase
+1 record, and that value is never rewritten.
+
+The Phase 1 execution retention manifest identifies each evidence copy
+independently. For every one of the four evidence copies it binds:
+
+```text
+store_role=primary|secondary
+account_id_or_alias
+region
+bucket
+object_key
+object_version_id
+byte_count
+sha256
+write_confirmed
+read_back_verified
+retention_mode
+retention_expiry
+object_lock_verified
+KMS_key_identity_or_alias
+audit_stream_identity
+```
+
+The Phase 1 manifest also binds the exact execution:
+
+```text
 workspace_id
 site_id
 subject_id
 session_id
 AMS_run_id
 source_event_ids
-Golden_JSON_primary_object_ID
-Golden_JSON_secondary_object_ID
-Golden_JSON_SHA_256
-Golden_JSON_byte_count
-authority_evidence_primary_object_ID
-authority_evidence_secondary_object_ID
-authority_evidence_SHA_256
-authority_evidence_byte_count
-manifest_SHA_256
-manifest_byte_count
-retention_expiry
-primary_read_back_status
-secondary_read_back_status
-cleanup_authorized
+final_decision
 ```
 
-Every object ID includes the exact S3 `versionId`. The manifest is written only
-after the four data-object copies are stored and read back. Its two serialized
-copies are then read back and verified before the cleanup gate can set
-`cleanup_authorized=true`.
-
-### 10.3 Integrated lifecycle
+and carries four separate retention-expiry fields, one per evidence copy:
 
 ```text
-exact execution identity is frozen
-→ B3 ledger observes the real decision path
-→ B3 ledger closes duplicate/conflict accounting
-→ authority evidence is deterministically serialized
-→ Golden JSON is deterministically serialized as a separate object
-→ each object's SHA-256 and byte count are calculated
-→ Golden JSON is written to A1 primary then A1 secondary
-→ authority evidence is written to A1 primary then A1 secondary
-→ all four exact versions are fully read back
-→ all four hashes and byte counts are verified
-→ one manifest is serialized and written to both stores
-→ both manifest versions are fully read back and verified
-→ packaging input readiness may be declared
-→ cleanup may be considered by the separate cleanup gate
+golden_json_primary_retention_expiry
+golden_json_secondary_retention_expiry
+authority_evidence_primary_retention_expiry
+authority_evidence_secondary_retention_expiry
 ```
 
-No arrow authorizes the next step automatically. Any failure keeps cleanup
-prohibited.
+A single generic `retention_expiry` covering all retained objects is prohibited.
+Each retained object version carries its own expiry, evaluated independently
+against the ratified policy.
 
-### 10.4 Authority wording boundary
+The Phase 1 manifest is serialized exactly once and stored as two independently
+retained immutable copies. For each Phase 1 manifest copy the design requires
+the same per-copy field set as §10.1: account, region, bucket, object key,
+version ID, byte count, SHA-256, write confirmation, read-back status, Object
+Lock status, and retention expiry.
+
+### 10.3 Phase 2 — cleanup authorization record
+
+Phase 2 is a second, separately immutable record:
+
+```text
+record_type=cleanup_authorization_record
+schema_version=cleanup_authorization_record_v0_1
+cleanup_authorized=true
+```
+
+`schema_version` is the fixed literal `cleanup_authorization_record_v0_1` for
+this selection. A Phase 2 record may be produced only after every condition in
+the §10.6 cleanup gate is true. It is a new immutable record, not an update to a
+Phase 1 manifest.
+
+The Phase 2 record identifies the exact Phase 1 manifest copies it was derived
+from:
+
+```text
+primary_manifest_account
+primary_manifest_region
+primary_manifest_bucket
+primary_manifest_object_key
+primary_manifest_version_id
+primary_manifest_sha256
+primary_manifest_byte_count
+
+secondary_manifest_account
+secondary_manifest_region
+secondary_manifest_bucket
+secondary_manifest_object_key
+secondary_manifest_version_id
+secondary_manifest_sha256
+secondary_manifest_byte_count
+```
+
+It also restates the exact execution identity (`workspace_id`, `site_id`,
+`subject_id`, `session_id`, `AMS_run_id`, `source_event_ids`) and must equal the
+Phase 1 manifests on every one of those fields.
+
+The Phase 2 record is itself stored as two independently retained immutable
+copies:
+
+```text
+primary cleanup-authorization copy
+secondary cleanup-authorization copy
+```
+
+For each cleanup-authorization copy the design requires:
+
+```text
+account
+region
+bucket
+object key
+version ID
+byte count
+SHA-256
+write confirmation
+read-back status
+Object Lock status
+retention expiry
+```
+
+Cleanup may occur only after both cleanup-authorization copies are themselves
+read back by exact `versionId` and verified. The existence of a Phase 2 record
+in memory, in a log, or in a single store never authorizes cleanup.
+
+### 10.4 Record digest exclusion rule
+
+Every retained record carries its own digest field, and that digest must be
+computed without self-reference.
+
+```text
+record_sha256 MUST be calculated over canonical serialized bytes with the
+record_sha256 field omitted.
+
+No object ID, version ID, byte count, retention state or verification field
+other than the record's own digest field may be excluded.
+```
+
+This rule applies identically to the Phase 1 execution retention manifest and
+the Phase 2 cleanup authorization record. Canonical serialization is
+deterministic: stable key ordering, stable numeric and string encoding, and no
+environment-dependent formatting.
+
+The following exclusion patterns are prohibited:
+
+```text
+metadata fields may be excluded
+verification fields may be added later
+status fields are excluded from the digest
+fields not yet known at serialization time are excluded
+the digest covers only the identity subset
+```
+
+Because verification fields are inside the digest, a record whose verification
+state changes is a different record. It MUST be published as a new record type
+or a new immutable object version with its own fully defined retention and
+read-back requirements. Mutation of an existing immutable object version is
+prohibited without exception.
+
+### 10.5 Frozen integrated lifecycle
+
+The lifecycle is frozen as:
+
+```text
+1.  Produce Golden JSON.
+2.  Produce execution-authority evidence.
+3.  Store both Golden JSON copies.
+4.  Store both authority-evidence copies.
+5.  Read back and verify all four evidence copies.
+6.  Produce Phase 1 execution retention manifest.
+7.  Store two independently retained Phase 1 manifest copies.
+8.  Read back and verify both Phase 1 manifest copies.
+9.  Evaluate the cleanup gate.
+10. Produce Phase 2 cleanup authorization record with cleanup_authorized=true.
+11. Store two independently retained cleanup-authorization copies.
+12. Read back and verify both cleanup-authorization copies.
+13. Only then may execution-workspace cleanup occur.
+```
+
+Upstream of step 1, the B3 boundary must already have completed: exact execution
+identity frozen, the ledger having observed the real decision path, duplicate and
+conflict accounting closed, and identity equality revalidated (§8.5). Packaging
+input readiness may be declared no earlier than step 8, and never implies
+cleanup authorization.
+
+No step authorizes the next automatically. There is no mutation of an existing
+immutable object version at any step. Every later state transition is
+represented by a new immutable record type or a new object version whose own
+retention and verification requirements are fully defined above.
+
+### 10.6 Cleanup gate
+
+A Phase 2 cleanup authorization record may be produced only when all of the
+following are simultaneously true:
+
+```text
+all four evidence copies are write-confirmed
+all four evidence copies are read back
+all four evidence-copy SHA-256 values match their paired source objects
+all four byte counts match
+all four Object Lock statuses are verified
+all four retention expiries satisfy the ratified policy
+both Phase 1 manifest copies are write-confirmed
+both Phase 1 manifest copies are read back
+both Phase 1 manifest hashes and byte counts match
+both Phase 1 manifest Object Lock statuses are verified
+both Phase 1 manifest retention expiries satisfy the ratified policy
+primary/secondary independence checks pass
+exact execution identity linkage passes
+```
+
+Cleanup fail-closed behavior is explicit:
+
+```text
+missing Phase 1 manifest copy → cleanup blocked
+Phase 1 manifest mismatch → cleanup blocked
+missing cleanup-authorization copy → cleanup blocked
+cleanup-authorization mismatch → cleanup blocked
+unverified Object Lock status → cleanup blocked
+retention expiry mismatch → cleanup blocked
+write confirmation absent → cleanup blocked
+read-back verification absent → cleanup blocked
+primary/secondary independence failure → cleanup blocked
+```
+
+No operational script, runner, or packaging step may infer cleanup authorization
+from successful uploads, an absence of errors, a successful AMS completion, a
+declared packaging readiness, or an operator assertion. Cleanup authorization
+exists only as two verified Phase 2 cleanup-authorization copies.
+
+### 10.7 Authority wording boundary
 
 Policy Pass 2 authority wording remains permitted only when one strictly valid,
 exactly linked evidence object affirmatively contains every condition:
@@ -542,6 +822,12 @@ Authoritative AMS final decision: <decision>
 Schema validity, a decision, `RequestedAction`, run ID, replay card, operator
 assertion, or retained files alone never upgrade wording.
 
+The zero-count and sole-ownership conditions above are readable only from a
+ledger that closed under the §8.4 convergence precondition. Counts frozen by a
+premature `Finalize()` are not qualifying values, so a failed convergence
+precondition forces `policy_pass_2_authority_verified=false`,
+`policy_pass_2_acceptance_readiness=BLOCKED`, and the neutral sentence.
+
 ---
 
 ## 11. Failure behavior
@@ -557,9 +843,18 @@ reconstruction.
 | Either full read-back fails | Upload response/HEAD cannot substitute; retention invalid |
 | SHA-256 mismatch | Neither mismatching pair is declared authoritative; do not clean up |
 | Byte-count mismatch | Retention invalid; do not clean up |
+| Object Lock absent, disabled, governance mode, or unverified | Retention verification fails; cleanup blocked; no Phase 2 record produced |
 | Object Lock/retention shorter than rule | Retention invalid; no cleanup or authority packaging |
-| Manifest write/read-back fails | Data copies alone do not authorize cleanup |
-| Manifest contradicts object metadata | Manifest invalid; `cleanup_authorized=false` |
+| Per-copy retention expiries disagree across primary and secondary | Retention gate fails closed; cleanup blocked |
+| Copy-independence violation on any prohibited boundary | `copy_independence_status=FAIL`; retention readiness blocked; no Phase 2 record produced |
+| Phase 1 execution-retention-manifest write/read-back fails | Verified evidence copies alone do not authorize cleanup; cleanup blocked |
+| Phase 1 execution-retention-manifest contradicts object metadata | Phase 1 manifest invalid; cleanup gate fails; no Phase 2 record produced |
+| Phase 1 manifest copies disagree with each other | Contradiction, not a second manifest; cleanup blocked |
+| Phase 2 cleanup-authorization-record write/read-back fails | Cleanup blocked; verified Phase 1 manifests alone never authorize cleanup |
+| Phase 2 cleanup-authorization record does not match the exact Phase 1 manifest identities | Authorization invalid; cleanup blocked |
+| Attempted rewrite or in-place update of any immutable object version | Fatal governance error; retention invalidated; cleanup blocked |
+| Record digest computed with any exclusion other than the record's own digest field | Record invalid; cleanup blocked |
+| Cleanup authorization inferred from uploads, absence of errors, or AMS completion | Governance violation; cleanup blocked and recorded |
 | Primary store unavailable | Abort; no secondary-only execution exception |
 | Secondary store unavailable | Abort; no primary-only execution exception |
 | Credential missing or over-privileged | Abort before writes; never print or persist credential |
@@ -568,6 +863,7 @@ reconstruction.
 | Final decision differs across Pass 2, ledger, serialization | Evidence rejected; neutral wording and `BLOCKED` |
 | Duplicate publication | Nonzero duplicate count; sole-final false; neutral wording and `BLOCKED` |
 | Conflicting decision or owner | Nonzero conflict count; sole-final false; neutral wording and `BLOCKED` |
+| `Finalize()` requested while any publication path remains open, pending, or unaccounted | Fail closed; no authority-qualifying evidence emitted; neutral wording and `BLOCKED` |
 | Late publication after ledger closure | Fatal governance error; evidence invalidated; no cleanup |
 | Producer build identity absent/malformed | Evidence rejected; neutral wording and `BLOCKED` |
 | Evidence serialization/hash failure | Evidence invalid/absent; neutral wording, `BLOCKED`, no cleanup |
@@ -592,7 +888,7 @@ not permission to edit any component.
 | AMS repository | Evidence contract | new `internal/contracts/authority_evidence.go` | Closed schema, owner enum, identity, claims, producer provenance, deterministic serialization | Backend repair/defaulting or second decision authority |
 | AMS repository | Pass 2 sub-boundary | `internal/policy/pass2.go` | Produce Pass 2 result consumed atomically by selected producer | Incomplete evidence or identities it cannot observe |
 | AMS repository | Golden/evidence output | `internal/products/buyerrecon/report/golden_session.go`; `cmd/buyerrecon-report/main.go` | Emit separate deterministic Golden JSON and evidence bytes from same record | Retention qualification or packaging wording |
-| buyerrecon-backend repository | Retention coordinator | `scripts/run-golden-session.ts`; likely new `src/reports/external/golden-session-retention.ts` | Store/read back four copies; verify; create/verify manifest pair; gate cleanup | Producing AMS authority facts or reconstructing artifacts |
+| buyerrecon-backend repository | Retention coordinator | `scripts/run-golden-session.ts`; likely new `src/reports/external/golden-session-retention.ts` | Store and read back the four evidence copies; create and verify the two Phase 1 execution-retention-manifest copies; evaluate the §10.6 cleanup gate; create and verify the two Phase 2 cleanup-authorization-record copies; track all eight object versions per copy | Producing AMS authority facts, reconstructing artifacts, rewriting any immutable object version, or inferring cleanup authorization |
 | buyerrecon-backend repository | Evidence validator | likely new `src/reports/external/policy-pass-2-authority-evidence.ts` | Strict schema, identity, hash, owner, count, and qualification validation | Defaulting, repairing, or inferring evidence |
 | buyerrecon-backend repository | Packaging consumer | `src/reports/external/golden-session-package.ts`; `src/reports/external/ams-existing-run.ts` | Resolve immutable objects; authority wording only for fully qualifying evidence | Evidence production or retention bypass |
 | storage/infrastructure configuration | Primary vault | Future separately reviewed infrastructure definitions | Dedicated primary account/bucket/region/KMS key, Versioning, compliance Object Lock, retention, CloudTrail | Runtime execution, shared temporary storage, credentials in source |
@@ -625,15 +921,100 @@ invoke production AMS, or reconstruct the closed session.
 | A1-4 | Secondary read-back failure | Pair invalid; cleanup prohibited |
 | A1-5 | SHA-256 mismatch | Read-back digest contradiction invalidates pair |
 | A1-6 | Byte-count mismatch | Read-back count contradiction invalidates pair |
-| A1-7 | Manifest write failure | Verified data objects alone do not authorize cleanup |
-| A1-8 | Manifest contradiction | Wrong identity, object/version, digest, count, expiry, or status rejected |
-| A1-9 | Premature cleanup rejection | Cleanup exits non-zero before every gate condition passes |
-| A1-10 | Artifact survival after execution-directory deletion | Both objects and manifest remain readable/hash-valid by exact version in both stores |
+| A1-7 | Phase 1 execution-retention-manifest write failure | Verified evidence copies alone do not authorize cleanup; no Phase 2 record produced |
+| A1-8 | Phase 1 execution-retention-manifest contradiction | Wrong identity, object/version, digest, count, per-copy expiry, or per-copy status rejected |
+| A1-9 | Premature cleanup rejection | Cleanup exits non-zero before every §10.6 gate condition passes |
+| A1-10 | Artifact survival after execution-directory deletion | All eight object versions remain readable and hash-valid by exact `versionId` in their own stores |
 | A1-11 | Primary-store outage | No secondary-only fallback; qualification aborts |
 | A1-12 | Secondary-store outage | No primary-only fallback; qualification aborts |
+| A1-13 | Object Lock absent or misconfigured | See §13.1.1 |
+| A1-14 | Retention mismatch | See §13.1.2 |
+| A1-15 | Copy-independence violation | See §13.1.3 |
+| A1-16 | Phase 2 cleanup-authorization-record write or read-back failure | Verified Phase 1 manifests alone never authorize cleanup; cleanup exits non-zero |
+| A1-17 | Phase 2 cleanup-authorization identity mismatch | A Phase 2 record naming a Phase 1 manifest account, region, bucket, key, `versionId`, digest, or byte count that does not match the retained Phase 1 copies is rejected; cleanup blocked |
+| A1-18 | Attempted mutation of an immutable object version | Any rewrite, patch, or in-place update of a stored evidence, Phase 1, or Phase 2 object version is rejected as a fatal governance error; cleanup blocked |
+| A1-19 | Digest-exclusion violation | A record whose `record_sha256` was computed while excluding any field other than `record_sha256` itself is rejected; recomputation over canonical bytes with only that field omitted must reproduce the stored digest |
+| A1-20 | Cleanup authorization inferred without Phase 2 copies | Successful uploads, absence of errors, successful AMS completion, declared packaging readiness, or an operator assertion never authorize cleanup; cleanup exits non-zero |
 
-Every applicable A1 case runs for Golden JSON and authority evidence, and
-manifest-copy failures are exercised independently.
+Every applicable A1 case runs for Golden JSON and authority evidence.
+Phase 1 execution-retention-manifest copy failures and Phase 2
+cleanup-authorization-record copy failures are exercised independently of each
+other and of the evidence copies. Cases A1-13, A1-14, and A1-15 are mandatory
+members of this matrix and are specified in full below; they are not optional
+follow-ups, implementation notes, or deferred work.
+
+#### 13.1.1 A1-13 — Object Lock absent or misconfigured
+
+Required fixtures place one or more required retained objects in each of these
+states:
+
+```text
+Object Lock disabled
+wrong retention mode
+governance mode instead of required compliance mode
+missing versioning
+unconfirmed retention status
+```
+
+Expected result:
+
+```text
+retention verification fails
+cleanup_authorized remains false
+cleanup-authorization record is not produced
+```
+
+Each state is exercised for an evidence copy and for a Phase 1 manifest copy.
+Per §2.5, no test may assert that Object Lock compensates for account closure or
+KMS-key deletion.
+
+#### 13.1.2 A1-14 — Retention mismatch
+
+Required cases:
+
+```text
+retention expiry shorter than ratified policy
+primary and secondary retention expiries disagree
+manifest retention shorter than evidence retention
+cleanup-authorization retention shorter than the protected lifecycle
+```
+
+Expected result:
+
+```text
+retention gate fails closed
+cleanup remains prohibited
+```
+
+Because §10.2 requires four separate evidence retention-expiry fields, these
+cases must be asserted per copy. A single aggregate retention check does not
+satisfy A1-14.
+
+#### 13.1.3 A1-15 — Copy-independence violation
+
+Required cases place the primary and secondary copies so that they unexpectedly
+share one prohibited failure boundary, covering at least:
+
+```text
+same AWS account
+same region
+same bucket
+same IAM authority
+same KMS key
+same custodian or account-closure authority
+same cleanup path
+```
+
+Expected result:
+
+```text
+copy_independence_status=FAIL
+retention readiness remains blocked
+cleanup authorization is not emitted
+```
+
+Each shared boundary is exercised as its own case; a single combined fixture
+does not satisfy A1-15.
 
 ### 13.2 B3 selected-producer tests
 
@@ -641,11 +1022,11 @@ manifest-copy failures are exercised independently.
 |---|---|---|
 | B3-1 | Missing execution-authority evidence | Reject; neutral wording; `BLOCKED` |
 | B3-2 | Invalid schema | Reject without defaults; neutral wording; `BLOCKED` |
-| B3-3 | Wrong workspace linkage | Reject against manifest/execution identity |
-| B3-4 | Wrong site linkage | Reject against manifest/execution identity |
-| B3-5 | Wrong subject linkage | Reject against manifest/execution identity |
-| B3-6 | Wrong session linkage | Reject against manifest/execution identity |
-| B3-7 | Wrong AMS run linkage | Reject against manifest/execution identity |
+| B3-3 | Wrong workspace linkage | Reject against Phase 1 execution-retention-manifest and execution identity |
+| B3-4 | Wrong site linkage | Reject against Phase 1 execution-retention-manifest and execution identity |
+| B3-5 | Wrong subject linkage | Reject against Phase 1 execution-retention-manifest and execution identity |
+| B3-6 | Wrong session linkage | Reject against Phase 1 execution-retention-manifest and execution identity |
+| B3-7 | Wrong AMS run linkage | Reject against Phase 1 execution-retention-manifest and execution identity |
 | B3-8 | Source-event mismatch | Set inequality, rejected-ID inclusion, duplicate, or empty set rejected |
 | B3-9 | Pass 2 not executed | Direct Pass1/fail-safe route records false; neutral; `BLOCKED` |
 | B3-10 | Final decision unverified | Pass2/ledger/serialization mismatch rejected; neutral; `BLOCKED` |
@@ -656,9 +1037,57 @@ manifest-copy failures are exercised independently.
 | B3-15 | Invalid evidence hash | Recomputed SHA-256 mismatch rejects evidence |
 | B3-16 | Neutral wording fallback | Every missing, invalid, unlinked, contradictory, nonqualifying state emits exact neutral sentence |
 | B3-17 | Policy Pass 2 wording only after fully qualifying evidence | Permitted only after one strict, exactly linked object satisfies every affirmative condition |
+| B3-18 | Premature ledger finalization | See §13.2.1 |
+| B3-19 | Premature finalization with a late duplicate publication | See §13.2.1 |
+| B3-20 | Premature finalization with a late conflicting publication | See §13.2.1 |
 
 Every mandatory A1 and B3 test must pass before either implementation may be
 classified as `INDEPENDENTLY_VERIFIED`. A passing subset is not qualification.
+
+#### 13.2.1 B3-18 to B3-20 — premature ledger finalization
+
+These are mandatory selected-producer tests, not optional implementation notes.
+They prove that the selected ledger cannot finalize before all possible
+final-decision publication paths have converged or been excluded.
+
+**B3-18 — required scenario.** The test simulates or fixtures:
+
+```text
+one decision publication path has completed
+another possible decision publication path remains open, pending or unaccounted
+Finalize is requested prematurely
+```
+
+Expected behavior:
+
+```text
+Finalize fails closed
+authority-evidence object is not emitted as authority-qualifying
+policy_pass_2_authority_verified=false
+policy_pass_2_acceptance_readiness=BLOCKED
+neutral wording remains required
+```
+
+**B3-19 — late duplicate variant.** The still-open path is driven, after the
+premature `Finalize()` attempt, to publish a candidate whose decision and typed
+owner both equal the first publication — a duplicate final decision. The test
+asserts that had the premature closure been permitted, the record would have
+frozen `duplicate_final_decision_count=0` while a duplicate was in fact still
+possible. The correct behavior is that closure was refused, so no such
+zero-count claim was ever made immutable.
+
+**B3-20 — late conflicting variant.** The still-open path is driven, after the
+premature `Finalize()` attempt, to publish a candidate whose decision or typed
+owner differs from the first publication — a conflicting final decision,
+including the same-decision-different-owner case defined in §8.4. The test
+asserts the same conclusion for `conflicting_final_decision_count=0` and for
+`policy_pass_2_is_sole_final_decision=true`.
+
+Together B3-18 to B3-20 must prove that zero duplicate counts, zero conflict
+counts, and sole ownership cannot become immutable while any possible publisher
+remains unclosed. A test that only asserts rejection of a late publication
+against an already-closed ledger (B3-13, B3-14) does not satisfy this
+requirement, because it presumes the closure was legitimate.
 
 ---
 
@@ -683,6 +1112,37 @@ AMS implementation base is re-pinned and drift-reviewed
 This document defines the credential-delivery model and retention rule, but
 operational ratification remains separate. Named human owners, account/region/
 bucket/key identifiers, role names, and custody registrations are not invented.
+
+The following remain outstanding and are **non-blocking for this docs-only PR**,
+because this PR selects architecture and changes no runtime surface:
+
+```text
+retention period ratification=PENDING
+named owner/custodian ratification=PENDING
+AWS resources not provisioned
+credentials not created
+```
+
+The same four items are **blocking for future implementation authorization**.
+None of them may be treated as satisfied, waived, or deferred at step 4 of the
+§14.2 frozen sequence.
+
+#### 14.1.1 Required separation of ratified owner authority
+
+Owner ratification must preserve separate authority over each of:
+
+```text
+AWS account closure
+KMS key deletion
+bucket administration
+retention policy administration
+cleanup authorization
+```
+
+No single named human, role, or credential may hold two of these authorities
+across the primary and secondary stores. This separation is the only control
+that addresses the residual risks in §2.5; Object Lock does not address them,
+and no ratification record may claim that it does.
 
 ### 14.2 Frozen sequence
 
@@ -735,6 +1195,10 @@ using ResolveFinal alone as the authority producer
 using final_decision, RequestedAction, run ID, replay card, prose, or operator assertion as proof
 using a second local filename, directory, or volume as the secondary copy
 falling back to one copy or ephemeral storage
+rewriting, patching, or updating any immutable retained object version in place
+recording cleanup_authorized=true in a Phase 1 execution retention manifest
+inferring cleanup authorization from successful uploads or successful AMS completion
+claiming Object Lock mitigates AWS account closure or KMS key deletion
 reconstructing or retrying ses_x0vrbqik
 reusing any closed-session browser, session, event, or run identity
 authorizing a reduced-scope real replacement execution
@@ -768,11 +1232,44 @@ golden_json_retention_flow_status=DEFINED
 authority_evidence_retention_flow_status=DEFINED
 cleanup_gate_integration_status=DEFINED
 
+two_phase_record_model_status=DEFINED
+phase_1_execution_retention_manifest_status=DEFINED
+phase_2_cleanup_authorization_record_status=DEFINED
+manifest_copy_identity_status=DEFINED
+cleanup_authorization_copy_identity_status=DEFINED
+per_copy_write_confirmation_status=DEFINED
+per_copy_read_back_status=DEFINED
+per_copy_retention_expiry_status=DEFINED
+per_copy_object_lock_status=DEFINED
+digest_exclusion_rule_status=DEFINED
+immutable_transition_status=DEFINED
+cleanup_gate_implementability_status=DEFINED
+
+golden_json_copy_count=2
+authority_evidence_copy_count=2
+execution_manifest_copy_count=2
+cleanup_authorization_copy_count=2
+total_tracked_object_version_count=8
+
+a1_test_matrix_status=COMPLETE
+object_lock_missing_misconfigured_test_status=MANDATORY
+retention_mismatch_test_status=MANDATORY
+copy_independence_violation_test_status=MANDATORY
+
+b3_test_matrix_status=COMPLETE
+premature_ledger_finalization_test_status=MANDATORY
+late_duplicate_publication_variant_status=MANDATORY
+late_conflicting_publication_variant_status=MANDATORY
+
 credential_delivery_design_status=DEFINED
 retention_period_ratification_status=PENDING
 owner_ratification_status=PENDING
+owner_authority_separation_requirement_status=DEFINED
+ratification_blocking_for_this_docs_only_pr=false
+ratification_blocking_for_implementation_authorization=true
 
 storage_provisioned=false
+credentials_created=false
 producer_implemented=false
 implementation_authorized=false
 replacement_session_execution_authorized=false
@@ -783,6 +1280,9 @@ packaging_authorized=false
 
 A1 and B3 are selected. The resulting docs-only PR is eligible only for an
 independent architecture review. It authorizes no implementation or execution.
+The two-phase record model, the completed A1 matrix, and the completed B3 matrix
+are documentation remediations only; they authorize nothing beyond another
+independent docs-only review.
 
 ---
 
